@@ -1,0 +1,8 @@
+module: llama_stack_provider_trustyai_garak
+config_class: llama_stack_provider_trustyai_garak.config.GarakEvalProviderConfig
+pip_packages:
+  - garak
+api_dependencies:
+  - inference
+  - files
+optional_api_dependencies: []
