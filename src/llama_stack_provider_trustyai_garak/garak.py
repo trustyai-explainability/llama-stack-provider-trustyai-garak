@@ -23,29 +23,24 @@ logger = logging.getLogger(__name__)
 class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
     def __init__(self, config: GarakEvalProviderConfig, deps):
         super().__init__(config)
-        self._config = config
+        self._config: GarakEvalProviderConfig = config
         self.file_api: Files = deps[Api.files]
         self.scan_config = GarakScanConfig()
-        self.benchmarks: Dict[str, Benchmark] = {}
+        self.benchmarks: Dict[str, Benchmark] = {} # benchmark_id -> benchmark
         self.all_probes: Set[str] = set()
         self._jobs: Dict[str, Job] = {}
         self._job_metadata: Dict[str, Dict[str, str]] = {}
-        self._initialized = False
+        self._running_tasks: Dict[str, asyncio.Task] = {} # job_id -> running task
+        self._initialized: bool = False
 
     async def initialize(self) -> None:
         """Initialize the Garak provider"""
         logger.info("Initializing Garak provider")
-        self.scan_config.scan_dir.mkdir(exist_ok=True, parents=True)
-        self._ensure_garak_installed()
 
-        ## unfortunately, garak don't have a public API to list all probes
-        ## so we need to enumerate all probes manually from private API
-        from garak._plugins import enumerate_plugins
-        probes_names = enumerate_plugins(category="probes", skip_base_classes=True)
-        plugin_names = [p.replace(f"probes.", "") for p, _ in probes_names]
-        module_names = set([m.split(".")[0] for m in plugin_names])
-        plugin_names += module_names
-        self.all_probes = set(plugin_names)
+        self.scan_config.scan_dir.mkdir(exist_ok=True, parents=True)
+        
+        self._ensure_garak_installed()
+        self.all_probes = self._get_all_probes()
 
         self._initialized = True
         
@@ -59,6 +54,16 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
                 "pip install garak"
             )
     
+    def _get_all_probes(self) -> Set[str]:
+        ## unfortunately, garak don't have a public API to list all probes
+        ## so we need to enumerate all probes manually from private API
+        from garak._plugins import enumerate_plugins
+        probes_names = enumerate_plugins(category="probes", skip_base_classes=True)
+        plugin_names = [p.replace(f"probes.", "") for p, _ in probes_names]
+        module_names = set([m.split(".")[0] for m in plugin_names])
+        plugin_names += module_names
+        return set(plugin_names)
+
     async def list_benchmarks(self) -> ListBenchmarksResponse:
         """List all benchmarks"""
         return ListBenchmarksResponse(data=list(self.benchmarks.values()))
@@ -102,7 +107,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         self._jobs[job_id] = job
         self._job_metadata[job_id] = {"created_at": datetime.now().isoformat()}
 
-        asyncio.create_task(self._run_scan(job, benchmark_id, benchmark_config))
+        self._running_tasks[job_id] = asyncio.create_task(self._run_scan(job, benchmark_id, benchmark_config), name=f"garak-job-{job_id}")
         return {"job_id": job_id, "status": job.status, "metadata": self._job_metadata.get(job_id, {})}
         
     async def _run_scan(self, job: Job, benchmark_id: str, benchmark_config: BenchmarkConfig):
@@ -205,6 +210,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             if 'process' in locals() and process.returncode is None:
                 process.kill()
                 await process.wait()
+            self._running_tasks.pop(job.job_id, None)
 
     async def _upload_file(self, file: Path, purpose: OpenAIFilePurpose) -> Optional[OpenAIFileObject]:
         """Upload a file to the file storage and return the file object.
@@ -478,9 +484,31 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
     async def shutdown(self) -> None:
         """Clean up resources when shutting down."""
         logger.info("Shutting down Garak provider")
+        # Cancel all running asyncio tasks
+        for job_id, task in self._running_tasks.items():
+            if not task.done():
+                logger.info(f"Cancelling running task {task.get_name()} for job {job_id}")
+                task.cancel()
+        
+        # Wait for tasks to be cancelled (with timeout)
+        if self._running_tasks:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*self._running_tasks.values(), return_exceptions=True),
+                    timeout=5
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Some tasks didn't cancel within timeout")
+        
         # Kill all running jobs
         for job_id, job in self._jobs.items():
             if job.status in [JobStatus.in_progress, JobStatus.scheduled]:
                 await self.job_cancel("placeholder", job_id)
+        
+        # Clear all running tasks, jobs and job metadata
+        self._running_tasks.clear()
+        self._jobs.clear()
+        self._job_metadata.clear()
+        
         # Cleanup the scan directory
         shutil.rmtree(self.scan_config.scan_dir, ignore_errors=True)

@@ -1,6 +1,5 @@
-from llama_stack.apis.eval import BenchmarkConfig, EvalCandidate
 from llama_stack.schema_utils import json_schema_type
-from typing import List, Dict, Optional, Any
+from typing import Dict, Any
 from pydantic import BaseModel, Field, field_validator
 from enum import Enum
 from pathlib import Path
