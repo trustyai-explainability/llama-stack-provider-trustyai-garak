@@ -7,7 +7,6 @@ from llama_stack.providers.datatypes import BenchmarksProtocolPrivate
 from llama_stack.apis.benchmarks import Benchmark, ListBenchmarksResponse
 from llama_stack.apis.common.job_types import Job, JobStatus
 from llama_stack.apis.scoring import ScoringResult
-from llama_stack.schema_utils import json_schema_type
 from typing import List, Dict, Optional, Any, Union, Set
 import os
 import logging
