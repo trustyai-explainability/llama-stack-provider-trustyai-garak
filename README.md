@@ -1,7 +1,7 @@
-# TrustyAI Garak - Out-of-Tree Llama Stack Eval Provider for Garak Red Teaming
+# TrustyAI Garak (`trustyai_garak`): Out-of-Tree Llama Stack Eval Provider for Garak Red Teaming
 
 ## About
-This repository implements [Garak](https://github.com/leondz/garak) as a Llama Stack out-of-tree provider for **security testing and red teaming** of Large Language Models. 
+This repository implements [Garak](https://github.com/NVIDIA/garak) as a Llama Stack out-of-tree provider for **security testing and red teaming** of Large Language Models. 
 
 ## Features
 - **Security Vulnerability Detection**: Automated testing for prompt injection, jailbreaks, toxicity, and bias
