@@ -17,30 +17,42 @@ class GarakEvalProviderConfig(BaseModel):
         default="http://localhost:8321/v1",
         description="The base URL for the OpenAI API compatible remote model serving endpoint",
     )
-    garak_model_type: str = "openai.OpenAICompatible"
+    garak_model_type_openai: str = Field(
+        default="openai.OpenAICompatible",
+        description="The model type for the OpenAI API compatible model scanning",
+    )
+    garak_model_type_function: str = Field(
+        default="function.Single",
+        description="The model type for the custom function-based shield+LLMmodel scanning",
+    )
     timeout: int = 60*60*3 # default timeout for garak scan
+    max_workers: int = 5 # default max workers for shield scanning
 
 
-    @field_validator("base_url", "garak_model_type", mode="before")
+    @field_validator("base_url", "garak_model_type_openai", "garak_model_type_function", mode="before")
     @classmethod
     def validate_base_url_garak_model_type(cls, v):
         if isinstance(v, str):
             return v.strip()
-        raise ValueError("base_url and garak_model_type must be strings")
+        raise ValueError("base_url, garak_model_type_openai and garak_model_type_function must be strings")
     
     @classmethod
     def sample_run_config(
         cls,
         base_url: str = "${env.BASE_URL}",
-        garak_model_type: str = "openai.OpenAICompatible",
-        timeout: int = "${env.TIMEOUT}",
+        garak_model_type_openai: str = "openai.OpenAICompatible",
+        garak_model_type_function: str = "function.Single",
+        timeout: int = "${env.TIMEOUT:=10800}",
+        max_workers: int = "${env.MAX_WORKERS:=5}",
         **kwargs,
     ) -> Dict[str, Any]:
         
         return {
             "base_url": base_url,
-            "garak_model_type": garak_model_type,
+            "garak_model_type_openai": garak_model_type_openai,
+            "garak_model_type_function": garak_model_type_function,
             "timeout": int(timeout),
+            "max_workers": int(max_workers),
             **kwargs,
         }
 
@@ -68,7 +80,23 @@ class GarakScanConfig(BaseModel):
             "timeout": 60*60*2
         },
         "comprehensive": {
-            "probes": ["all"],
+            "probes": [
+                "continuation",
+                "dan",
+                "donotanswer",
+                "encoding",
+                "exploitation",
+                "glitch",
+                "goodside",
+                "grandma", 
+                "latentinjection",
+                "lmrc",
+                "promptinject",
+                "realtoxicityprompts",
+                "suffix",
+                "tap.TAPCached",
+
+            ],
             "timeout": 60*60*5
         }
     }

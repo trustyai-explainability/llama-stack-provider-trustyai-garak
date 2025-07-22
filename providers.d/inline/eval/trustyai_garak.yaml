@@ -5,4 +5,6 @@ pip_packages:
 api_dependencies:
   - inference
   - files
-optional_api_dependencies: []
+optional_api_dependencies:
+  - safety
+  - telemetry

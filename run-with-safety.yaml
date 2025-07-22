@@ -1,0 +1,52 @@
+version: "1"
+image_name: trustyai-garak
+apis:
+  - inference
+  - eval
+  - files
+  - safety
+  - telemetry
+providers:
+  inference:
+    - provider_id: vllm
+      provider_type: remote::vllm
+      config:
+        url: ${env.VLLM_URL}
+        # max_tokens: ${env.VLLM_MAX_TOKENS:4096}
+        api_token: ${env.VLLM_API_TOKEN:fake}
+        # tls_verify: ${env.VLLM_TLS_VERIFY:false}
+  eval:
+    - provider_id: trustyai_garak
+      provider_type: inline::trustyai_garak
+      config:
+        base_url: ${env.BASE_URL:=http://localhost:8321/v1} # llama-stack service base url
+        timeout: ${env.TIMEOUT:=10800} # 3 hours max timeout for garak scan
+        max_workers: ${env.MAX_WORKERS:=5} # 5 max workers for shield scanning
+  files:
+    - provider_id: meta-reference-files
+      provider_type: inline::localfs
+      config:
+        storage_dir: ${env.FILES_STORAGE_DIR:=~/.llama/distributions/trustyai-garak/files}
+        metadata_store:
+          type: sqlite
+  safety:
+    - provider_id: prompt-guard
+      provider_type: inline::prompt-guard
+      config:
+        excluded_categories: []
+  telemetry:
+  - provider_id: meta-reference
+    provider_type: inline::meta-reference
+    config:
+      service_name: "${env.OTEL_SERVICE_NAME:=\u200B}"
+      sinks: ${env.TELEMETRY_SINKS:=console,sqlite}
+      sqlite_db_path: ${env.SQLITE_STORE_DIR:=~/.llama/distributions/trustyai-garak}/trace_store.db
+      otel_exporter_otlp_endpoint: ${env.OTEL_EXPORTER_OTLP_ENDPOINT:=}
+models:
+- metadata: {}
+  model_id: ${env.INFERENCE_MODEL}
+  provider_id: vllm
+  model_type: llm
+shields:
+- shield_id: Prompt-Guard-86M
+external_providers_dir: ./providers.d

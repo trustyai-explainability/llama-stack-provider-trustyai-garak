@@ -17,6 +17,9 @@ from datetime import datetime
 import asyncio
 import signal
 import shutil
+from llama_stack_provider_trustyai_garak import shield_scan
+from llama_stack.apis.safety import Safety
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +28,11 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         super().__init__(config)
         self._config: GarakEvalProviderConfig = config
         self.file_api: Files = deps[Api.files]
+        self.safety_api: Optional[Safety] = deps.get(Api.safety, None)
         self.scan_config = GarakScanConfig()
         self.benchmarks: Dict[str, Benchmark] = {} # benchmark_id -> benchmark
         self.all_probes: Set[str] = set()
+        # TODO: Implement a proper job queue and job manager
         self._jobs: Dict[str, Job] = {}
         self._job_metadata: Dict[str, Dict[str, str]] = {}
         self._running_tasks: Dict[str, asyncio.Task] = {} # job_id -> running task
@@ -149,7 +154,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
                 scan_profile_config:dict = self.scan_config.SCAN_PROFILES[scan_profile]
 
 
-            cmd: List[str] = self._build_command(benchmark_config, str(scan_report_prefix), scan_profile_config)
+            cmd: List[str] = await self._build_command(benchmark_config, benchmark_id, str(scan_report_prefix), scan_profile_config)
             logger.info(f"Running scan with command: {' '.join(cmd)}")
 
             env = os.environ.copy()
@@ -231,7 +236,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             logger.warning(f"File {file} does not exist")
             return None
         
-    def _build_command(self, benchmark_config: BenchmarkConfig, scan_report_prefix: str, scan_profile_config: dict) -> List[str]:
+    async def _build_command(self, benchmark_config: BenchmarkConfig, benchmark_id: str, scan_report_prefix: str, scan_profile_config: dict) -> List[str]:
         """Build the command to run the scan.
 
         Args:
@@ -240,10 +245,18 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             scan_log_file: Path to the scan log file
             scan_profile_config: Configuration for the scan profile
         """
-        generator_options:dict = self._get_generator_options(benchmark_config)
+        generator_options:dict = await self._get_generator_options(benchmark_config, benchmark_id)
+
+        if self.safety_api:
+            model_type: str = self._config.garak_model_type_function
+            model_name: str = f"{shield_scan.__name__}#simple_shield_orchestrator" 
+        else:
+            model_type: str = self._config.garak_model_type_openai
+            model_name: str = benchmark_config.eval_candidate.model
+            
         cmd: List[str] = ["garak",
-                          "--model_type", self._config.garak_model_type,
-                          "--model_name", benchmark_config.eval_candidate.model,
+                          "--model_type", model_type,
+                          "--model_name", model_name,
                           "--generations", "1",
                           "--generator_options", json.dumps(generator_options),
                           "--report_prefix", scan_report_prefix.strip(),
@@ -259,9 +272,16 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
                                      "Or you can just use predefined scan profiles ('quick', 'standard', 'comprehensive') as benchmark_id.")
             cmd.extend(["--probes", ",".join(probes)])
         return cmd
-    
-    def _get_generator_options(self, benchmark_config: BenchmarkConfig) -> dict:
 
+    async def _get_generator_options(self, benchmark_config: BenchmarkConfig, benchmark_id: str) -> dict:
+        """Get the generator options based on the availability of the safety API."""
+        if self.safety_api:
+            return await self._get_function_based_generator_options(benchmark_config, benchmark_id)
+        else:
+            return self._get_openai_compatible_generator_options(benchmark_config)
+
+    def _get_openai_compatible_generator_options(self, benchmark_config: BenchmarkConfig) -> dict:
+        """Get the generator options for the OpenAI compatible generator."""
         base_url: str = self._config.base_url.rstrip("/")
         if not base_url.endswith("openai/v1"):
             if base_url.endswith("/v1"):
@@ -286,6 +306,76 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             generator_options["openai"]["OpenAICompatible"].update(sampling_params.model_dump())
         return generator_options
     
+    async def _get_function_based_generator_options(self, benchmark_config: BenchmarkConfig, benchmark_id: str) -> dict:
+        """Get the generator options for the custom function-based generator."""
+        
+        base_url: str = self._config.base_url.rstrip("/")
+        
+        # check if base_url ends with /v{number} and if not, add v1
+        if not re.match(r"^.*\/v\d+$", base_url):
+            base_url = f"{base_url}/v1"
+        
+        # Map the shields to the input and output of LLM
+        llm_io_shield_mapping: dict = {
+            "input": [],
+            "output": []
+        }
+
+        benchmark_metadata: dict = getattr(self.benchmarks.get(benchmark_id), "metadata", {})
+
+        if not benchmark_metadata:
+            logger.warning(f"No benchmark metadata found for benchmark {benchmark_id}")
+        else:
+            ## get the shield_ids and/or shield_config from the benchmark metadata
+            shield_ids: List[str] = benchmark_metadata.get("shield_ids", [])
+            shield_config: dict = benchmark_metadata.get("shield_config", {})
+            if not shield_ids and not shield_config:
+                logger.warning("No shield_ids or shield_config found in the benchmark metadata")
+            elif shield_ids:
+                if shield_config:
+                    logger.warning("Both shield_ids and shield_config found in the benchmark metadata. "
+                                "Using shield_ids only.")
+                llm_io_shield_mapping["input"] = shield_ids
+            elif shield_config:
+                if not shield_config.get("input", None) and not shield_config.get("output", None):
+                    logger.warning("No input or output found in the shield_config.")
+                llm_io_shield_mapping["input"] = shield_config.get("input", [])
+                llm_io_shield_mapping["output"] = shield_config.get("output", [])
+            
+            # FIXME: 'SafetyRouter' object has no attribute 'shield_store'
+            # await self._check_shield_availability(llm_io_shield_mapping)
+        
+
+        generator_options = {
+                    "function": {
+                        "Single": {
+                            "name": f"{shield_scan.__name__}#simple_shield_orchestrator",
+                            "kwargs": {
+                                "model": benchmark_config.eval_candidate.model,
+                                "base_url": base_url,
+                                "llm_io_shield_mapping": llm_io_shield_mapping,
+                                "max_workers": self._config.max_workers
+                            }
+                        }
+                    }
+                }
+        return generator_options
+    
+    async def _check_shield_availability(self, llm_io_shield_mapping: dict):
+        """Check the availability of the shields. and raise an error if any shield is not available."""
+        if not self.safety_api:
+            raise ValueError("Safety API is not available. Please provide a safety API provider.")
+        
+        error_msg: str = "{type} shield '{shield_id}' is not available. Please provide a valid shield_id in the benchmark metadata."
+        
+        for shield_id in llm_io_shield_mapping["input"]:
+            if not await self.safety_api.shield_store.get_shield(shield_id):
+                raise ValueError(error_msg.format(type="Input", shield_id=shield_id))
+            
+        for shield_id in llm_io_shield_mapping["output"]:
+            if not await self.safety_api.shield_store.get_shield(shield_id):
+                raise ValueError(error_msg.format(type="Output", shield_id=shield_id))
+
     async def _parse_scan_results(self, report_file_id: str, job_id: str) -> EvaluateResponse:
         """Parse the scan results from the report file.
         
