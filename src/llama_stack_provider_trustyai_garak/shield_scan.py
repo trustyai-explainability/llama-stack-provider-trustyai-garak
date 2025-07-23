@@ -1,9 +1,10 @@
-"""This contains the implementation of passing garak probes to shields before and after sending to LLM"""
+"""This contains the implementation of passing garak probes to shields before and after sending prompts to LLM"""
 
 from typing import List, Union
 import httpx
 import os
-# from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import backoff
 
 from llama_stack.apis.safety import RunShieldResponse, ViolationLevel
 from llama_stack.apis.inference import OpenAIChatCompletion
@@ -43,11 +44,17 @@ class SimpleShieldOrchestrator:
         self._client = httpx.Client(
             timeout=30, # TODO: make this configurable
             limits=httpx.Limits(
-                max_connections=10, # TODO: make this configurable
+                max_connections=20, # TODO: make this configurable
                 max_keepalive_connections=10, # TODO: make this configurable
-            )
+            ),
+            http2=True
         )
 
+    @backoff.on_exception(
+            backoff.fibo, 
+            (httpx.TimeoutException, httpx.HTTPStatusError, httpx.ConnectError), 
+            max_value=50,
+        )
     def _get_shield_response(self, shield_id: str, prompt: str, base_url: str, params: dict={}) -> RunShieldResponse:
         shield_run_url = f"{base_url}{RUN_SHIELD_URI}"
         try:
@@ -70,25 +77,29 @@ class SimpleShieldOrchestrator:
             logger.error(f"Error running shield: {e}")
             raise e
     
-    # def _run_shields_with_early_exit(self, shield_ids: List[str], prompt: str, base_url: str, params: dict={}, max_workers: int=5) -> bool:
-    #     """Run multiple shields in parallel and return True if any shield returns a violation"""
-    #     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-    #         futures_to_shields = {executor.submit(self._get_shield_response, shield_id, prompt, base_url, params): shield_id for shield_id in shield_ids}
-    #         for future in as_completed(futures_to_shields):
-    #             shield_id = futures_to_shields[future]
-    #             try:
-    #                 shield_response = future.result()
-    #                 if shield_response.violation and shield_response.violation.violation_level == ViolationLevel.ERROR:
-    #                     # cancel pending futures
-    #                     for future in futures_to_shields:
-    #                         future.cancel()
-    #                     return True
-    #             except Exception as e:
-    #                 logger.error(f"Error running shield {shield_id}: {e}")
-    #                 return False
-    #     return False
+    def _run_shields_with_early_exit(self, shield_ids: List[str], prompt: str, base_url: str, params: dict={}, max_workers: int=5) -> bool:
+        """Run multiple shields in parallel and return True if any shield returns a violation"""
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(shield_ids))) as executor:
+            futures_to_shields = {executor.submit(self._get_shield_response, shield_id, prompt, base_url, params): shield_id for shield_id in shield_ids}
+            for future in as_completed(futures_to_shields):
+                shield_id = futures_to_shields[future]
+                try:
+                    shield_response = future.result()
+                    if shield_response.violation and shield_response.violation.violation_level == ViolationLevel.ERROR:
+                        # cancel pending futures
+                        for future in futures_to_shields:
+                            future.cancel()
+                        return True
+                except Exception as e:
+                    logger.error(f"Error running shield {shield_id}: {e}")
+                    return False
+        return False
 
-    
+    @backoff.on_exception(
+            backoff.fibo, 
+            (httpx.TimeoutException, httpx.HTTPStatusError, httpx.ConnectError), 
+            max_value=70,
+        )
     def _get_LLM_response(self, model: str, prompt: str, base_url: str) -> OpenAIChatCompletion:
         inference_url = f"{base_url}{OPENAI_COMPATIBLE_INFERENCE_URI}"
         try:
@@ -119,12 +130,12 @@ class SimpleShieldOrchestrator:
 
         if input_shields:
             logger.debug(f"Running input shields: {input_shields}")
-            # if self._run_shields_with_early_exit(input_shields, prompt, kwargs["base_url"], kwargs.get("params", {}), max_workers=kwargs.get("max_workers", 5)):
-            #     return [CANNED_RESPONSE_TEXT]
-            for shield_id in input_shields:
-                shield_response = self._get_shield_response(shield_id, prompt, kwargs["base_url"], kwargs.get("params", {}))
-                if shield_response.violation and shield_response.violation.violation_level == ViolationLevel.ERROR:
-                    return [CANNED_RESPONSE_TEXT]
+            if self._run_shields_with_early_exit(input_shields, prompt, kwargs["base_url"], kwargs.get("params", {}), max_workers=kwargs.get("max_workers", 5)):
+                return [CANNED_RESPONSE_TEXT]
+            # for shield_id in input_shields:
+            #     shield_response = self._get_shield_response(shield_id, prompt, kwargs["base_url"], kwargs.get("params", {}))
+            #     if shield_response.violation and shield_response.violation.violation_level == ViolationLevel.ERROR:
+            #         return [CANNED_RESPONSE_TEXT]
             logger.debug(f"No input violation detected. Running LLM")
         else:
             logger.debug(f"No input shields detected. Running LLM")
@@ -138,16 +149,23 @@ class SimpleShieldOrchestrator:
 
         if output_shields:
             logger.debug(f"Running output shields: {output_shields}")
-            # if self._run_shields_with_early_exit(output_shields, llm_response, kwargs["base_url"], kwargs.get("params", {}), max_workers=kwargs.get("max_workers", 5)):
-            #     return [CANNED_RESPONSE_TEXT]
-            for shield_id in output_shields:
-                shield_response = self._get_shield_response(shield_id, llm_response, kwargs["base_url"], kwargs.get("params", {}))
-                if shield_response.violation and shield_response.violation.violation_level == ViolationLevel.ERROR:
-                    return [CANNED_RESPONSE_TEXT]
+            if self._run_shields_with_early_exit(output_shields, llm_response, kwargs["base_url"], kwargs.get("params", {}), max_workers=kwargs.get("max_workers", 5)):
+                return [CANNED_RESPONSE_TEXT]
+            # for shield_id in output_shields:
+            #     shield_response = self._get_shield_response(shield_id, llm_response, kwargs["base_url"], kwargs.get("params", {}))
+            #     if shield_response.violation and shield_response.violation.violation_level == ViolationLevel.ERROR:
+            #         return [CANNED_RESPONSE_TEXT]
             logger.debug(f"No output violation detected. Returning LLM response")
         else:
             logger.debug(f"No output shields detected. Returning LLM response")
         
         return [llm_response]
+
+    def close(self):
+        if hasattr(self, '_client'):
+            self._client.close()
+    
+    def __del__(self):
+        self.close()
 
 simple_shield_orchestrator = SimpleShieldOrchestrator()

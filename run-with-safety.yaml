@@ -20,8 +20,9 @@ providers:
       provider_type: inline::trustyai_garak
       config:
         base_url: ${env.BASE_URL:=http://localhost:8321/v1} # llama-stack service base url
-        timeout: ${env.TIMEOUT:=10800} # 3 hours max timeout for garak scan
-        max_workers: ${env.MAX_WORKERS:=5} # 5 max workers for shield scanning
+        timeout: ${env.GARAK_TIMEOUT:=10800} # 3 hours max timeout for garak scan
+        max_workers: ${env.GARAK_MAX_WORKERS:=5} # 5 max workers for shield scanning
+        max_concurrent_jobs: ${env.GARAK_MAX_CONCURRENT_JOBS:=5} # 5 max concurrent garak scans
   files:
     - provider_id: meta-reference-files
       provider_type: inline::localfs
@@ -49,4 +50,6 @@ models:
   model_type: llm
 shields:
 - shield_id: Prompt-Guard-86M
+server:
+  port: 8321
 external_providers_dir: ./providers.d

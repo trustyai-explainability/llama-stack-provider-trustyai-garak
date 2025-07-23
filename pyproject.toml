@@ -1,7 +1,7 @@
 [project]
 name = "llama-stack-provider-trustyai-garak"
 version = "0.0.1"
-description = "OOT remote provider for garak redteam"
+description = "OOT provider for garak redteam"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -13,6 +13,7 @@ dependencies = [
     "greenlet",
     "uvicorn",
     "ipykernel",
+    "httpx[http2]",
     "garak",
 ]
 

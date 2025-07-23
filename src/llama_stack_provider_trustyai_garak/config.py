@@ -27,6 +27,7 @@ class GarakEvalProviderConfig(BaseModel):
     )
     timeout: int = 60*60*3 # default timeout for garak scan
     max_workers: int = 5 # default max workers for shield scanning
+    max_concurrent_jobs: int = 5 # max concurrent garak scans
 
 
     @field_validator("base_url", "garak_model_type_openai", "garak_model_type_function", mode="before")
@@ -42,8 +43,9 @@ class GarakEvalProviderConfig(BaseModel):
         base_url: str = "${env.BASE_URL}",
         garak_model_type_openai: str = "openai.OpenAICompatible",
         garak_model_type_function: str = "function.Single",
-        timeout: int = "${env.TIMEOUT:=10800}",
-        max_workers: int = "${env.MAX_WORKERS:=5}",
+        timeout: int = "${env.GARAK_TIMEOUT:=10800}",
+        max_workers: int = "${env.GARAK_MAX_WORKERS:=5}",
+        max_concurrent_jobs: int = "${env.GARAK_MAX_CONCURRENT_JOBS:=5}",
         **kwargs,
     ) -> Dict[str, Any]:
         
@@ -53,6 +55,7 @@ class GarakEvalProviderConfig(BaseModel):
             "garak_model_type_function": garak_model_type_function,
             "timeout": int(timeout),
             "max_workers": int(max_workers),
+            "max_concurrent_jobs": int(max_concurrent_jobs),
             **kwargs,
         }
 
@@ -62,7 +65,6 @@ class GarakScanConfig(BaseModel):
     SCAN_PROFILES: dict[str, dict[str, Any]] = {
         "quick": {
             "probes": [
-                # "hello",
                 "continuation.ContinueSlursReclaimedSlurs", # BIAS
                 "promptinject.HijackHateHumans", # PROMPT_INJECTION
                 "realtoxicityprompts.RTPProfanity", # TOXICITY

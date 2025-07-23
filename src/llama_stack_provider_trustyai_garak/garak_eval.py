@@ -1,6 +1,6 @@
 from llama_stack.apis.eval import Eval, EvaluateResponse, BenchmarkConfig
 from llama_stack.apis.inference import SamplingParams
-from llama_stack.distribution.datatypes import Api
+from llama_stack.distribution.datatypes import Api, ProviderSpec
 from llama_stack.apis.files import Files, OpenAIFilePurpose, OpenAIFileObject
 from fastapi import UploadFile, Response
 from llama_stack.providers.datatypes import BenchmarksProtocolPrivate
@@ -11,6 +11,7 @@ from typing import List, Dict, Optional, Any, Union, Set
 import os
 import logging
 import json
+import re
 from pathlib import Path
 from .config import GarakEvalProviderConfig, GarakScanConfig, AttackType
 from datetime import datetime
@@ -19,24 +20,28 @@ import signal
 import shutil
 from llama_stack_provider_trustyai_garak import shield_scan
 from llama_stack.apis.safety import Safety
-import re
+from llama_stack.apis.shields import Shields
 
 logger = logging.getLogger(__name__)
 
 class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
-    def __init__(self, config: GarakEvalProviderConfig, deps):
+    def __init__(self, config: GarakEvalProviderConfig, deps:dict[Api, ProviderSpec]):
         super().__init__(config)
         self._config: GarakEvalProviderConfig = config
         self.file_api: Files = deps[Api.files]
         self.safety_api: Optional[Safety] = deps.get(Api.safety, None)
+        self.shields_api: Optional[Shields] = deps.get(Api.shields, None)
         self.scan_config = GarakScanConfig()
         self.benchmarks: Dict[str, Benchmark] = {} # benchmark_id -> benchmark
         self.all_probes: Set[str] = set()
-        # TODO: Implement a proper job queue and job manager
+        self._initialized: bool = False
+
+        # Job management
         self._jobs: Dict[str, Job] = {}
         self._job_metadata: Dict[str, Dict[str, str]] = {}
         self._running_tasks: Dict[str, asyncio.Task] = {} # job_id -> running task
-        self._initialized: bool = False
+        ## simple concurrency control for using semaphore
+        self._job_semaphore: Optional[asyncio.Semaphore] = None
 
     async def initialize(self) -> None:
         """Initialize the Garak provider"""
@@ -46,6 +51,14 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         
         self._ensure_garak_installed()
         self.all_probes = self._get_all_probes()
+
+        if self.shields_api and not self.safety_api:
+            raise ValueError("Shields API is provided but Safety API is not provided. Please provide both APIs.")
+        elif not self.shields_api and self.safety_api:
+            raise ValueError("Safety API is provided but Shields API is not provided. Please provide both APIs.")
+
+        self._job_semaphore = asyncio.Semaphore(self._config.max_concurrent_jobs)
+        logger.info(f"Initialized Garak provider with max concurrent jobs: {self._config.max_concurrent_jobs}")
 
         self._initialized = True
         
@@ -112,8 +125,14 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         self._jobs[job_id] = job
         self._job_metadata[job_id] = {"created_at": datetime.now().isoformat()}
 
-        self._running_tasks[job_id] = asyncio.create_task(self._run_scan(job, benchmark_id, benchmark_config), name=f"garak-job-{job_id}")
+        self._running_tasks[job_id] = asyncio.create_task(self._run_scan_with_semaphore(job, benchmark_id, benchmark_config), name=f"garak-job-{job_id}")
         return {"job_id": job_id, "status": job.status, "metadata": self._job_metadata.get(job_id, {})}
+    
+    async def _run_scan_with_semaphore(self, job: Job, benchmark_id: str, benchmark_config: BenchmarkConfig):
+        """Wrapper to run the scan with semaphore"""
+        async with self._job_semaphore:
+            logger.info(f"Starting job {job.job_id} (Slots used: {self._config.max_concurrent_jobs - self._job_semaphore._value}/{self._config.max_concurrent_jobs})")
+            await self._run_scan(job, benchmark_id, benchmark_config)
         
     async def _run_scan(self, job: Job, benchmark_id: str, benchmark_config: BenchmarkConfig):
         """Run the scan with the given command.
@@ -342,8 +361,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
                 llm_io_shield_mapping["input"] = shield_config.get("input", [])
                 llm_io_shield_mapping["output"] = shield_config.get("output", [])
             
-            # FIXME: 'SafetyRouter' object has no attribute 'shield_store'
-            # await self._check_shield_availability(llm_io_shield_mapping)
+            await self._check_shield_availability(llm_io_shield_mapping)
         
 
         generator_options = {
@@ -363,17 +381,17 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
     
     async def _check_shield_availability(self, llm_io_shield_mapping: dict):
         """Check the availability of the shields. and raise an error if any shield is not available."""
-        if not self.safety_api:
-            raise ValueError("Safety API is not available. Please provide a safety API provider.")
+        if not self.shields_api:
+            raise ValueError("Shields API is not available. Please provide a shields API provider.")
         
         error_msg: str = "{type} shield '{shield_id}' is not available. Please provide a valid shield_id in the benchmark metadata."
         
         for shield_id in llm_io_shield_mapping["input"]:
-            if not await self.safety_api.shield_store.get_shield(shield_id):
+            if not await self.shields_api.get_shield(shield_id):
                 raise ValueError(error_msg.format(type="Input", shield_id=shield_id))
             
         for shield_id in llm_io_shield_mapping["output"]:
-            if not await self.safety_api.shield_store.get_shield(shield_id):
+            if not await self.shields_api.get_shield(shield_id):
                 raise ValueError(error_msg.format(type="Output", shield_id=shield_id))
 
     async def _parse_scan_results(self, report_file_id: str, job_id: str) -> EvaluateResponse:
@@ -482,7 +500,14 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         if not job:
             logger.warning(f"Job {job_id} not found")
             return {"status": "not_found", "job_id": job_id}
-        return {"job_id": job_id, "status": job.status, "metadata": self._job_metadata.get(job_id, {})}
+        
+        metadata: dict = self._job_metadata.get(job_id, {}).copy()
+
+        if self._job_semaphore:
+            metadata["running_jobs"] = str(self._config.max_concurrent_jobs - self._job_semaphore._value)
+            metadata["max_concurrent_jobs"] = str(self._config.max_concurrent_jobs)
+
+        return {"job_id": job_id, "status": job.status, "metadata": metadata}
     
     async def job_result(self, benchmark_id: str, job_id: str) -> EvaluateResponse:
         """Get the result of a job.
@@ -599,6 +624,9 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         self._running_tasks.clear()
         self._jobs.clear()
         self._job_metadata.clear()
+
+        # Close the shield scanning HTTP client
+        shield_scan.simple_shield_orchestrator.close()
         
         # Cleanup the scan directory
         shutil.rmtree(self.scan_config.scan_dir, ignore_errors=True)

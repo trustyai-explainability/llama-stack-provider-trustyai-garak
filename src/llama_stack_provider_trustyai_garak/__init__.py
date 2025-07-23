@@ -3,7 +3,7 @@ from typing import Dict, Optional
 
 from llama_stack.distribution.datatypes import Api, ProviderSpec
 from .config import GarakEvalProviderConfig
-from .garak import GarakEvalAdapter
+from .garak_eval import GarakEvalAdapter
 from .provider import get_provider_spec
 
 # Set up logging

@@ -7,4 +7,5 @@ api_dependencies:
   - files
 optional_api_dependencies:
   - safety
+  - shields
   - telemetry
