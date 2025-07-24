@@ -69,9 +69,9 @@ llama stack run run-with-safety.yaml --image-type venv
 ## Demos
 Interactive examples are available in the `demos/` directory:
 
-- **[00-getting_started_with_garak.ipynb](demos/00-getting_started_with_garak.ipynb)**: Basic usage with predefined scan profiles and user-defined garak probes
-- **[01-scan_with_shields.ipynb](demos/01-scan_with_shields.ipynb)**: Llama Stack shield integration for scanning guardrailed LLM system
-- **[02-concurrency_limit_test.ipynb](demos/02-concurrency_limit_test.ipynb)**: Testing concurrent scan limits and job management
+- **[Getting Started](demos/01-getting_started_with_garak.ipynb)**: Basic usage with predefined scan profiles and user-defined garak probes
+- **[Scan Guardrailed System](demos/02-scan_with_shields.ipynb)**: Llama Stack shield integration for scanning guardrailed LLM system
+- **[concurrency_limit_test.ipynb](demos/concurrency_limit_test.ipynb)**: Testing concurrent scan limits
 
 ## Scan Profiles
 
