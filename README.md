@@ -14,15 +14,13 @@ This repository implements [Garak](https://github.com/NVIDIA/garak) as a Llama S
   - 🔴 **Bias**: Evaluates discriminatory outputs
 - **Flexible Scan Profiles**: Quick, standard, and comprehensive security assessments
 - **Custom Probe Support**: Run specific garak security probes
-- **Enhanced Reporting**: Multiple output formats including HTML reports and detailed logs
+- **Enhanced Reporting**: Multiple garak output formats including HTML reports and detailed logs
 
 ## Quick Start
 
 ### Prerequisites
 - Python 3.12+
 - Access to an OpenAI-compatible model endpoint
-- Installation of `uv`
-- `llama-stack` CLI tool installed
 
 ### Installation
 ```bash
@@ -31,11 +29,11 @@ git clone https://github.com/saichandrapandraju/llama-stack-provider-trustyai-ga
 cd llama-stack-provider-trustyai-garak
 
 # Create & activate venv
-uv venv .llamastack-venv
-source .llamastack-venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 
 # Install dependencies
-uv pip install -e .
+pip install -e .
 ```
 
 ### Configuration
@@ -71,8 +69,8 @@ llama stack run run-with-safety.yaml --image-type venv
 ## Demos
 Interactive examples are available in the `demos/` directory:
 
-- **[00-getting_started_with_garak.ipynb](demos/00-getting_started_with_garak.ipynb)**: Basic usage with predefined and custom scan profiles
-- **[01-scan_with_shields.ipynb](demos/01-scan_with_shields.ipynb)**: Advanced shield integration for comparative security testing
+- **[00-getting_started_with_garak.ipynb](demos/00-getting_started_with_garak.ipynb)**: Basic usage with predefined scan profiles and user-defined garak probes
+- **[01-scan_with_shields.ipynb](demos/01-scan_with_shields.ipynb)**: Llama Stack shield integration for scanning guardrailed LLM system
 - **[02-concurrency_limit_test.ipynb](demos/02-concurrency_limit_test.ipynb)**: Testing concurrent scan limits and job management
 
 ## Scan Profiles
@@ -81,7 +79,7 @@ Interactive examples are available in the `demos/` directory:
 |---------|----------|---------|----------|
 | **Quick** | ~5 min | Essential security checks (3 specific probes) | Development testing |
 | **Standard** | ~1 hours | Standard attack vectors (5 probe categories) | Pre-deployment validation |
-| **Comprehensive** | ~5 hours | All available probes (14+ probe categories) | Full security audit |
+| **Comprehensive** | >5 hours | All available probes related to Bias, Toxicity, Prompt Injection, and Jailbreak attacks (14 probe categories) | Full security audit |
 
 ### Scan Profile Details
 
@@ -91,14 +89,27 @@ Interactive examples are available in the `demos/` directory:
 - `realtoxicityprompts.RTPProfanity` (Toxicity)
 
 #### Standard Profile
+- `continuation` (Bias)
 - `dan` (Jailbreak)
 - `encoding` (Prompt Injection)
 - `promptinject` (Prompt Injection)
 - `realtoxicityprompts` (Toxicity)
-- `continuation` (Bias)
 
 #### Comprehensive Profile
-All available probe categories including experimental and advanced attacks.
+- `continuation` (Bias)
+- `dan` (Jailbreak)
+- `donotanswer` (Toxicity)
+- `encoding` (Prompt Injection)
+- `exploitation` (Prompt Injection)
+- `glitch` (Prompt Injection)
+- `goodside` (Prompt Injection)
+- `grandma` (Toxicity)
+- `latentinjection` (Prompt Injection)
+- `lmrc` (Toxicity)
+- `promptinject` (Prompt Injection)
+- `realtoxicityprompts` (Toxicity)
+- `suffix` (Jailbreak)
+- `tap` (Jailbreak)
 
 ## Usage Examples
 
@@ -113,7 +124,7 @@ client.benchmarks.register(
     benchmark_id="trustyai_garak::quick",
     dataset_id="trustyai_garak::quick",
     scoring_functions=["string"],
-    provider_benchmark_id="string",
+    provider_benchmark_id="quick",
     provider_id="trustyai_garak",
 )
 
@@ -138,7 +149,7 @@ client.benchmarks.register(
     benchmark_id="trustyai_garak::custom",
     dataset_id="trustyai_garak::custom",
     scoring_functions=["string"],
-    provider_benchmark_id="string",
+    provider_benchmark_id="custom",
     provider_id="trustyai_garak",
     metadata={
         "probes": ["promptinject.HijackHateHumans", "dan.Dan_11_0"],
@@ -154,7 +165,7 @@ client.benchmarks.register(
     benchmark_id="trustyai_garak::with_input_shield",
     dataset_id="trustyai_garak::with_input_shield",
     scoring_functions=["string"],
-    provider_benchmark_id="string",
+    provider_benchmark_id="with_input_shield",
     provider_id="trustyai_garak",
     metadata={
         "probes": ["promptinject.HijackHateHumans"],
@@ -168,7 +179,7 @@ client.benchmarks.register(
     benchmark_id="trustyai_garak::with_io_shields",
     dataset_id="trustyai_garak::with_io_shields",
     scoring_functions=["string"],
-    provider_benchmark_id="string",
+    provider_benchmark_id="with_io_shields",
     provider_id="trustyai_garak",
     metadata={
         "probes": ["promptinject.HijackHateHumans"],
@@ -219,7 +230,7 @@ providers:
     - provider_id: trustyai_garak
       provider_type: inline::trustyai_garak
       config:
-        base_url: ${env.BASE_URL:=http://localhost:8321/v1}
+        base_url: ${env.BASE_URL:=http://localhost:8321/v1} # llama-stack service base url
         timeout: ${env.GARAK_TIMEOUT:=10800}  # 3 hours default
         max_concurrent_jobs: ${env.GARAK_MAX_CONCURRENT_JOBS:=5}  # Concurrent scan limit
         max_workers: ${env.GARAK_MAX_WORKERS:=5}  # Shield scanning parallelism
@@ -256,14 +267,6 @@ providers:
 - Best for: Basic security testing
 
 ### Enhanced Mode (`run-with-safety.yaml`)
-- Shield-integrated scanning with comparative analysis
+- Shield-integrated scanning to test Guardrailed systems
 - APIs: `inference`, `eval`, `files`, `safety`, `shields`, `telemetry`
 - Best for: Advanced security testing with defense evaluation
-
-## Concurrency and Performance
-
-- **Concurrent Jobs**: Configurable via `max_concurrent_jobs` (default: 5)
-- **Shield Parallelism**: Configurable via `max_workers` (default: 5)
-- **Probe Parallelism**: Fixed at 8 parallel probes per scan
-- **Job Management**: Full lifecycle management with cancellation support
-- **Resource Cleanup**: Automatic cleanup of scan files and processes
