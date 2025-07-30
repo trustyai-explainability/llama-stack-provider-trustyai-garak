@@ -77,6 +77,7 @@ class SimpleShieldOrchestrator:
             logger.error(f"Error running shield: {e}")
             raise e
     
+    # Shall we run shields sequentially and report each shield's response?
     def _run_shields_with_early_exit(self, shield_ids: List[str], prompt: str, base_url: str, params: dict={}, max_workers: int=5) -> bool:
         """Run multiple shields in parallel and return True if any shield returns a violation"""
         with ThreadPoolExecutor(max_workers=min(max_workers, len(shield_ids))) as executor:
