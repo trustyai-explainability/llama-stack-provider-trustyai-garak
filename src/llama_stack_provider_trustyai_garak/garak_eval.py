@@ -4,7 +4,7 @@ from llama_stack.distribution.datatypes import Api, ProviderSpec
 from llama_stack.apis.files import Files, OpenAIFilePurpose, OpenAIFileObject
 from fastapi import UploadFile, Response
 from llama_stack.providers.datatypes import BenchmarksProtocolPrivate
-from llama_stack.apis.benchmarks import Benchmark, ListBenchmarksResponse
+from llama_stack.apis.benchmarks import Benchmark
 from llama_stack.apis.common.job_types import Job, JobStatus
 from llama_stack.apis.scoring import ScoringResult
 from typing import List, Dict, Optional, Any, Union, Set
@@ -13,7 +13,7 @@ import logging
 import json
 import re
 from pathlib import Path
-from .config import GarakEvalProviderConfig, GarakScanConfig, AttackType
+from .config import GarakEvalProviderConfig, GarakScanConfig
 from datetime import datetime
 import asyncio
 import signal
@@ -61,6 +61,47 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         logger.info(f"Initialized Garak provider with max concurrent jobs: {self._config.max_concurrent_jobs}")
 
         self._initialized = True
+
+    def _resolve_framework_to_probes(self, framework_id: str) -> List[str]:
+        """Resolve a framework ID to a list of probes using taxonomy filters
+        
+        Args:
+            framework_id: The framework identifier (e.g., 'owasp_llm_top10')
+            
+        Returns:
+            List of probe names that match the framework's taxonomy filters
+        """
+        framework_info = self.scan_config.FRAMEWORK_PROFILES.get(framework_id)
+        if not framework_info:
+            raise ValueError(f"Unknown framework: {framework_id}")
+        
+        taxonomy_filters = framework_info.get("taxonomy_filters", [])
+        if not taxonomy_filters:
+            logger.warning(f"No taxonomy filters defined for framework {framework_id}")
+            return []
+        
+        # Import garak's config parsing functionality
+        from garak._config import parse_plugin_spec
+        
+        resolved_probes = []
+        
+        # For each taxonomy filter, get matching probes
+        for tag_filter in taxonomy_filters:
+            try:
+                # Use garak's built-in tag filtering
+                probes, _ = parse_plugin_spec("all", "probes", probe_tag_filter=tag_filter)
+                resolved_probes.extend(probes)
+                
+            except Exception as e:
+                logger.error(f"Error resolving probes for tag filter '{tag_filter}': {e}")
+                continue
+        
+        # Remove duplicates and garak prefix
+        unique_probes = list(set([p.replace("probes.", "") for p in resolved_probes]))
+        
+        logger.info(f"Framework '{framework_id}' resolved to {len(unique_probes)} probes: {unique_probes[:5]}{'...' if len(unique_probes) > 5 else ''}")
+        
+        return unique_probes
         
     def _ensure_garak_installed(self):
         """Ensure garak is installed"""
@@ -82,16 +123,27 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         plugin_names += module_names
         return set(plugin_names)
 
-    async def list_benchmarks(self) -> ListBenchmarksResponse:
-        """List all benchmarks"""
-        return ListBenchmarksResponse(data=list(self.benchmarks.values()))
-    
     async def get_benchmark(self, benchmark_id: str) -> Optional[Benchmark]:
         """Get a benchmark by its id"""
         return self.benchmarks.get(benchmark_id)
     
     async def register_benchmark(self, benchmark: Benchmark) -> None:
-        """Register a benchmark"""
+        """Register a benchmark by checking if it's a pre-defined scan profile or compliance framework profile"""
+        if benchmark.identifier in self.benchmarks:
+            logger.warning(f"Benchmark {benchmark.identifier} already registered. Overwriting.")
+
+        if not benchmark.metadata:
+            logger.warning(f"Benchmark {benchmark.identifier} is pre-defined but has no metadata provided. Using default metadata.")
+            benchmark.metadata = self.scan_config.SCAN_PROFILES.get(benchmark.identifier, {}) or self.scan_config.FRAMEWORK_PROFILES.get(benchmark.identifier, {})
+        
+        if not benchmark.metadata.get("probes", None):
+            if benchmark.identifier in self.scan_config.SCAN_PROFILES:
+                logger.warning(f"Benchmark {benchmark.identifier} is a pre-defined legacy scan profile but has no probes provided. Using default probes.")
+                benchmark.metadata["probes"] = self.scan_config.SCAN_PROFILES[benchmark.identifier]["probes"]
+            elif benchmark.identifier in self.scan_config.FRAMEWORK_PROFILES:
+                logger.warning(f"Benchmark {benchmark.identifier} is a pre-defined compliance framework profile but has no probes provided. Using default probes.")
+                benchmark.metadata["probes"] = self._resolve_framework_to_probes(benchmark.identifier)
+
         self.benchmarks[benchmark.identifier] = benchmark
     
     def _get_job_id(self) -> str:
@@ -116,6 +168,13 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         
         if not isinstance(benchmark_config, BenchmarkConfig):
             raise TypeError("Required benchmark_config to be of type BenchmarkConfig")
+        
+        # Validate that the benchmark exists
+        benchmark = await self.get_benchmark(benchmark_id)
+        if not benchmark:
+            available_benchmarks = list(self.benchmarks.keys())
+            raise ValueError(f"Benchmark '{benchmark_id}' not found. "
+                           f"Available benchmarks: {', '.join(available_benchmarks[:10])}{'...' if len(available_benchmarks) > 10 else ''}")
         
         job_id = self._get_job_id()
         job = Job(
@@ -157,21 +216,13 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         scan_report_prefix: Path = job_scan_dir / "scan"
         
         try:
-            scan_profile:str = benchmark_id.split("::")[-1].strip()
-            if not scan_profile:
-                scan_profile = "custom"
-
-            if scan_profile not in self.scan_config.SCAN_PROFILES:
-                if not benchmark_metadata.get("probes", None):
-                    raise ValueError("No probes found for benchmark. Please specify probes list in the benchmark metadata.")
+            if not benchmark_metadata.get("probes", None):
+                raise ValueError("No probes found for benchmark. Please specify probes list in the benchmark metadata.")
                 
-                scan_profile_config:dict = {
-                    "probes": benchmark_metadata["probes"],
-                    "timeout": benchmark_metadata.get("timeout", self._config.timeout)
-                }
-            else:
-                scan_profile_config:dict = self.scan_config.SCAN_PROFILES[scan_profile]
-
+            scan_profile_config:dict = {
+                "probes": benchmark_metadata["probes"],
+                "timeout": benchmark_metadata.get("timeout", self._config.timeout)
+            }
 
             cmd: List[str] = await self._build_command(benchmark_config, benchmark_id, str(scan_report_prefix), scan_profile_config)
             logger.info(f"Running scan with command: {' '.join(cmd)}")
@@ -439,7 +490,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
                         outputs: list = entry.get("outputs", [])
 
                         generation["probe"] = probe_name
-                        generation["attack_type"] = self.scan_config.PROBE_TO_ATTACK.get(probe_category, AttackType.CUSTOM)
+                        # generation["attack_type"] = self.scan_config.PROBE_TO_ATTACK.get(probe_category, AttackType.CUSTOM)
                         generation["vulnerable"] = is_vulnerable
                         generation["prompt"] = entry.get("prompt", "")
                         generation["response"] = outputs[0] if len(outputs) > 0 and outputs[0] else ""

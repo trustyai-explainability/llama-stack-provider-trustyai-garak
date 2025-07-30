@@ -33,7 +33,43 @@ models:
   model_id: ${env.INFERENCE_MODEL}
   provider_id: vllm
   model_type: llm
-
+benchmarks:
+  - benchmark_id: quick
+    dataset_id: garak
+    scoring_functions:
+      - garak_scoring
+    provider_id: trustyai_garak
+    provider_benchmark_id: quick
+  - benchmark_id: standard
+    dataset_id: garak
+    scoring_functions:
+      - garak_scoring
+    provider_id: trustyai_garak
+    provider_benchmark_id: standard
+  - benchmark_id: owasp_llm_top10
+    dataset_id: garak
+    scoring_functions:
+      - garak_scoring
+    provider_id: trustyai_garak
+    provider_benchmark_id: owasp_llm_top10
+  - benchmark_id: avid_security
+    dataset_id: garak
+    scoring_functions:
+      - garak_scoring
+    provider_id: trustyai_garak
+    provider_benchmark_id: avid_security
+  - benchmark_id: avid_ethics
+    dataset_id: garak
+    scoring_functions:
+      - garak_scoring
+    provider_id: trustyai_garak
+    provider_benchmark_id: avid_ethics
+  - benchmark_id: avid_performance
+    dataset_id: garak
+    scoring_functions:
+      - garak_scoring
+    provider_id: trustyai_garak
+    provider_benchmark_id: avid_performance
 server:
   port: 8321
 external_providers_dir: ./providers.d

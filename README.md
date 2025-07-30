@@ -5,14 +5,10 @@ This repository implements [Garak](https://github.com/NVIDIA/garak) as a Llama S
 
 ## Features
 - **Security Vulnerability Detection**: Automated testing for prompt injection, jailbreaks, toxicity, and bias
+- **Compliance Framework Support**: Pre-built profiles for established standards (OWASP LLM Top 10, AVID taxonomy)
+- **Auto-Registered Benchmarks**: All frameworks automatically available as discoverable benchmarks
 - **Shield Integration**: Test LLMs with and without Llama Stack shields for comparative security analysis
 - **Concurrency Control**: Configurable limits for concurrent scans and shield operations
-- **Multiple Attack Categories**: 
-  - 🔴 **Prompt Injection**: Tests for input manipulation vulnerabilities
-  - 🔴 **Jailbreak**: Attempts to bypass safety guardrails
-  - 🔴 **Toxicity**: Detects harmful content generation
-  - 🔴 **Bias**: Evaluates discriminatory outputs
-- **Flexible Scan Profiles**: Quick, standard, and comprehensive security assessments
 - **Custom Probe Support**: Run specific garak security probes
 - **Enhanced Reporting**: Multiple garak output formats including HTML reports and detailed logs
 
@@ -25,7 +21,7 @@ This repository implements [Garak](https://github.com/NVIDIA/garak) as a Llama S
 ### Installation
 ```bash
 # Clone the repository
-git clone https://github.com/saichandrapandraju/llama-stack-provider-trustyai-garak.git
+git clone https://github.com/trustyai-explainability/llama-stack-provider-trustyai-garak.git
 cd llama-stack-provider-trustyai-garak
 
 # Create & activate venv
@@ -73,70 +69,81 @@ Interactive examples are available in the `demos/` directory:
 - **[Scan Guardrailed System](demos/02-scan_with_shields.ipynb)**: Llama Stack shield integration for scanning guardrailed LLM system
 - **[concurrency_limit_test.ipynb](demos/concurrency_limit_test.ipynb)**: Testing concurrent scan limits
 
-## Scan Profiles
+## Compliance Frameworks
 
-| Profile | Duration | Probes | Use Case |
-|---------|----------|---------|----------|
-| **Quick** | ~5 min | Essential security checks (3 specific probes) | Development testing |
-| **Standard** | ~1 hours | Standard attack vectors (5 probe categories) | Pre-deployment validation |
-| **Comprehensive** | >5 hours | All available probes related to Bias, Toxicity, Prompt Injection, and Jailbreak attacks (14 probe categories) | Full security audit |
+Pre-registered compliance framework benchmarks available immediately:
 
-### Scan Profile Details
+### Compliance Standards
+| Framework | Benchmark ID | Description | Duration |
+|-----------|--------------|--------------| --------|
+| **OWASP LLM Top 10** | `owasp_llm_top10` | OWASP Top 10 for Large Language Model Applications | ~12 hours |
+| **AVID Security** | `avid_security` | AI Vulnerability Database - Security vulnerabilities | ~12 hours |
+| **AVID Ethics** | `avid_ethics` | AI Vulnerability Database - Ethical concerns | ~5 hours |
+| **AVID Performance** | `avid_performance` | AI Vulnerability Database - Performance issues | ~5 hours |
 
-#### Quick Profile
-- `continuation.ContinueSlursReclaimedSlurs` (Bias)
-- `promptinject.HijackHateHumans` (Prompt Injection)
-- `realtoxicityprompts.RTPProfanity` (Toxicity)
-
-#### Standard Profile
-- `continuation` (Bias)
-- `dan` (Jailbreak)
-- `encoding` (Prompt Injection)
-- `promptinject` (Prompt Injection)
-- `realtoxicityprompts` (Toxicity)
-
-#### Comprehensive Profile
-- `continuation` (Bias)
-- `dan` (Jailbreak)
-- `donotanswer` (Toxicity)
-- `encoding` (Prompt Injection)
-- `exploitation` (Prompt Injection)
-- `glitch` (Prompt Injection)
-- `goodside` (Prompt Injection)
-- `grandma` (Toxicity)
-- `latentinjection` (Prompt Injection)
-- `lmrc` (Toxicity)
-- `promptinject` (Prompt Injection)
-- `realtoxicityprompts` (Toxicity)
-- `suffix` (Jailbreak)
-- `tap` (Jailbreak)
+### Scan Profiles for Testing
+| Profile | Benchmark ID | Duration | Probes |
+|---------|--------------|----------|---------|
+| **Quick** | `quick` | ~5 min | Essential security checks (3 specific probes) |
+| **Standard** | `standard` | ~1 hours | Standard attack vectors (5 probe categories) |
 
 ## Usage Examples
 
-### Built-in Scan Profiles
+### Discover Available Benchmarks
 ```python
 from llama_stack_client import LlamaStackClient
 
 client = LlamaStackClient(base_url="http://localhost:8321")
 
-# Register a quick security scan (5 min)
-client.benchmarks.register(
-    benchmark_id="trustyai_garak::quick",
-    dataset_id="trustyai_garak::quick",
-    scoring_functions=["string"],
-    provider_benchmark_id="quick",
-    provider_id="trustyai_garak",
-)
+# List all available benchmarks (auto-registered)
+benchmarks = client.benchmarks.list()
+for benchmark in benchmarks.data:
+    print(f"- {benchmark.identifier}: {benchmark.metadata.get('name', 'No name')}")
+```
 
-# Run evaluation
+### Compliance Framework Testing
+```python
+# Run OWASP LLM Top 10 security assessment
 job = client.eval.run_eval(
-    benchmark_id="trustyai_garak::quick",
+    benchmark_id="owasp_llm_top10",
     benchmark_config={
         "eval_candidate": {
             "type": "model",
             "model": "qwen2", # change this to your inference model name
-            "provider_id": "trustyai_garak",
-            "sampling_params": {},
+            "sampling_params": {
+                "max_tokens": 100
+            },
+        }
+     },
+)
+
+# Run AVID Security assessment
+job = client.eval.run_eval(
+    benchmark_id="avid_security",
+    benchmark_config={
+        "eval_candidate": {
+            "type": "model", 
+            "model": "qwen2",
+            "sampling_params": {
+                "max_tokens": 100
+            },
+        }
+     },
+)
+```
+
+### Built-in Scan Profiles for testing
+```python
+# Quick security scan (5 min)
+job = client.eval.run_eval(
+    benchmark_id="quick",
+    benchmark_config={
+        "eval_candidate": {
+            "type": "model",
+            "model": "qwen2", # change this to your inference model name
+            "sampling_params": {
+                "max_tokens": 100
+            },
         }
      },
 )
@@ -146,14 +153,14 @@ job = client.eval.run_eval(
 ```python
 # Register custom probes
 client.benchmarks.register(
-    benchmark_id="trustyai_garak::custom",
-    dataset_id="trustyai_garak::custom",
-    scoring_functions=["string"],
+    benchmark_id="custom",
+    dataset_id="garak", # placeholder
+    scoring_functions=["garak_scoring"], # placeholder
     provider_benchmark_id="custom",
     provider_id="trustyai_garak",
     metadata={
-        "probes": ["promptinject.HijackHateHumans", "dan.Dan_11_0"],
-        "timeout": 600  # 10 minutes
+        "probes": ["latentinjection.LatentJailbreak", "snowball.GraphConnectivity"],
+        "timeout": 900  # 15 minutes
     }
 )
 ```
@@ -162,10 +169,10 @@ client.benchmarks.register(
 ```python
 # Test with input shields only
 client.benchmarks.register(
-    benchmark_id="trustyai_garak::with_input_shield",
-    dataset_id="trustyai_garak::with_input_shield",
-    scoring_functions=["string"],
-    provider_benchmark_id="with_input_shield",
+    benchmark_id="PI_with_input_shield",
+    dataset_id="garak", # placeholder
+    scoring_functions=["garak_scoring"], # placeholder
+    provider_benchmark_id="PI_with_input_shield",
     provider_id="trustyai_garak",
     metadata={
         "probes": ["promptinject.HijackHateHumans"],
@@ -176,10 +183,10 @@ client.benchmarks.register(
 
 # Test with separate input/output shields
 client.benchmarks.register(
-    benchmark_id="trustyai_garak::with_io_shields",
-    dataset_id="trustyai_garak::with_io_shields",
-    scoring_functions=["string"],
-    provider_benchmark_id="with_io_shields",
+    benchmark_id="PI_with_io_shields",
+    dataset_id="garak", # placeholder
+    scoring_functions=["garak_scoring"], # placeholder
+    provider_benchmark_id="PI_with_io_shields",
     provider_id="trustyai_garak",
     metadata={
         "probes": ["promptinject.HijackHateHumans"],
@@ -195,16 +202,16 @@ client.benchmarks.register(
 ### Job Management
 ```python
 # Check job status
-job_status = client.eval.jobs.status(job_id=job.job_id, benchmark_id="trustyai_garak::quick")
+job_status = client.eval.jobs.status(job_id=job.job_id, benchmark_id="quick")
 print(f"Job status: {job_status.status}")
 print(f"Running jobs: {job_status.metadata.get('running_jobs', 'N/A')}")
 
 # Cancel a running job
-client.eval.jobs.cancel(job_id=job.job_id, benchmark_id="trustyai_garak::quick")
+client.eval.jobs.cancel(job_id=job.job_id, benchmark_id="quick")
 
 # Get evaluation results
 if job_status.status == "completed":
-    results = client.eval.get_eval_job_result(job_id=job.job_id, benchmark_id="trustyai_garak::quick")
+    results = client.eval.get_eval_job_result(job_id=job.job_id, benchmark_id="quick")
 ```
 
 ### Accessing Scan Reports

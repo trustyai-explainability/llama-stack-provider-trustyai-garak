@@ -29,14 +29,11 @@ async def get_provider_impl(
         if deps is None:
             deps = {}
 
-
-
         # Extract base_url from config if available
         base_url = None
         if hasattr(config, "base_url"):
             base_url = config.base_url
             logger.debug(f"Using base_url from config: {base_url}")
-
 
         impl = GarakEvalAdapter(config=config, deps=deps)
         await impl.initialize()
