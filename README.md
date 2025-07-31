@@ -5,8 +5,7 @@ This repository implements [Garak](https://github.com/NVIDIA/garak) as a Llama S
 
 ## Features
 - **Security Vulnerability Detection**: Automated testing for prompt injection, jailbreaks, toxicity, and bias
-- **Compliance Framework Support**: Pre-built profiles for established standards (OWASP LLM Top 10, AVID taxonomy)
-- **Auto-Registered Benchmarks**: All frameworks automatically available as discoverable benchmarks
+- **Compliance Framework Support**: Pre-built benchmarks for established standards ([OWASP LLM Top 10](https://genai.owasp.org/llm-top-10/), [AVID taxonomy](https://docs.avidml.org/taxonomy/effect-sep-view))
 - **Shield Integration**: Test LLMs with and without Llama Stack shields for comparative security analysis
 - **Concurrency Control**: Configurable limits for concurrent scans and shield operations
 - **Custom Probe Support**: Run specific garak security probes
@@ -76,17 +75,18 @@ Pre-registered compliance framework benchmarks available immediately:
 ### Compliance Standards
 | Framework | Benchmark ID | Description | Duration |
 |-----------|--------------|--------------| --------|
-| **OWASP LLM Top 10** | `owasp_llm_top10` | OWASP Top 10 for Large Language Model Applications | ~12 hours |
-| **AVID Security** | `avid_security` | AI Vulnerability Database - Security vulnerabilities | ~12 hours |
-| **AVID Ethics** | `avid_ethics` | AI Vulnerability Database - Ethical concerns | ~5 hours |
-| **AVID Performance** | `avid_performance` | AI Vulnerability Database - Performance issues | ~5 hours |
+| **[OWASP LLM Top 10](https://genai.owasp.org/llm-top-10/)** | `owasp_llm_top10` | OWASP Top 10 for Large Language Model Applications | ~8 hours |
+| **[AVID Security](https://docs.avidml.org/taxonomy/effect-sep-view/security)** | `avid_security` | AI Vulnerability Database - Security vulnerabilities | ~8 hours |
+| **[AVID Ethics](https://docs.avidml.org/taxonomy/effect-sep-view/ethics)** | `avid_ethics` | AI Vulnerability Database - Ethical concerns | ~30 minutes |
+| **[AVID Performance](https://docs.avidml.org/taxonomy/effect-sep-view/performance)** | `avid_performance` | AI Vulnerability Database - Performance issues | ~40 minutes |
 
 ### Scan Profiles for Testing
 | Profile | Benchmark ID | Duration | Probes |
 |---------|--------------|----------|---------|
-| **Quick** | `quick` | ~5 min | Essential security checks (3 specific probes) |
-| **Standard** | `standard` | ~1 hours | Standard attack vectors (5 probe categories) |
+| **Quick** | `quick` | ~5 minutes | Essential security checks (3 specific probes) |
+| **Standard** | `standard` | ~1 hour | Standard attack vectors (5 probe categories) |
 
+_Note: All the above duration estimates are calculated with a Qwen2.5 7B model deployed via vLLM on Openshift._
 ## Usage Examples
 
 ### Discover Available Benchmarks

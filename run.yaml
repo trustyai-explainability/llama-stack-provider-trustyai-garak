@@ -4,6 +4,7 @@ apis:
   - inference
   - eval
   - files
+  - benchmarks
 providers:
   inference:
     - provider_id: vllm

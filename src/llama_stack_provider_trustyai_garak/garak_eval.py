@@ -1,10 +1,10 @@
 from llama_stack.apis.eval import Eval, EvaluateResponse, BenchmarkConfig
-from llama_stack.apis.inference import SamplingParams
+from llama_stack.apis.inference import SamplingParams, SamplingStrategy, TopPSamplingStrategy, TopKSamplingStrategy
 from llama_stack.distribution.datatypes import Api, ProviderSpec
 from llama_stack.apis.files import Files, OpenAIFilePurpose, OpenAIFileObject
 from fastapi import UploadFile, Response
 from llama_stack.providers.datatypes import BenchmarksProtocolPrivate
-from llama_stack.apis.benchmarks import Benchmark
+from llama_stack.apis.benchmarks import Benchmark, Benchmarks
 from llama_stack.apis.common.job_types import Job, JobStatus
 from llama_stack.apis.scoring import ScoringResult
 from typing import List, Dict, Optional, Any, Union, Set
@@ -29,6 +29,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         super().__init__(config)
         self._config: GarakEvalProviderConfig = config
         self.file_api: Files = deps[Api.files]
+        self.benchmarks_api: Benchmarks = deps[Api.benchmarks]
         self.safety_api: Optional[Safety] = deps.get(Api.safety, None)
         self.shields_api: Optional[Shields] = deps.get(Api.shields, None)
         self.scan_config = GarakScanConfig()
@@ -98,6 +99,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         
         # Remove duplicates and garak prefix
         unique_probes = list(set([p.replace("probes.", "") for p in resolved_probes]))
+        unique_probes.sort()
         
         logger.info(f"Framework '{framework_id}' resolved to {len(unique_probes)} probes: {unique_probes[:5]}{'...' if len(unique_probes) > 5 else ''}")
         
@@ -125,23 +127,31 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
 
     async def get_benchmark(self, benchmark_id: str) -> Optional[Benchmark]:
         """Get a benchmark by its id"""
-        return self.benchmarks.get(benchmark_id)
+        # return self.benchmarks.get(benchmark_id)
+        return await self.benchmarks_api.get_benchmark(benchmark_id)
     
     async def register_benchmark(self, benchmark: Benchmark) -> None:
         """Register a benchmark by checking if it's a pre-defined scan profile or compliance framework profile"""
-        if benchmark.identifier in self.benchmarks:
-            logger.warning(f"Benchmark {benchmark.identifier} already registered. Overwriting.")
+        stored_benchmark = await self.get_benchmark(benchmark.identifier)
+        if stored_benchmark:
+            logger.warning(f"Benchmark '{benchmark.identifier}' already registered. Skipping registration.")
+            if benchmark.identifier not in self.benchmarks:
+                self.benchmarks[benchmark.identifier] = stored_benchmark
+            return
+        
+        if benchmark.identifier in self.scan_config.SCAN_PROFILES | self.scan_config.FRAMEWORK_PROFILES:
+            logger.warning(f"Benchmark '{benchmark.identifier}' is a pre-defined scan profile or compliance framework profile. It is not recommended to register it as a custom benchmark.")
 
         if not benchmark.metadata:
-            logger.warning(f"Benchmark {benchmark.identifier} is pre-defined but has no metadata provided. Using default metadata.")
+            logger.info(f"Benchmark '{benchmark.identifier}' is pre-defined but has no metadata provided. Using default metadata.")
             benchmark.metadata = self.scan_config.SCAN_PROFILES.get(benchmark.identifier, {}) or self.scan_config.FRAMEWORK_PROFILES.get(benchmark.identifier, {})
         
         if not benchmark.metadata.get("probes", None):
             if benchmark.identifier in self.scan_config.SCAN_PROFILES:
-                logger.warning(f"Benchmark {benchmark.identifier} is a pre-defined legacy scan profile but has no probes provided. Using default probes.")
+                logger.info(f"Benchmark '{benchmark.identifier}' is a pre-defined legacy scan profile but has no probes provided. Using default probes.")
                 benchmark.metadata["probes"] = self.scan_config.SCAN_PROFILES[benchmark.identifier]["probes"]
             elif benchmark.identifier in self.scan_config.FRAMEWORK_PROFILES:
-                logger.warning(f"Benchmark {benchmark.identifier} is a pre-defined compliance framework profile but has no probes provided. Using default probes.")
+                logger.info(f"Benchmark '{benchmark.identifier}' is a pre-defined compliance framework profile but has no probes provided. Using default probes.")
                 benchmark.metadata["probes"] = self._resolve_framework_to_probes(benchmark.identifier)
 
         self.benchmarks[benchmark.identifier] = benchmark
@@ -315,7 +325,13 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             scan_log_file: Path to the scan log file
             scan_profile_config: Configuration for the scan profile
         """
-        generator_options:dict = await self._get_generator_options(benchmark_config, benchmark_id)
+        stored_benchmark = await self.get_benchmark(benchmark_id)
+        if not stored_benchmark:
+            raise ValueError(f"Benchmark {benchmark_id} not found")
+
+        benchmark_metadata: dict = getattr(stored_benchmark, "metadata", {})
+
+        generator_options:dict = await self._get_generator_options(benchmark_config, benchmark_metadata)
 
         if self.safety_api:
             model_type: str = self._config.garak_model_type_function
@@ -327,31 +343,89 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         cmd: List[str] = ["garak",
                           "--model_type", model_type,
                           "--model_name", model_name,
-                          "--generations", "1",
                           "--generator_options", json.dumps(generator_options),
                           "--report_prefix", scan_report_prefix.strip(),
-                          "--parallel_attempts", str(self.scan_config.parallel_probes)
                           ]
+        
+        cmd.extend(["--parallel_attempts", str(benchmark_metadata.get("parallel_attempts", self.scan_config.parallel_probes))])
+        cmd.extend(["--generations", str(benchmark_metadata.get("generations", 1))])
+
+        if "seed" in benchmark_metadata:
+            cmd.extend(["--seed", str(benchmark_metadata["seed"])])
+
+        if "deprefix" in benchmark_metadata:
+            cmd.extend(["--deprefix", benchmark_metadata["deprefix"]])
+
+        if "eval_threshold" in benchmark_metadata:
+            cmd.extend(["--eval_threshold", str(benchmark_metadata["eval_threshold"])])
+        
+        if "probe_tags" in benchmark_metadata:
+            cmd.extend(["--probe_tags", self._normalize_list_arg(benchmark_metadata["probe_tags"])])
+        
+        if "probe_options" in benchmark_metadata:
+            cmd.extend(["--probe_options", json.dumps(benchmark_metadata["probe_options"])])
+        
+        if "detectors" in benchmark_metadata:
+            cmd.extend(["--detectors", self._normalize_list_arg(benchmark_metadata["detectors"])])
+        
+        if "extended_detectors" in benchmark_metadata:
+            cmd.extend(["--extended_detectors", self._normalize_list_arg(benchmark_metadata["extended_detectors"])])
+        
+        if "detector_options" in benchmark_metadata:
+            cmd.extend(["--detector_options", json.dumps(benchmark_metadata["detector_options"])])
+        
+        if "buffs" in benchmark_metadata:
+            cmd.extend(["--buffs", self._normalize_list_arg(benchmark_metadata["buffs"])])
+        
+        if "buff_options" in benchmark_metadata:
+            cmd.extend(["--buff_options", json.dumps(benchmark_metadata["buff_options"])])
+        
+        if "harness_options" in benchmark_metadata:
+            cmd.extend(["--harness_options", json.dumps(benchmark_metadata["harness_options"])])
+        
+        if "taxonomy" in benchmark_metadata:
+            cmd.extend(["--taxonomy", benchmark_metadata["taxonomy"]])
+        
+        if "generate_autodan" in benchmark_metadata:
+            cmd.extend(["--generate_autodan", benchmark_metadata["generate_autodan"]])
+    
         # Add probes
         probes = scan_profile_config["probes"]
+        if isinstance(probes, str):
+            if "," in probes:
+                probes = probes.split(",")
+            else:
+                probes = [probes]
+        
         if probes != ["all"]:
             for probe in probes:
                 if probe not in self.all_probes:
                     raise ValueError(f"Probe '{probe}' not found in garak. "
                                      "Please provide valid garak probe name. "
-                                     "Or you can just use predefined scan profiles ('quick', 'standard', 'comprehensive') as benchmark_id.")
+                                     "Or you can just use predefined scan profiles ('quick', 'standard') as benchmark_id.")
             cmd.extend(["--probes", ",".join(probes)])
         return cmd
+    
+    def _normalize_list_arg(self, arg: str | list[str]) -> str:
+        """Normalize the list argument to a string."""
+        if isinstance(arg, str):
+            return arg
+        else:
+            return ",".join(arg)
 
-    async def _get_generator_options(self, benchmark_config: BenchmarkConfig, benchmark_id: str) -> dict:
+    async def _get_generator_options(self, benchmark_config: BenchmarkConfig, benchmark_metadata: dict) -> dict:
         """Get the generator options based on the availability of the safety API."""
         if self.safety_api:
-            return await self._get_function_based_generator_options(benchmark_config, benchmark_id)
+            return await self._get_function_based_generator_options(benchmark_config, benchmark_metadata)
         else:
-            return self._get_openai_compatible_generator_options(benchmark_config)
+            return await self._get_openai_compatible_generator_options(benchmark_config, benchmark_metadata)
 
-    def _get_openai_compatible_generator_options(self, benchmark_config: BenchmarkConfig) -> dict:
+    async def _get_openai_compatible_generator_options(self, benchmark_config: BenchmarkConfig, benchmark_metadata: dict) -> dict:
         """Get the generator options for the OpenAI compatible generator."""
+
+        if 'generator_options' in benchmark_metadata:
+            return benchmark_metadata['generator_options']
+        
         base_url: str = self._config.base_url.rstrip("/")
         if not base_url.endswith("openai/v1"):
             if base_url.endswith("/v1"):
@@ -371,12 +445,33 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
                     }
                 }
         # Add extra params
-        sampling_params: SamplingParams = benchmark_config.eval_candidate.sampling_params
-        if sampling_params:
-            generator_options["openai"]["OpenAICompatible"].update(sampling_params.model_dump())
+        sampling_params:SamplingParams = benchmark_config.eval_candidate.sampling_params
+        valid_params:dict = {}
+
+        # TODO: use model_dump() here..?
+        strategy: SamplingStrategy = sampling_params.strategy
+        valid_params["strategy"] = strategy.type
+        if isinstance(strategy, TopPSamplingStrategy):
+            if strategy.top_p is not None:
+                valid_params['top_p'] = strategy.top_p
+            if strategy.temperature is not None:
+                valid_params['temperature'] = strategy.temperature
+        elif isinstance(strategy, TopKSamplingStrategy):
+            if strategy.top_k is not None:
+                valid_params['top_k'] = strategy.top_k
+
+        if sampling_params.max_tokens is not None:
+            valid_params['max_tokens'] = sampling_params.max_tokens
+        if sampling_params.repetition_penalty is not None:
+            valid_params['repetition_penalty'] = sampling_params.repetition_penalty
+        if sampling_params.stop is not None:
+            valid_params['stop'] = sampling_params.stop
+        
+        if valid_params:
+            generator_options["openai"]["OpenAICompatible"].update(valid_params)
         return generator_options
     
-    async def _get_function_based_generator_options(self, benchmark_config: BenchmarkConfig, benchmark_id: str) -> dict:
+    async def _get_function_based_generator_options(self, benchmark_config: BenchmarkConfig, benchmark_metadata: dict) -> dict:
         """Get the generator options for the custom function-based generator."""
         
         base_url: str = self._config.base_url.rstrip("/")
@@ -391,10 +486,8 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             "output": []
         }
 
-        benchmark_metadata: dict = getattr(self.benchmarks.get(benchmark_id), "metadata", {})
-
         if not benchmark_metadata:
-            logger.warning(f"No benchmark metadata found for benchmark {benchmark_id}")
+            logger.warning(f"No benchmark metadata found.")
         else:
             ## get the shield_ids and/or shield_config from the benchmark metadata
             shield_ids: List[str] = benchmark_metadata.get("shield_ids", [])
@@ -445,7 +538,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             if not await self.shields_api.get_shield(shield_id):
                 raise ValueError(error_msg.format(type="Output", shield_id=shield_id))
 
-    async def _parse_scan_results(self, report_file_id: str, job_id: str) -> EvaluateResponse:
+    async def _parse_scan_results(self, report_file_id: str, job_id: str, benchmark_metadata: dict) -> EvaluateResponse:
         """Parse the scan results from the report file.
         
         Args:
@@ -465,6 +558,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             score_rows: Dict[str, List[Dict[str, float]]] = {}
             aggregated_results_by_probe: Dict[str, Dict[str, List[float]]] = {}
             report_file_content_str: str = report_file_content.body.decode("utf-8")
+            eval_threshold: float = float(benchmark_metadata.get("eval_threshold", self.scan_config.VULNERABLE_SCORE))
 
             for line in report_file_content_str.split("\n"):
                 if not line.strip():
@@ -484,7 +578,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
                         
                         for detector, _scores in detector_results.items():
                             _scores = _scores if isinstance(_scores, list) else [_scores]
-                            if any(score >= self.scan_config.VULNERABLE_SCORE for score in _scores):
+                            if any(score >= eval_threshold for score in _scores):
                                 is_vulnerable = True
                             detector_maxscore_map[detector] = max(_scores) if _scores else 0
                         outputs: list = entry.get("outputs", [])
@@ -568,6 +662,12 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             job_id: The job id
         """
         job = self._jobs.get(job_id)
+        stored_benchmark = await self.get_benchmark(benchmark_id)
+        if not stored_benchmark:
+            raise ValueError(f"Benchmark {benchmark_id} not found")
+
+        benchmark_metadata: dict = getattr(stored_benchmark, "metadata", {})
+
         if not job:
             logger.warning(f"Job {job_id} not found")
             return EvaluateResponse(generations=[], scores={})
@@ -593,7 +693,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
                 logger.warning(f"No scan report file found for job {job_id}")
                 return EvaluateResponse(generations=[], scores={})
             try:
-                results:EvaluateResponse = await self._parse_scan_results(report_file_id = scan_report_file_id, job_id = job_id)
+                results:EvaluateResponse = await self._parse_scan_results(report_file_id = scan_report_file_id, job_id = job_id, benchmark_metadata = benchmark_metadata)
             except Exception as e:
                 logger.error(f"Error parsing scan results for job {job_id}: {e}")
                 return EvaluateResponse(generations=[], scores={})
