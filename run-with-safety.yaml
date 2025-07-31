@@ -24,6 +24,7 @@ providers:
         timeout: ${env.GARAK_TIMEOUT:=10800} # 3 hours max timeout for garak scan
         max_workers: ${env.GARAK_MAX_WORKERS:=5} # 5 max workers for shield scanning
         max_concurrent_jobs: ${env.GARAK_MAX_CONCURRENT_JOBS:=5} # 5 max concurrent garak scans
+        tls_verify: ${env.GARAK_TLS_VERIFY:=true}
   files:
     - provider_id: meta-reference-files
       provider_type: inline::localfs

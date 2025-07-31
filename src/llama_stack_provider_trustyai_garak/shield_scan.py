@@ -5,10 +5,10 @@ import httpx
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import backoff
-
 from llama_stack.apis.safety import RunShieldResponse, ViolationLevel
 from llama_stack.apis.inference import OpenAIChatCompletion
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -37,18 +37,47 @@ if garak_log_file and not logger.handlers:
     
     logger.info(f"Shield scan logger configured to write to: {garak_log_file}")
 
-
+# Global process-level client cache
+_process_clients = {}
+_client_lock = threading.Lock()
 
 class SimpleShieldOrchestrator:
-    def __init__(self):
-        self._client = httpx.Client(
-            timeout=30, # TODO: make this configurable
-            limits=httpx.Limits(
-                max_connections=20, # TODO: make this configurable
-                max_keepalive_connections=10, # TODO: make this configurable
-            ),
-            http2=True
-        )
+
+    def _get_tls_verify_setting(self):
+        """Parse GARAK_TLS_VERIFY environment variable for httpx verify parameter"""
+
+        tls_verify = os.getenv("GARAK_TLS_VERIFY", "True")
+        logger.debug(f"GARAK_TLS_VERIFY environment variable: {tls_verify}")
+        
+        if tls_verify.lower() in ("false", "0", "no", "off"):
+            return False
+        elif tls_verify.lower() in ("true", "1", "yes", "on"):
+            return True
+        else:
+            return tls_verify
+
+    @property
+    def client(self):
+        """Get or create HTTP client for current process"""
+        process_id = os.getpid()
+        
+        with _client_lock:
+            if process_id not in _process_clients:
+                verify = self._get_tls_verify_setting()
+                logger.debug(f"Creating NEW httpx client in process {process_id} with verify: {verify}")
+                _process_clients[process_id] = httpx.Client(
+                    timeout=30,
+                    limits=httpx.Limits(
+                        max_connections=20,
+                        max_keepalive_connections=10,
+                    ),
+                    http2=True,
+                    verify=verify
+                )
+            else:
+                logger.debug(f"Reusing existing client in process {process_id}")
+            
+            return _process_clients[process_id]
 
     @backoff.on_exception(
             backoff.fibo, 
@@ -58,7 +87,7 @@ class SimpleShieldOrchestrator:
     def _get_shield_response(self, shield_id: str, prompt: str, base_url: str, params: dict={}) -> RunShieldResponse:
         shield_run_url = f"{base_url}{RUN_SHIELD_URI}"
         try:
-            response = self._client.post(
+            response = self.client.post(
                 shield_run_url,
                 json={
                     "shield_id": shield_id,
@@ -104,7 +133,7 @@ class SimpleShieldOrchestrator:
     def _get_LLM_response(self, model: str, prompt: str, base_url: str) -> OpenAIChatCompletion:
         inference_url = f"{base_url}{OPENAI_COMPATIBLE_INFERENCE_URI}"
         try:
-            response = self._client.post(
+            response = self.client.post(
                 inference_url,
                 json={
                     "model": model,
@@ -163,10 +192,12 @@ class SimpleShieldOrchestrator:
         return [llm_response]
 
     def close(self):
-        if hasattr(self, '_client'):
-            self._client.close()
+        """Close client for current process"""
+        process_id = os.getpid()
+        with _client_lock:
+            if process_id in _process_clients:
+                _process_clients[process_id].close()
+                del _process_clients[process_id]
     
-    def __del__(self):
-        self.close()
 
 simple_shield_orchestrator = SimpleShieldOrchestrator()
