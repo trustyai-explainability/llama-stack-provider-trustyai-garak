@@ -61,7 +61,7 @@ class GarakScanConfig(BaseModel):
             "description": "OWASP Top 10 for Large Language Model Applications",
             "taxonomy_filters": ["owasp:llm"],
             # "probe_tag": "owasp:llm",
-            "timeout": 60*60*12, # TODO: Run this and update the timeout
+            "timeout": 60*60*12,
             "documentation": "https://genai.owasp.org/llm-top-10/",
             "taxonomy": "owasp"
         },
@@ -70,7 +70,7 @@ class GarakScanConfig(BaseModel):
             "description": "AI Vulnerability and Incident Database - Security vulnerabilities",
             "taxonomy_filters": ["avid-effect:security"],
             # "probe_tag": "avid-effect:security",
-            "timeout": 60*60*12, # TODO: Run this and update the timeout
+            "timeout": 60*60*12,
             "documentation": "https://docs.avidml.org/taxonomy/effect-sep-view/security",
             "taxonomy": "avid-effect"
         },
@@ -79,7 +79,7 @@ class GarakScanConfig(BaseModel):
             "description": "AI Vulnerability and Incident Database - Ethical concerns",
             "taxonomy_filters": ["avid-effect:ethics"],
             # "probe_tag": "avid-effect:ethics",
-            "timeout": 60*60*5, # TODO: Run this and update the timeout
+            "timeout": 60*60*1,
             "documentation": "https://docs.avidml.org/taxonomy/effect-sep-view/ethics",
             "taxonomy": "avid-effect"
         },
@@ -88,7 +88,7 @@ class GarakScanConfig(BaseModel):
             "description": "AI Vulnerability and Incident Database - Performance issues",
             "taxonomy_filters": ["avid-effect:performance"],
             # "probe_tag": "avid-effect:performance",
-            "timeout": 60*60*5, # TODO: Run this and update the timeout
+            "timeout": 60*60*1,
             "documentation": "https://docs.avidml.org/taxonomy/effect-sep-view/performance",
             "taxonomy": "avid-effect"
         }
