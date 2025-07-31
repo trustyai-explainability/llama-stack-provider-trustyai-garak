@@ -62,7 +62,8 @@ class GarakScanConfig(BaseModel):
             "taxonomy_filters": ["owasp:llm"],
             # "probe_tag": "owasp:llm",
             "timeout": 60*60*12, # TODO: Run this and update the timeout
-            "documentation": "https://genai.owasp.org/llm-top-10/"
+            "documentation": "https://genai.owasp.org/llm-top-10/",
+            "taxonomy": "owasp"
         },
         "avid_security": {
             "name": "AVID Security Taxonomy",
@@ -70,7 +71,8 @@ class GarakScanConfig(BaseModel):
             "taxonomy_filters": ["avid-effect:security"],
             # "probe_tag": "avid-effect:security",
             "timeout": 60*60*12, # TODO: Run this and update the timeout
-            "documentation": "https://docs.avidml.org/taxonomy/effect-sep-view/security"
+            "documentation": "https://docs.avidml.org/taxonomy/effect-sep-view/security",
+            "taxonomy": "avid-effect"
         },
         "avid_ethics": {
             "name": "AVID Ethics Taxonomy", 
@@ -78,7 +80,8 @@ class GarakScanConfig(BaseModel):
             "taxonomy_filters": ["avid-effect:ethics"],
             # "probe_tag": "avid-effect:ethics",
             "timeout": 60*60*5, # TODO: Run this and update the timeout
-            "documentation": "https://docs.avidml.org/taxonomy/effect-sep-view/ethics"
+            "documentation": "https://docs.avidml.org/taxonomy/effect-sep-view/ethics",
+            "taxonomy": "avid-effect"
         },
         "avid_performance": {
             "name": "AVID Performance Taxonomy",
@@ -86,7 +89,8 @@ class GarakScanConfig(BaseModel):
             "taxonomy_filters": ["avid-effect:performance"],
             # "probe_tag": "avid-effect:performance",
             "timeout": 60*60*5, # TODO: Run this and update the timeout
-            "documentation": "https://docs.avidml.org/taxonomy/effect-sep-view/performance"
+            "documentation": "https://docs.avidml.org/taxonomy/effect-sep-view/performance",
+            "taxonomy": "avid-effect"
         }
     }
 

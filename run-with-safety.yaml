@@ -4,6 +4,7 @@ apis:
   - inference
   - eval
   - files
+  - benchmarks
   - safety
   - telemetry
 providers:

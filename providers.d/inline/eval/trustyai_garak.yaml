@@ -5,6 +5,7 @@ pip_packages:
 api_dependencies:
   - inference
   - files
+  - benchmarks
 optional_api_dependencies:
   - safety
   - shields
