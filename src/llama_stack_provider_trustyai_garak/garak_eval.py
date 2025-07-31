@@ -132,12 +132,6 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
     
     async def register_benchmark(self, benchmark: Benchmark) -> None:
         """Register a benchmark by checking if it's a pre-defined scan profile or compliance framework profile"""
-        stored_benchmark = await self.get_benchmark(benchmark.identifier)
-        if stored_benchmark:
-            logger.warning(f"Benchmark '{benchmark.identifier}' already registered. Skipping registration.")
-            if benchmark.identifier not in self.benchmarks:
-                self.benchmarks[benchmark.identifier] = stored_benchmark
-            return
         
         if benchmark.identifier in self.scan_config.SCAN_PROFILES | self.scan_config.FRAMEWORK_PROFILES:
             logger.warning(f"Benchmark '{benchmark.identifier}' is a pre-defined scan profile or compliance framework profile. It is not recommended to register it as a custom benchmark.")
@@ -239,6 +233,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
 
             env = os.environ.copy()
             env["GARAK_LOG_FILE"] = str(scan_log_file)
+            env["GARAK_TLS_VERIFY"] = str(self._config.tls_verify)
 
             process = await asyncio.create_subprocess_exec(*cmd, 
                                                            stdout=asyncio.subprocess.PIPE, 

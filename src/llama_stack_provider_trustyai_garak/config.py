@@ -20,6 +20,23 @@ class GarakEvalProviderConfig(BaseModel):
     timeout: int = 60*60*3 # default timeout for garak scan
     max_workers: int = 5 # default max workers for shield scanning
     max_concurrent_jobs: int = 5 # max concurrent garak scans
+    tls_verify: bool | str = Field(
+        default=True,
+        description="Whether to verify TLS certificates. Can be a boolean or a path to a CA certificate file.",
+    )
+
+    @field_validator("tls_verify")
+    @classmethod
+    def validate_tls_verify(cls, v):
+        if isinstance(v, str):
+            # Otherwise, treat it as a cert path
+            cert_path = Path(v).expanduser().resolve()
+            if not cert_path.exists():
+                raise ValueError(f"TLS certificate file does not exist: {v}")
+            if not cert_path.is_file():
+                raise ValueError(f"TLS certificate path is not a file: {v}")
+            return v
+        return v
 
 
     @field_validator("base_url", "garak_model_type_openai", "garak_model_type_function", mode="before")
@@ -38,6 +55,7 @@ class GarakEvalProviderConfig(BaseModel):
         timeout: int = "${env.GARAK_TIMEOUT:=10800}",
         max_workers: int = "${env.GARAK_MAX_WORKERS:=5}",
         max_concurrent_jobs: int = "${env.GARAK_MAX_CONCURRENT_JOBS:=5}",
+        tls_verify: bool | str = "${env.GARAK_TLS_VERIFY:=true}",
         **kwargs,
     ) -> Dict[str, Any]:
 
@@ -48,6 +66,7 @@ class GarakEvalProviderConfig(BaseModel):
             "timeout": int(timeout),
             "max_workers": int(max_workers),
             "max_concurrent_jobs": int(max_concurrent_jobs),
+            "tls_verify": tls_verify,
             **kwargs,
         }
 

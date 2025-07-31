@@ -11,9 +11,9 @@ providers:
       provider_type: remote::vllm
       config:
         url: ${env.VLLM_URL}
-        # max_tokens: ${env.VLLM_MAX_TOKENS:4096}
+        max_tokens: ${env.VLLM_MAX_TOKENS:=4096}
         api_token: ${env.VLLM_API_TOKEN:fake}
-        # tls_verify: ${env.VLLM_TLS_VERIFY:false}
+        tls_verify: ${env.VLLM_TLS_VERIFY:=true}
   eval:
     - provider_id: trustyai_garak
       provider_type: inline::trustyai_garak
@@ -21,6 +21,7 @@ providers:
         base_url: ${env.BASE_URL:=http://localhost:8321/v1} # llama-stack service base url
         timeout: ${env.GARAK_TIMEOUT:=10800} # 3 hours max timeout for garak scan
         max_concurrent_jobs: ${env.GARAK_MAX_CONCURRENT_JOBS:=5} # 5 max concurrent garak scans
+        tls_verify: ${env.GARAK_TLS_VERIFY:=true}
   files:
     - provider_id: meta-reference-files
       provider_type: inline::localfs
