@@ -21,6 +21,7 @@ import shutil
 from llama_stack_provider_trustyai_garak import shield_scan
 from llama_stack.apis.safety import Safety
 from llama_stack.apis.shields import Shields
+from .errors import GarakError, GarakConfigError, GarakValidationError, BenchmarkNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +53,11 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         
         self._ensure_garak_installed()
         self.all_probes = self._get_all_probes()
-
+        error_msg_template = "{provided_api_name} API is provided but {missing_api_name} API is not provided. Please provide both APIs."
         if self.shields_api and not self.safety_api:
-            raise ValueError("Shields API is provided but Safety API is not provided. Please provide both APIs.")
+            raise GarakConfigError(error_msg_template.format(provided_api_name="Shields", missing_api_name="Safety"))
         elif not self.shields_api and self.safety_api:
-            raise ValueError("Safety API is provided but Shields API is not provided. Please provide both APIs.")
+            raise GarakConfigError(error_msg_template.format(provided_api_name="Safety", missing_api_name="Shields"))
 
         self._job_semaphore = asyncio.Semaphore(self._config.max_concurrent_jobs)
         logger.info(f"Initialized Garak provider with max concurrent jobs: {self._config.max_concurrent_jobs}")
@@ -74,14 +75,14 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         """
         framework_info = self.scan_config.FRAMEWORK_PROFILES.get(framework_id)
         if not framework_info:
-            raise ValueError(f"Unknown framework: {framework_id}")
+            raise GarakValidationError(f"Unknown framework: {framework_id}")
         
         taxonomy_filters = framework_info.get("taxonomy_filters", [])
         if not taxonomy_filters:
             logger.warning(f"No taxonomy filters defined for framework {framework_id}")
             return []
         
-        # Import garak's config parsing functionality
+        # Import garak's config parsing functionality (unfortunately not public API)
         from garak._config import parse_plugin_spec
         
         resolved_probes = []
@@ -110,7 +111,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         try:
             import garak
         except ImportError:
-            raise ImportError(
+            raise GarakError(
                 "Garak is not installed. Please install it with: "
                 "pip install garak"
             )
@@ -171,13 +172,13 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             await self.initialize()
         
         if not isinstance(benchmark_config, BenchmarkConfig):
-            raise TypeError("Required benchmark_config to be of type BenchmarkConfig")
+            raise GarakValidationError("Required benchmark_config to be of type BenchmarkConfig")
         
         # Validate that the benchmark exists
         benchmark = await self.get_benchmark(benchmark_id)
         if not benchmark:
             available_benchmarks = list(self.benchmarks.keys())
-            raise ValueError(f"Benchmark '{benchmark_id}' not found. "
+            raise BenchmarkNotFoundError(f"Benchmark '{benchmark_id}' not found. "
                            f"Available benchmarks: {', '.join(available_benchmarks[:10])}{'...' if len(available_benchmarks) > 10 else ''}")
         
         job_id = self._get_job_id()
@@ -221,7 +222,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         
         try:
             if not benchmark_metadata.get("probes", None):
-                raise ValueError("No probes found for benchmark. Please specify probes list in the benchmark metadata.")
+                raise GarakValidationError("No probes found for benchmark. Please specify probes list in the benchmark metadata.")
                 
             scan_profile_config:dict = {
                 "probes": benchmark_metadata["probes"],
@@ -322,7 +323,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         """
         stored_benchmark = await self.get_benchmark(benchmark_id)
         if not stored_benchmark:
-            raise ValueError(f"Benchmark {benchmark_id} not found")
+            raise BenchmarkNotFoundError(f"Benchmark {benchmark_id} not found")
 
         benchmark_metadata: dict = getattr(stored_benchmark, "metadata", {})
 
@@ -395,7 +396,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         if probes != ["all"]:
             for probe in probes:
                 if probe not in self.all_probes:
-                    raise ValueError(f"Probe '{probe}' not found in garak. "
+                    raise GarakValidationError(f"Probe '{probe}' not found in garak. "
                                      "Please provide valid garak probe name. "
                                      "Or you can just use predefined scan profiles ('quick', 'standard') as benchmark_id.")
             cmd.extend(["--probes", ",".join(probes)])
@@ -521,17 +522,17 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
     async def _check_shield_availability(self, llm_io_shield_mapping: dict):
         """Check the availability of the shields. and raise an error if any shield is not available."""
         if not self.shields_api:
-            raise ValueError("Shields API is not available. Please provide a shields API provider.")
+            raise GarakConfigError("Shields API is not available. Please enable shields API.")
         
         error_msg: str = "{type} shield '{shield_id}' is not available. Please provide a valid shield_id in the benchmark metadata."
         
         for shield_id in llm_io_shield_mapping["input"]:
             if not await self.shields_api.get_shield(shield_id):
-                raise ValueError(error_msg.format(type="Input", shield_id=shield_id))
+                raise GarakValidationError(error_msg.format(type="Input", shield_id=shield_id))
             
         for shield_id in llm_io_shield_mapping["output"]:
             if not await self.shields_api.get_shield(shield_id):
-                raise ValueError(error_msg.format(type="Output", shield_id=shield_id))
+                raise GarakValidationError(error_msg.format(type="Output", shield_id=shield_id))
 
     async def _parse_scan_results(self, report_file_id: str, job_id: str, benchmark_metadata: dict) -> EvaluateResponse:
         """Parse the scan results from the report file.
@@ -612,8 +613,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
                     aggregated_results_mean[probe_name][f"{detector}_mean"] = detector_mean_score
 
             if len(aggregated_results_mean.keys()) != len(score_rows.keys()):
-                # FIXME: Change to proper error type
-                raise ValueError(f"Number of probes in aggregated results ({len(aggregated_results_mean.keys())}) "
+                raise GarakValidationError(f"Number of probes in aggregated results ({len(aggregated_results_mean.keys())}) "
                                     f"does not match number of probes in score rows ({len(score_rows.keys())})")
             
             all_probes: List[str] = list(aggregated_results_mean.keys())
@@ -659,7 +659,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         job = self._jobs.get(job_id)
         stored_benchmark = await self.get_benchmark(benchmark_id)
         if not stored_benchmark:
-            raise ValueError(f"Benchmark {benchmark_id} not found")
+            raise BenchmarkNotFoundError(f"Benchmark {benchmark_id} not found")
 
         benchmark_metadata: dict = getattr(stored_benchmark, "metadata", {})
 
