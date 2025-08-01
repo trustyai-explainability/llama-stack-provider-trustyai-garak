@@ -1,0 +1,29 @@
+name: Publish to PyPi
+on:
+  release:
+    types: [published]
+jobs:
+  pypi-publish:
+    name: upload release to PyPi
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/llama-stack-provider-trustyai-garak
+    permissions:
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install build
+      - name: Build package
+        run: |
+          python3 -m build
+      - name: Publish package
+        uses: pypa/gh-action-pypi-publish@release/v1
