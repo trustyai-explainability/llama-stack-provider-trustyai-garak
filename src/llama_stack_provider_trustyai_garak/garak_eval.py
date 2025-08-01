@@ -329,7 +329,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
 
         generator_options:dict = await self._get_generator_options(benchmark_config, benchmark_metadata)
 
-        if self.safety_api:
+        if bool(benchmark_metadata.get("shield_ids", []) or benchmark_metadata.get("shield_config", {})):
             model_type: str = self._config.garak_model_type_function
             model_name: str = f"{shield_scan.__name__}#simple_shield_orchestrator" 
         else:
@@ -410,8 +410,8 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             return ",".join(arg)
 
     async def _get_generator_options(self, benchmark_config: BenchmarkConfig, benchmark_metadata: dict) -> dict:
-        """Get the generator options based on the availability of the safety API."""
-        if self.safety_api:
+        """Get the generator options based on the availability of the shields."""
+        if bool(benchmark_metadata.get("shield_ids", []) or benchmark_metadata.get("shield_config", {})):
             return await self._get_function_based_generator_options(benchmark_config, benchmark_metadata)
         else:
             return await self._get_openai_compatible_generator_options(benchmark_config, benchmark_metadata)
