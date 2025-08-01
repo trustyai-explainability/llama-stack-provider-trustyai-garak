@@ -13,9 +13,9 @@ providers:
       provider_type: remote::vllm
       config:
         url: ${env.VLLM_URL}
-        # max_tokens: ${env.VLLM_MAX_TOKENS:4096}
+        max_tokens: ${env.VLLM_MAX_TOKENS:=4096}
         api_token: ${env.VLLM_API_TOKEN:fake}
-        # tls_verify: ${env.VLLM_TLS_VERIFY:false}
+        tls_verify: ${env.VLLM_TLS_VERIFY:=true}
   eval:
     - provider_id: trustyai_garak
       provider_type: inline::trustyai_garak
@@ -32,6 +32,7 @@ providers:
         storage_dir: ${env.FILES_STORAGE_DIR:=~/.llama/distributions/trustyai-garak/files}
         metadata_store:
           type: sqlite
+          db_path: ${env.METADATA_STORE_DB_PATH:=~/.llama/distributions/trustyai-garak}/registry.db}
   safety:
     - provider_id: prompt-guard
       provider_type: inline::prompt-guard
