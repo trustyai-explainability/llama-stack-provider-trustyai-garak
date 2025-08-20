@@ -7,8 +7,8 @@ This repository implements [Garak](https://github.com/NVIDIA/garak) as a Llama S
 - **Security Vulnerability Detection**: Automated testing for prompt injection, jailbreaks, toxicity, and bias
 - **Compliance Framework Support**: Pre-built benchmarks for established standards ([OWASP LLM Top 10](https://genai.owasp.org/llm-top-10/), [AVID taxonomy](https://docs.avidml.org/taxonomy/effect-sep-view))
 - **Shield Integration**: Test LLMs with and without Llama Stack shields for comparative security analysis
-- **Concurrency Control**: Configurable limits for concurrent scans and shield operations
-- **Custom Probe Support**: Run specific garak security probes
+- **Remote Execution with KFP**: Scale garak scanning via Kubeflow Pipelines
+- **Concurrency Control**: Configurable limits for local concurrent scans and shield operations
 - **Enhanced Reporting**: Multiple garak output formats including HTML reports and detailed logs
 
 ## Quick Start
@@ -66,6 +66,7 @@ Interactive examples are available in the `demos/` directory:
 
 - **[Getting Started](demos/01-getting_started_with_garak.ipynb)**: Basic usage with predefined scan profiles and user-defined garak probes
 - **[Scan Guardrailed System](demos/02-scan_with_shields.ipynb)**: Llama Stack shield integration for scanning guardrailed LLM system
+- **[Remote Execution](demos/03-remote-garak.ipynb)**: Running garak scans via Kubeflow Pipelines
 - **[concurrency_limit_test.ipynb](demos/concurrency_limit_test.ipynb)**: Testing concurrent scan limits
 
 ## Compliance Frameworks
@@ -224,7 +225,10 @@ scan_html_id = job_status.metadata["scan_report_html_file_id"]
 # Download files using Files API or direct HTTP calls
 import requests
 files_url = f"http://localhost:8321/v1/openai/v1/files"
-report_content = requests.get(f"{files_url}/{scan_report_id}/content")
+report_content = requests.get(f"{files_url}/{scan_log_id}/content")
+
+## with llama stack client
+# client.files.content(scan_log_id)
 ```
 
 ## Configuration Options
@@ -261,10 +265,10 @@ providers:
 - **Threshold**: Scores ≥ 0.5 indicate potential security concerns
 - **Shield Comparison**: Compare scores with and without shields to measure effectiveness
 - **Detailed Reports**: Available via Llama Stack `files` API in multiple formats:
-  - JSON report (`scan_report_file_id`)
-  - HTML report (`scan_report_html_file_id`)
-  - Detailed logs (`scan_log_file_id`)
-  - Hit logs (`scan_hitlog_file_id`)
+  - JSON report
+  - HTML report
+  - Detailed logs
+  - Hit logs
 
 ## Deployment Modes
 
@@ -277,3 +281,46 @@ providers:
 - Shield-integrated scanning to test Guardrailed systems
 - APIs: `inference`, `eval`, `files`, `safety`, `shields`, `telemetry`
 - Best for: Advanced security testing with defense evaluation
+
+### Remote Mode (`run-remote.yaml` / `run-remote-safety.yaml`)
+- **Scalable KFP-based execution**: Run garak scans as Kubeflow Pipeline jobs
+- **Cloud-native deployment**: Leverages Kubernetes for distributed scanning
+- APIs: Same as basic/enhanced mode plus remote job orchestration
+- Best for: Production environments, large-scale security assessments
+
+#### Remote Provider Setup
+```bash
+# Set KFP environment variables
+export KUBEFLOW_PIPELINES_ENDPOINT="https://your-kfp-endpoint"
+export KUBEFLOW_NAMESPACE="your-namespace"
+export KUBEFLOW_EXPERIMENT_NAME="trustyai-garak-scans"
+export KUBEFLOW_BASE_IMAGE="quay.io/spandraj/trustyai-garak-provider:latest"
+
+# Configure S3 for artifact storage
+export AWS_ACCESS_KEY_ID="your-key"
+export AWS_SECRET_ACCESS_KEY="your-secret"
+export AWS_S3_BUCKET="pipeline-artifacts"
+export AWS_S3_ENDPOINT="https://your-s3-endpoint"  # For MinIO
+
+# Start with remote provider
+llama stack run run-remote.yaml --image-type venv
+```
+
+#### Remote Scanning Example
+```python
+# Same API, now runs as KFP pipeline
+job = client.eval.run_eval(
+    benchmark_id="owasp_llm_top10",
+    benchmark_config={
+        "eval_candidate": {
+            "type": "model",
+            "model": "qwen2",
+            "sampling_params": {"max_tokens": 100}
+        }
+    }
+)
+
+# Monitor KFP run status
+status = client.eval.jobs.status(job_id=job.job_id, benchmark_id="owasp_llm_top10")
+print(f"KFP Run ID: {status.metadata['kfp_run_id']}")
+```

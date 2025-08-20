@@ -1,0 +1,6 @@
+adapter:
+  adapter_type: trustyai_garak
+  pip_packages: ["kfp>=2.5.0", "garak"]
+  config_class: llama_stack_provider_trustyai_garak.config.GarakRemoteConfig
+  module: llama_stack_provider_trustyai_garak
+api_dependencies: ["inference", "files", "benchmarks", "safety", "shields", "telemetry"]

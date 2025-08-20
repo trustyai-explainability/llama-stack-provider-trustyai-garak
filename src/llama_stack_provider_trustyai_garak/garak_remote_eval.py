@@ -2,8 +2,8 @@ from llama_stack.apis.eval import Eval, EvaluateResponse, BenchmarkConfig
 from llama_stack.apis.inference import SamplingParams, SamplingStrategy, TopPSamplingStrategy, TopKSamplingStrategy
 from llama_stack.providers.datatypes import ProviderSpec, BenchmarksProtocolPrivate
 from llama_stack.apis.datatypes import Api
-from llama_stack.apis.files import Files, OpenAIFilePurpose, OpenAIFileObject
-from fastapi import UploadFile, Response
+from llama_stack.apis.files import Files
+from fastapi import Response
 from llama_stack.apis.benchmarks import Benchmark, Benchmarks
 from llama_stack.apis.common.job_types import Job, JobStatus
 from llama_stack.apis.scoring import ScoringResult
@@ -12,23 +12,25 @@ import os
 import logging
 import json
 import re
-from pathlib import Path
-from .config import GarakEvalProviderConfig, GarakScanConfig
+from .config import GarakRemoteConfig, GarakScanConfig
 from datetime import datetime
-import asyncio
-import signal
-import shutil
 from llama_stack_provider_trustyai_garak import shield_scan
 from llama_stack.apis.safety import Safety
 from llama_stack.apis.shields import Shields
 from .errors import GarakError, GarakConfigError, GarakValidationError, BenchmarkNotFoundError
+from kfp_server_api.models import V2beta1RuntimeState, V2beta1Run
+from dotenv import load_dotenv
+import boto3
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
+JOB_ID_PREFIX = "garak-job-"
 
-class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
-    def __init__(self, config: GarakEvalProviderConfig, deps:dict[Api, ProviderSpec]):
+class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
+    def __init__(self, config: GarakRemoteConfig, deps:dict[Api, ProviderSpec]):
         super().__init__(config)
-        self._config: GarakEvalProviderConfig = config
+        self._config: GarakRemoteConfig = config
         self.file_api: Files = deps[Api.files]
         self.benchmarks_api: Benchmarks = deps[Api.benchmarks]
         self.safety_api: Optional[Safety] = deps.get(Api.safety, None)
@@ -41,15 +43,31 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         # Job management
         self._jobs: Dict[str, Job] = {}
         self._job_metadata: Dict[str, Dict[str, str]] = {}
-        self._running_tasks: Dict[str, asyncio.Task] = {} # job_id -> running task
-        ## simple concurrency control for using semaphore
-        self._job_semaphore: Optional[asyncio.Semaphore] = None
+        self.s3_client = boto3.client('s3',
+                                    aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+                                    aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
+                                    region_name=os.getenv('AWS_DEFAULT_REGION', 'us-east-1'),
+                                    endpoint_url=os.getenv('AWS_S3_ENDPOINT')  # if using MinIO
+                                )
+
+        self._s3_bucket = os.getenv('AWS_S3_BUCKET', 'pipeline-artifacts')
+
+        try:
+            from kfp import Client
+
+            token = os.popen("oc whoami -t").read().strip()
+            self.kfp_client = Client(
+                host=self._config.kubeflow_config.pipelines_endpoint,
+                existing_token=token,
+            )
+        except ImportError:
+            raise GarakError(
+                "Kubeflow Pipelines SDK not available. Install with: pip install -e .[remote]"
+            )
 
     async def initialize(self) -> None:
         """Initialize the Garak provider"""
         logger.info("Initializing Garak provider")
-
-        self.scan_config.scan_dir.mkdir(exist_ok=True, parents=True)
         
         self._ensure_garak_installed()
         self.all_probes = self._get_all_probes()
@@ -58,9 +76,6 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             raise GarakConfigError(error_msg_template.format(provided_api_name="Shields", missing_api_name="Safety"))
         elif not self.shields_api and self.safety_api:
             raise GarakConfigError(error_msg_template.format(provided_api_name="Safety", missing_api_name="Shields"))
-
-        self._job_semaphore = asyncio.Semaphore(self._config.max_concurrent_jobs)
-        logger.info(f"Initialized Garak provider with max concurrent jobs: {self._config.max_concurrent_jobs}")
 
         self._initialized = True
 
@@ -159,7 +174,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         """
         import uuid
 
-        return f"garak-job-{str(uuid.uuid4())}"
+        return f"{JOB_ID_PREFIX}{str(uuid.uuid4())}"
     
     async def run_eval(self, benchmark_id: str, benchmark_config: BenchmarkConfig) -> Dict[str, Union[str, Dict[str, str]]]:
         """Run an evaluation for a specific benchmark and configuration.
@@ -187,39 +202,10 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             status=JobStatus.scheduled
         )
         self._jobs[job_id] = job
-        self._job_metadata[job_id] = {"created_at": datetime.now().isoformat()}
-
-        self._running_tasks[job_id] = asyncio.create_task(self._run_scan_with_semaphore(job, benchmark_id, benchmark_config), name=f"garak-job-{job_id}")
-        return {"job_id": job_id, "status": job.status, "metadata": self._job_metadata.get(job_id, {})}
-    
-    async def _run_scan_with_semaphore(self, job: Job, benchmark_id: str, benchmark_config: BenchmarkConfig):
-        """Wrapper to run the scan with semaphore"""
-        async with self._job_semaphore:
-            logger.info(f"Starting job {job.job_id} (Slots used: {self._config.max_concurrent_jobs - self._job_semaphore._value}/{self._config.max_concurrent_jobs})")
-            await self._run_scan(job, benchmark_id, benchmark_config)
-        
-    async def _run_scan(self, job: Job, benchmark_id: str, benchmark_config: BenchmarkConfig):
-        """Run the scan with the given command.
-
-        Args:
-            job: The job object
-            benchmark_id: The benchmark id
-            benchmark_config: The benchmark configuration
-        """
         
         stored_benchmark = await self.get_benchmark(benchmark_id)
         benchmark_metadata: dict = getattr(stored_benchmark, "metadata", {})
 
-        job.status = JobStatus.in_progress
-        self._job_metadata[job.job_id]["started_at"] = datetime.now().isoformat()
-
-        job_scan_dir: Path = self.scan_config.scan_dir / job.job_id
-        job_scan_dir.mkdir(exist_ok=True, parents=True)
-
-        scan_log_file: Path = job_scan_dir / "scan.log"
-        scan_log_file.touch(exist_ok=True)
-        scan_report_prefix: Path = job_scan_dir / "scan"
-        
         try:
             if not benchmark_metadata.get("probes", None):
                 raise GarakValidationError("No probes found for benchmark. Please specify probes list in the benchmark metadata.")
@@ -229,90 +215,34 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
                 "timeout": benchmark_metadata.get("timeout", self._config.timeout)
             }
 
-            cmd: List[str] = await self._build_command(benchmark_config, benchmark_id, str(scan_report_prefix), scan_profile_config)
-            logger.info(f"Running scan with command: {' '.join(cmd)}")
+            cmd: List[str] = await self._build_command(benchmark_config, benchmark_id, scan_profile_config)
 
-            env = os.environ.copy()
-            env["GARAK_LOG_FILE"] = str(scan_log_file)
-            env["GARAK_TLS_VERIFY"] = str(self._config.tls_verify)
-
-            process = await asyncio.create_subprocess_exec(*cmd, 
-                                                           stdout=asyncio.subprocess.PIPE, 
-                                                           stderr=asyncio.subprocess.PIPE, 
-                                                           env=env)
+            from .kfp_utils.pipeline import garak_scan_pipeline
+            run = self.kfp_client.create_run_from_pipeline_func(
+                garak_scan_pipeline,
+                arguments={
+                    "command": cmd,
+                    "llama_stack_url": self._config.base_url.rstrip("/").removesuffix("/v1"),
+                    "max_retries": 3,
+                    "job_id": job_id,
+                    # TODO: add timeout?
+                },
+                run_name=f"garak-{benchmark_id}-{job_id.removeprefix(JOB_ID_PREFIX)}",
+                namespace=self._config.kubeflow_config.namespace,
+                experiment_name=self._config.kubeflow_config.experiment_name
+            )
             
-            self._job_metadata[job.job_id]["process_id"] = str(process.pid)
-            timeout: int = scan_profile_config.get("timeout", self._config.timeout)
-            
-            _, stderr = await asyncio.wait_for(process.communicate(), 
-                                                    timeout=timeout)
-
-            if process.returncode == 0:
-                # Upload scan files to file storage
-                upload_scan_report: OpenAIFileObject = await self._upload_file(
-                    file=scan_report_prefix.with_suffix(".report.jsonl"), 
-                    purpose=OpenAIFilePurpose.ASSISTANTS)
-                if upload_scan_report:
-                    self._job_metadata[job.job_id]["scan_report_file_id"] = upload_scan_report.id
-
-                upload_scan_log: OpenAIFileObject = await self._upload_file(
-                    file=scan_log_file, 
-                    purpose=OpenAIFilePurpose.ASSISTANTS)
-                if upload_scan_log:
-                    self._job_metadata[job.job_id]["scan_log_file_id"] = upload_scan_log.id
-
-                upload_scan_hitlog: OpenAIFileObject = await self._upload_file(
-                    file=scan_report_prefix.with_suffix(".hitlog.jsonl"), 
-                    purpose=OpenAIFilePurpose.ASSISTANTS)
-                if upload_scan_hitlog:
-                    self._job_metadata[job.job_id]["scan_hitlog_file_id"] = upload_scan_hitlog.id
-
-                upload_scan_report_html: OpenAIFileObject = await self._upload_file(
-                    file=scan_report_prefix.with_suffix(".report.html"), 
-                    purpose=OpenAIFilePurpose.ASSISTANTS)
-                if upload_scan_report_html:
-                    self._job_metadata[job.job_id]["scan_report_html_file_id"] = upload_scan_report_html.id
-
-                job.status = JobStatus.completed
-                # cleanup the tmp job dir
-                shutil.rmtree(job_scan_dir, ignore_errors=True)
-
-            else:
-                job.status = JobStatus.failed
-                self._job_metadata[job.job_id]["error"] = f"Scan failed with return code {process.returncode} - {stderr.decode('utf-8')}"
-        except asyncio.TimeoutError:
-            job.status = JobStatus.failed
-            self._job_metadata[job.job_id]["error"] = f"Scan timed out after {timeout} seconds."
+            self._job_metadata[job_id] = {
+                "created_at": self._convert_datetime_to_str(run.run_info.created_at), 
+                "kfp_run_id": run.run_id}
+                
+            return {"job_id": job_id, "status": job.status, "metadata": self._job_metadata.get(job_id, {})}
         except Exception as e:
+            logger.error(f"Error running eval: {e}")
             job.status = JobStatus.failed
             self._job_metadata[job.job_id]["error"] = str(e)
-        finally:
-            self._job_metadata[job.job_id]["completed_at"] = datetime.now().isoformat()
-            if 'process' in locals() and process.returncode is None:
-                process.kill()
-                await process.wait()
-            self._running_tasks.pop(job.job_id, None)
-
-    async def _upload_file(self, file: Path, purpose: OpenAIFilePurpose) -> Optional[OpenAIFileObject]:
-        """Upload a file to the file storage and return the file object.
-
-        Args:
-            file: The file to upload
-            purpose: The purpose of the file
-        """
-        if file.exists():
-            with open(file, "rb") as f:
-                upload_file: OpenAIFileObject = await self.file_api.openai_upload_file(
-                    # file: The File object (not file name) to be uploaded.
-                    file=UploadFile(file=f, filename=file.name), 
-                    purpose=purpose
-                )
-                return upload_file
-        else:
-            logger.warning(f"File {file} does not exist")
-            return None
         
-    async def _build_command(self, benchmark_config: BenchmarkConfig, benchmark_id: str, scan_report_prefix: str, scan_profile_config: dict) -> List[str]:
+    async def _build_command(self, benchmark_config: BenchmarkConfig, benchmark_id: str, scan_profile_config: dict) -> List[str]:
         """Build the command to run the scan.
 
         Args:
@@ -340,7 +270,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
                           "--model_type", model_type,
                           "--model_name", model_name,
                           "--generator_options", json.dumps(generator_options),
-                          "--report_prefix", scan_report_prefix.strip(),
+                        #   "--report_prefix", scan_report_prefix.strip(),
                           ]
         
         cmd.extend(["--parallel_attempts", str(benchmark_metadata.get("parallel_attempts", self.scan_config.parallel_probes))])
@@ -629,6 +559,26 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             logger.error(f"Error parsing scan results for job {job_id}: {e}")
             return EvaluateResponse(generations=[], scores={})
 
+    def _map_kfp_run_state_to_job_status(self, run_state: V2beta1RuntimeState) -> JobStatus:
+        """Map the KFP run state to the job status."""
+        if run_state in [V2beta1RuntimeState.RUNTIME_STATE_UNSPECIFIED, V2beta1RuntimeState.PENDING]:
+            return JobStatus.scheduled
+        elif run_state in [V2beta1RuntimeState.RUNNING, V2beta1RuntimeState.CANCELING, V2beta1RuntimeState.PAUSED]:
+            return JobStatus.in_progress
+        elif run_state in [V2beta1RuntimeState.SUCCEEDED, V2beta1RuntimeState.SKIPPED]:
+            return JobStatus.completed
+        elif run_state == V2beta1RuntimeState.FAILED:
+            return JobStatus.failed
+        elif run_state == V2beta1RuntimeState.CANCELED:
+            return JobStatus.cancelled
+        else:
+            logger.warning(f"KFP run has an unknown status: {run_state}, mapping to scheduled")
+            return JobStatus.scheduled
+    
+    def _convert_datetime_to_str(self, datetime_obj: datetime) -> str:
+        """Convert a datetime object to string."""
+        return datetime_obj.isoformat() if isinstance(datetime_obj, datetime) else str(datetime_obj)
+
     async def job_status(self, benchmark_id: str, job_id: str) -> Dict[str, Union[str, Dict[str, str]]]:
         """Get the status of a job.
 
@@ -641,13 +591,45 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             logger.warning(f"Job {job_id} not found")
             return {"status": "not_found", "job_id": job_id}
         
-        metadata: dict = self._job_metadata.get(job_id, {}).copy()
+        metadata: dict = self._job_metadata.get(job_id, {})
 
-        if self._job_semaphore:
-            metadata["running_jobs"] = str(self._config.max_concurrent_jobs - self._job_semaphore._value)
-            metadata["max_concurrent_jobs"] = str(self._config.max_concurrent_jobs)
+        if "kfp_run_id" not in metadata:
+            logger.warning(f"Job {job_id} has no kfp run id")
+            return {"status": "not_found", "job_id": job_id}
+        
+        try:
+            run: V2beta1Run = self.kfp_client.get_run(metadata["kfp_run_id"])
+            job.status = self._map_kfp_run_state_to_job_status(run.state)
+            if job.status in [JobStatus.completed, JobStatus.failed, JobStatus.cancelled]:
+                self._job_metadata[job_id]['finished_at'] = self._convert_datetime_to_str(run.finished_at)
 
-        return {"job_id": job_id, "status": job.status, "metadata": metadata}
+                if job.status == JobStatus.completed:
+                    # Read from S3
+                    try:
+                        response = self.s3_client.get_object(
+                            Bucket=self._s3_bucket,
+                            Key=f'{job_id}.json'
+                        )
+                        file_id_mapping: dict = json.loads(response['Body'].read())
+                        
+                        # Store the file IDs in job metadata
+                        # logger.info(f"====== File mapping: {file_id_mapping} ======")
+                        for key, value in file_id_mapping.items():
+                            self._job_metadata[job_id][key] = value
+                        
+                        # Clean up - delete the file from S3
+                        self.s3_client.delete_object(
+                            Bucket=self._s3_bucket,
+                            Key=f'{job_id}.json'
+                        )
+                        
+                    except Exception as e:
+                        logger.warning(f"Could not retrieve outputs from S3 for job {job_id}: {e}")
+        except Exception as e:
+            logger.error(f"Error getting KFP run {metadata['kfp_run_id']}: {e}")
+            return {"status": "not_found", "job_id": job_id}
+        
+        return {"job_id": job_id, "status": job.status, "metadata": self._job_metadata.get(job_id, {})}
     
     async def job_result(self, benchmark_id: str, job_id: str) -> EvaluateResponse:
         """Get the result of a job.
@@ -683,7 +665,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             if self._job_metadata[job_id].get("results", None):
                 return EvaluateResponse(**self._job_metadata[job_id]["results"])
 
-            scan_report_file_id: str = self._job_metadata[job_id].get("scan_report_file_id", "")
+            scan_report_file_id: str = self._job_metadata[job_id].get("scan.report.jsonl", "")
             if not scan_report_file_id:
                 logger.warning(f"No scan report file found for job {job_id}")
                 return EvaluateResponse(generations=[], scores={})
@@ -709,32 +691,18 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             benchmark_id: The benchmark id
             job_id: The job id
         """
-        job = self._jobs.get(job_id)
-        if not job:
-            logger.warning(f"Job {job_id} not found")
+        # check/update the current status of the job
+        current_status = await self.job_status(benchmark_id, job_id)
+        if current_status["status"] == "not_found":
             return
-        
-        if job.status in [JobStatus.completed, JobStatus.failed, JobStatus.cancelled]:
-            logger.warning(f"Job {job_id} is not running")
-
-        elif job.status in [JobStatus.in_progress, JobStatus.scheduled]:
-            process_id: str = self._job_metadata[job_id].get("process_id", None)
-            if process_id:
-                process_id: int = int(process_id)
-                logger.info(f"Killing process {process_id} for job {job_id}")
-                try:
-                    # TODO: Check if the process is graceful shutdown and if not, kill it with SIGKILL
-                    os.kill(process_id, signal.SIGTERM)
-                except ProcessLookupError:
-                    logger.warning(f"Process {process_id} not found for job {job_id}")
-                except Exception as e:
-                    logger.error(f"Error killing process {process_id} for job {job_id}: {e}")
-            job.status = JobStatus.cancelled
-            self._jobs[job_id] = job
-            self._job_metadata[job_id]["cancelled_at"] = datetime.now().isoformat()
-            self._job_metadata[job_id]["error"] = "Job cancelled"
+        elif current_status["status"] in [JobStatus.completed, JobStatus.failed, JobStatus.cancelled]:
+            logger.warning(f"Job {job_id} is not running. Can't cancel.")
+            return
         else:
-            logger.warning(f"Job {job_id} has an unknown status: {job.status}")
+            try:
+                self.kfp_client.terminate_run(self._job_metadata[job_id]["kfp_run_id"])
+            except Exception as e:
+                logger.error(f"Error cancelling KFP run {self._job_metadata[job_id]['kfp_run_id']}: {e}")
     
     async def evaluate_rows(self, benchmark_id: str, 
                             input_rows: list[dict[str, Any]], 
@@ -745,34 +713,15 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
     async def shutdown(self) -> None:
         """Clean up resources when shutting down."""
         logger.info("Shutting down Garak provider")
-        # Cancel all running asyncio tasks
-        for job_id, task in self._running_tasks.items():
-            if not task.done():
-                logger.info(f"Cancelling running task {task.get_name()} for job {job_id}")
-                task.cancel()
-        
-        # Wait for tasks to be cancelled (with timeout)
-        if self._running_tasks:
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*self._running_tasks.values(), return_exceptions=True),
-                    timeout=5
-                )
-            except asyncio.TimeoutError:
-                logger.warning("Some tasks didn't cancel within timeout")
-        
         # Kill all running jobs
         for job_id, job in self._jobs.items():
             if job.status in [JobStatus.in_progress, JobStatus.scheduled]:
                 await self.job_cancel("placeholder", job_id)
         
-        # Clear all running tasks, jobs and job metadata
-        self._running_tasks.clear()
+        # # Clear all running tasks, jobs and job metadata
         self._jobs.clear()
         self._job_metadata.clear()
 
         # Close the shield scanning HTTP client
         shield_scan.simple_shield_orchestrator.close()
         
-        # Cleanup the scan directory
-        shutil.rmtree(self.scan_config.scan_dir, ignore_errors=True)

@@ -1,0 +1,100 @@
+version: "1"
+image_name: trustyai-garak
+apis:
+  - inference
+  - eval
+  - files
+  - benchmarks
+  - safety
+  - telemetry
+  - shields
+providers:
+  inference:
+    - provider_id: vllm
+      provider_type: remote::vllm
+      config:
+        url: ${env.VLLM_URL}
+        max_tokens: ${env.VLLM_MAX_TOKENS:=4096}
+        api_token: ${env.VLLM_API_TOKEN:fake}
+        tls_verify: ${env.VLLM_TLS_VERIFY:=true}
+  eval:
+    - provider_id: trustyai_garak
+      provider_type: remote::trustyai_garak
+      config:
+        base_url: ${env.BASE_URL:=https://c7d9bcc7e9da.ngrok-free.app/v1} # llama-stack service base url (should be accessible from kf pods)
+        timeout: ${env.GARAK_TIMEOUT:=10800} # 3 hours max timeout for garak scan
+        max_concurrent_jobs: ${env.GARAK_MAX_CONCURRENT_JOBS:=5} # 5 max concurrent garak scans
+        tls_verify: ${env.GARAK_TLS_VERIFY:=true}
+        kubeflow_config:
+          pipelines_endpoint: ${env.KUBEFLOW_PIPELINES_ENDPOINT:=https://ds-pipeline-dspa-model-namespace.apps.rosa.y1m4j9o2e1n6b9l.r6mx.p3.openshiftapps.com}
+          namespace: ${env.KUBEFLOW_NAMESPACE:=model-namespace}
+          experiment_name: ${env.KUBEFLOW_EXPERIMENT_NAME:=trustyai-garak-scans}
+          base_image: ${env.KUBEFLOW_BASE_IMAGE:=quay.io/spandraj/trustyai-garak-provider:latest}
+  files:
+    - provider_id: meta-reference-files
+      provider_type: inline::localfs
+      config:
+        storage_dir: ${env.FILES_STORAGE_DIR:=~/.llama/distributions/trustyai-garak/files}
+        metadata_store:
+          type: sqlite
+          db_path: ${env.METADATA_STORE_DB_PATH:=~/.llama/distributions/trustyai-garak}/registry.db}
+  safety:
+    - provider_id: prompt-guard
+      provider_type: inline::prompt-guard
+      config:
+        excluded_categories: []
+  telemetry:
+  - provider_id: meta-reference
+    provider_type: inline::meta-reference
+    config:
+      service_name: "${env.OTEL_SERVICE_NAME:=\u200B}"
+      sinks: ${env.TELEMETRY_SINKS:=console,sqlite}
+      sqlite_db_path: ${env.SQLITE_STORE_DIR:=~/.llama/distributions/trustyai-garak}/trace_store.db
+      otel_exporter_otlp_endpoint: ${env.OTEL_EXPORTER_OTLP_ENDPOINT:=}
+models:
+- metadata: {}
+  model_id: ${env.INFERENCE_MODEL}
+  provider_id: vllm
+  model_type: llm
+benchmarks:
+  - benchmark_id: quick
+    dataset_id: garak
+    scoring_functions:
+      - garak_scoring
+    provider_id: trustyai_garak
+    provider_benchmark_id: quick
+  - benchmark_id: standard
+    dataset_id: garak
+    scoring_functions:
+      - garak_scoring
+    provider_id: trustyai_garak
+    provider_benchmark_id: standard
+  - benchmark_id: owasp_llm_top10
+    dataset_id: garak
+    scoring_functions:
+      - garak_scoring
+    provider_id: trustyai_garak
+    provider_benchmark_id: owasp_llm_top10
+  - benchmark_id: avid_security
+    dataset_id: garak
+    scoring_functions:
+      - garak_scoring
+    provider_id: trustyai_garak
+    provider_benchmark_id: avid_security
+  - benchmark_id: avid_ethics
+    dataset_id: garak
+    scoring_functions:
+      - garak_scoring
+    provider_id: trustyai_garak
+    provider_benchmark_id: avid_ethics
+  - benchmark_id: avid_performance
+    dataset_id: garak
+    scoring_functions:
+      - garak_scoring
+    provider_id: trustyai_garak
+    provider_benchmark_id: avid_performance
+shields:
+- shield_id: Prompt-Guard-86M
+server:
+  port: 8321
+external_providers_dir: ./providers.d

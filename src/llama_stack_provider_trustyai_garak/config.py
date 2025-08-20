@@ -71,6 +71,35 @@ class GarakEvalProviderConfig(BaseModel):
         }
 
 @json_schema_type
+class GarakRemoteConfig(GarakEvalProviderConfig):
+    """Configuration for Ragas evaluation provider (remote execution)."""
+
+    kubeflow_config: "KubeflowConfig" = Field(
+        description="Additional configuration parameters for remote execution",
+    )
+
+
+class KubeflowConfig(BaseModel):
+    """Configuration for Kubeflow remote execution."""
+
+    pipelines_endpoint: str = Field(
+        description="Kubeflow Pipelines API endpoint URL (required for remote execution)",
+    )
+
+    namespace: str = Field(
+        description="Kubeflow namespace for pipeline execution",
+    )
+
+    experiment_name: str = Field(
+        description="Kubeflow experiment name for pipeline execution",
+    )
+
+    base_image: str = Field(
+        description="Base image for Kubeflow pipeline components",
+    )
+
+
+@json_schema_type
 class GarakScanConfig(BaseModel):
 
     # Framework definitions - these use garak's taxonomy tags to auto-discover probes
