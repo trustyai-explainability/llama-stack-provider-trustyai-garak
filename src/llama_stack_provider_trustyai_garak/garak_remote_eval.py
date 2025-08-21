@@ -37,6 +37,9 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
         self.benchmarks: Dict[str, Benchmark] = {} # benchmark_id -> benchmark
         self.all_probes: Set[str] = set()
         self._initialized: bool = False
+        self._s3_bucket: str = os.getenv('AWS_S3_BUCKET', 'pipeline-artifacts')
+        self.s3_client = None
+        self.kfp_client = None
 
         # Job management
         self._jobs: Dict[str, Job] = {}
@@ -54,7 +57,9 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
         elif not self.shields_api and self.safety_api:
             raise GarakConfigError(error_msg_template.format(provided_api_name="Safety", missing_api_name="Shields"))
 
+        # TODO: Do we REALLY need S3 client? Is there a better way to get the mapping from pod?
         self._create_s3_client()
+        
         self._create_kfp_client()
 
         self._initialized = True
@@ -68,17 +73,21 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
                                         region_name=os.getenv('AWS_DEFAULT_REGION', 'us-east-1'),
                                         endpoint_url=os.getenv('AWS_S3_ENDPOINT')  # if using MinIO
                                     )
-            self._s3_bucket = os.getenv('AWS_S3_BUCKET', 'pipeline-artifacts')
-        except ImportError:
+        except ImportError as e:
             raise GarakError(
                 "Boto3 is not installed. Install with: pip install boto3"
-            )
+            ) from e
+        except Exception as e:
+            raise GarakError(
+                f"Unable to connect to S3."
+            ) from e
 
     def _create_kfp_client(self):
         try:
             from kfp import Client
-            # FIXME: this is not a good way to do this. have to standardize this.
-            token = os.popen("oc whoami -t").read().strip()
+            from kfp_server_api.exceptions import ApiException
+            # TODO: Is this the best way to get the token?
+            token = self._get_token()
             self.kfp_client = Client(
                 host=self._config.kubeflow_config.pipelines_endpoint,
                 existing_token=token,
@@ -87,6 +96,36 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             raise GarakError(
                 "Kubeflow Pipelines SDK not available. Install with: pip install -e .[remote]"
             )
+        except ApiException as e:
+            raise GarakError(
+                "Unable to connect to Kubeflow Pipelines. Please check if you are logged in to the correct cluster. "
+                "If you are logged in, please check if the token & pipeline endpoint is valid. "
+                "If you are not logged in, please run `oc login` command first."
+            ) from e
+        except Exception as e:
+            raise GarakError(
+                f"Unable to connect to Kubeflow Pipelines."
+            ) from e
+    
+    def _get_token(self) -> str:
+        from kubernetes.client.configuration import Configuration
+        from kubernetes.config.kube_config import load_kube_config
+        from kubernetes.config.config_exception import ConfigException
+        from kubernetes.client.exceptions import ApiException
+
+        config = Configuration()
+        try:
+            load_kube_config(client_configuration=config)
+            token = config.api_key["authorization"].split(" ")[-1]
+            return token
+        except (KeyError, ConfigException) as e:
+            raise ApiException(
+                401, "Unauthorized, try running command like `oc login` first"
+            ) from e
+        except ImportError as e:
+            raise GarakError(
+                "Kubernetes client is not installed. Install with: pip install kubernetes"
+            ) from e
 
     def _resolve_framework_to_probes(self, framework_id: str) -> List[str]:
         """Resolve a framework ID to a list of probes using taxonomy filters
@@ -227,6 +266,9 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             cmd: List[str] = await self._build_command(benchmark_config, benchmark_id, scan_profile_config)
 
             from .kfp_utils.pipeline import garak_scan_pipeline
+            if not self.kfp_client:
+                self._create_kfp_client()
+            
             run = self.kfp_client.create_run_from_pipeline_func(
                 garak_scan_pipeline,
                 arguments={
@@ -618,6 +660,9 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
                 if job.status == JobStatus.completed:
                     # Read from S3
                     try:
+                        if not self.s3_client:
+                            self._create_s3_client()
+
                         response = self.s3_client.get_object(
                             Bucket=self._s3_bucket,
                             Key=f'{job_id}.json'
