@@ -135,7 +135,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         """Register a benchmark by checking if it's a pre-defined scan profile or compliance framework profile"""
         
         if benchmark.identifier in self.scan_config.SCAN_PROFILES | self.scan_config.FRAMEWORK_PROFILES:
-            logger.warning(f"Benchmark '{benchmark.identifier}' is a pre-defined scan profile or compliance framework profile. It is not recommended to register it as a custom benchmark.")
+            logger.info(f"Benchmark '{benchmark.identifier}' is a pre-defined scan profile or compliance framework profile. It is not recommended to register it as a custom benchmark.")
 
         if not benchmark.metadata:
             logger.info(f"Benchmark '{benchmark.identifier}' is pre-defined but has no metadata provided. Using default metadata.")
@@ -253,25 +253,25 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
                     file=scan_report_prefix.with_suffix(".report.jsonl"), 
                     purpose=OpenAIFilePurpose.ASSISTANTS)
                 if upload_scan_report:
-                    self._job_metadata[job.job_id]["scan_report_file_id"] = upload_scan_report.id
+                    self._job_metadata[job.job_id]["scan.report.jsonl"] = upload_scan_report.id
 
                 upload_scan_log: OpenAIFileObject = await self._upload_file(
                     file=scan_log_file, 
                     purpose=OpenAIFilePurpose.ASSISTANTS)
                 if upload_scan_log:
-                    self._job_metadata[job.job_id]["scan_log_file_id"] = upload_scan_log.id
+                    self._job_metadata[job.job_id]["scan.log"] = upload_scan_log.id
 
                 upload_scan_hitlog: OpenAIFileObject = await self._upload_file(
                     file=scan_report_prefix.with_suffix(".hitlog.jsonl"), 
                     purpose=OpenAIFilePurpose.ASSISTANTS)
                 if upload_scan_hitlog:
-                    self._job_metadata[job.job_id]["scan_hitlog_file_id"] = upload_scan_hitlog.id
+                    self._job_metadata[job.job_id]["scan.hitlog.jsonl"] = upload_scan_hitlog.id
 
                 upload_scan_report_html: OpenAIFileObject = await self._upload_file(
                     file=scan_report_prefix.with_suffix(".report.html"), 
                     purpose=OpenAIFilePurpose.ASSISTANTS)
                 if upload_scan_report_html:
-                    self._job_metadata[job.job_id]["scan_report_html_file_id"] = upload_scan_report_html.id
+                    self._job_metadata[job.job_id]["scan.report.html"] = upload_scan_report_html.id
 
                 job.status = JobStatus.completed
                 # cleanup the tmp job dir
@@ -683,7 +683,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             if self._job_metadata[job_id].get("results", None):
                 return EvaluateResponse(**self._job_metadata[job_id]["results"])
 
-            scan_report_file_id: str = self._job_metadata[job_id].get("scan_report_file_id", "")
+            scan_report_file_id: str = self._job_metadata[job_id].get("scan.report.jsonl", "")
             if not scan_report_file_id:
                 logger.warning(f"No scan report file found for job {job_id}")
                 return EvaluateResponse(generations=[], scores={})

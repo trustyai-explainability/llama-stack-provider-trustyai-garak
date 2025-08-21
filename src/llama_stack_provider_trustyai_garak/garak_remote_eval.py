@@ -18,9 +18,7 @@ from llama_stack_provider_trustyai_garak import shield_scan
 from llama_stack.apis.safety import Safety
 from llama_stack.apis.shields import Shields
 from .errors import GarakError, GarakConfigError, GarakValidationError, BenchmarkNotFoundError
-from kfp_server_api.models import V2beta1RuntimeState, V2beta1Run
 from dotenv import load_dotenv
-import boto3
 
 load_dotenv()
 
@@ -43,27 +41,6 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
         # Job management
         self._jobs: Dict[str, Job] = {}
         self._job_metadata: Dict[str, Dict[str, str]] = {}
-        self.s3_client = boto3.client('s3',
-                                    aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-                                    aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
-                                    region_name=os.getenv('AWS_DEFAULT_REGION', 'us-east-1'),
-                                    endpoint_url=os.getenv('AWS_S3_ENDPOINT')  # if using MinIO
-                                )
-
-        self._s3_bucket = os.getenv('AWS_S3_BUCKET', 'pipeline-artifacts')
-
-        try:
-            from kfp import Client
-
-            token = os.popen("oc whoami -t").read().strip()
-            self.kfp_client = Client(
-                host=self._config.kubeflow_config.pipelines_endpoint,
-                existing_token=token,
-            )
-        except ImportError:
-            raise GarakError(
-                "Kubeflow Pipelines SDK not available. Install with: pip install -e .[remote]"
-            )
 
     async def initialize(self) -> None:
         """Initialize the Garak provider"""
@@ -77,7 +54,39 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
         elif not self.shields_api and self.safety_api:
             raise GarakConfigError(error_msg_template.format(provided_api_name="Safety", missing_api_name="Shields"))
 
+        self._create_s3_client()
+        self._create_kfp_client()
+
         self._initialized = True
+    
+    def _create_s3_client(self):
+        try:
+            import boto3
+            self.s3_client = boto3.client('s3',
+                                        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+                                        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
+                                        region_name=os.getenv('AWS_DEFAULT_REGION', 'us-east-1'),
+                                        endpoint_url=os.getenv('AWS_S3_ENDPOINT')  # if using MinIO
+                                    )
+            self._s3_bucket = os.getenv('AWS_S3_BUCKET', 'pipeline-artifacts')
+        except ImportError:
+            raise GarakError(
+                "Boto3 is not installed. Install with: pip install boto3"
+            )
+
+    def _create_kfp_client(self):
+        try:
+            from kfp import Client
+            # FIXME: this is not a good way to do this. have to standardize this.
+            token = os.popen("oc whoami -t").read().strip()
+            self.kfp_client = Client(
+                host=self._config.kubeflow_config.pipelines_endpoint,
+                existing_token=token,
+            )
+        except ImportError:
+            raise GarakError(
+                "Kubeflow Pipelines SDK not available. Install with: pip install -e .[remote]"
+            )
 
     def _resolve_framework_to_probes(self, framework_id: str) -> List[str]:
         """Resolve a framework ID to a list of probes using taxonomy filters
@@ -150,7 +159,7 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
         """Register a benchmark by checking if it's a pre-defined scan profile or compliance framework profile"""
         
         if benchmark.identifier in self.scan_config.SCAN_PROFILES | self.scan_config.FRAMEWORK_PROFILES:
-            logger.warning(f"Benchmark '{benchmark.identifier}' is a pre-defined scan profile or compliance framework profile. It is not recommended to register it as a custom benchmark.")
+            logger.info(f"Benchmark '{benchmark.identifier}' is a pre-defined scan profile or compliance framework profile. It is not recommended to register it as a custom benchmark.")
 
         if not benchmark.metadata:
             logger.info(f"Benchmark '{benchmark.identifier}' is pre-defined but has no metadata provided. Using default metadata.")
@@ -227,7 +236,7 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
                     "job_id": job_id,
                     # TODO: add timeout?
                 },
-                run_name=f"garak-{benchmark_id}-{job_id.removeprefix(JOB_ID_PREFIX)}",
+                run_name=f"garak-{benchmark_id.split('::')[-1]}-{job_id.removeprefix(JOB_ID_PREFIX)}",
                 namespace=self._config.kubeflow_config.namespace,
                 experiment_name=self._config.kubeflow_config.experiment_name
             )
@@ -559,8 +568,10 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             logger.error(f"Error parsing scan results for job {job_id}: {e}")
             return EvaluateResponse(generations=[], scores={})
 
-    def _map_kfp_run_state_to_job_status(self, run_state: V2beta1RuntimeState) -> JobStatus:
+    def _map_kfp_run_state_to_job_status(self, run_state) -> JobStatus:
         """Map the KFP run state to the job status."""
+        from kfp_server_api.models import V2beta1RuntimeState
+
         if run_state in [V2beta1RuntimeState.RUNTIME_STATE_UNSPECIFIED, V2beta1RuntimeState.PENDING]:
             return JobStatus.scheduled
         elif run_state in [V2beta1RuntimeState.RUNNING, V2beta1RuntimeState.CANCELING, V2beta1RuntimeState.PAUSED]:
@@ -586,6 +597,7 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             benchmark_id: The benchmark id
             job_id: The job id
         """
+        from kfp_server_api.models import V2beta1Run
         job = self._jobs.get(job_id)
         if not job:
             logger.warning(f"Job {job_id} not found")

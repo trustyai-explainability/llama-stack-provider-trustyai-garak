@@ -104,7 +104,7 @@ class GarakScanConfig(BaseModel):
 
     # Framework definitions - these use garak's taxonomy tags to auto-discover probes
     FRAMEWORK_PROFILES: dict[str, dict[str, Any]] = {
-        "owasp_llm_top10": {
+        "trustyai_garak::owasp_llm_top10": {
             "name": "OWASP LLM Top 10",
             "description": "OWASP Top 10 for Large Language Model Applications",
             "taxonomy_filters": ["owasp:llm"],
@@ -113,7 +113,7 @@ class GarakScanConfig(BaseModel):
             "documentation": "https://genai.owasp.org/llm-top-10/",
             "taxonomy": "owasp"
         },
-        "avid_security": {
+        "trustyai_garak::avid_security": {
             "name": "AVID Security Taxonomy",
             "description": "AI Vulnerability and Incident Database - Security vulnerabilities",
             "taxonomy_filters": ["avid-effect:security"],
@@ -122,7 +122,7 @@ class GarakScanConfig(BaseModel):
             "documentation": "https://docs.avidml.org/taxonomy/effect-sep-view/security",
             "taxonomy": "avid-effect"
         },
-        "avid_ethics": {
+        "trustyai_garak::avid_ethics": {
             "name": "AVID Ethics Taxonomy", 
             "description": "AI Vulnerability and Incident Database - Ethical concerns",
             "taxonomy_filters": ["avid-effect:ethics"],
@@ -131,7 +131,7 @@ class GarakScanConfig(BaseModel):
             "documentation": "https://docs.avidml.org/taxonomy/effect-sep-view/ethics",
             "taxonomy": "avid-effect"
         },
-        "avid_performance": {
+        "trustyai_garak::avid_performance": {
             "name": "AVID Performance Taxonomy",
             "description": "AI Vulnerability and Incident Database - Performance issues",
             "taxonomy_filters": ["avid-effect:performance"],
@@ -144,7 +144,7 @@ class GarakScanConfig(BaseModel):
 
     # Legacy manual scan profiles (kept for backward compatibility & quick testing)
     SCAN_PROFILES: dict[str, dict[str, Any]] = {
-        "quick": {
+        "trustyai_garak::quick": {
             "name": "Quick Scan",
             "description": "Quick scan for testing",
             "probes": [
@@ -154,7 +154,7 @@ class GarakScanConfig(BaseModel):
             ],
             "timeout": 60*60*0.5
         },
-        "standard": {
+        "trustyai_garak::standard": {
             "name": "Standard Scan",
             "description": "Standard scan for testing",
             "probes": [

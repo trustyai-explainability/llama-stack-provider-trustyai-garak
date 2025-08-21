@@ -66,7 +66,7 @@ Interactive examples are available in the `demos/` directory:
 
 - **[Getting Started](demos/01-getting_started_with_garak.ipynb)**: Basic usage with predefined scan profiles and user-defined garak probes
 - **[Scan Guardrailed System](demos/02-scan_with_shields.ipynb)**: Llama Stack shield integration for scanning guardrailed LLM system
-- **[Remote Execution](demos/03-remote-garak.ipynb)**: Running garak scans via Kubeflow Pipelines
+- **[Remote Execution](demos/03-remote_garak.ipynb)**: Running garak scans via Kubeflow Pipelines
 - **[concurrency_limit_test.ipynb](demos/concurrency_limit_test.ipynb)**: Testing concurrent scan limits
 
 ## Compliance Frameworks
