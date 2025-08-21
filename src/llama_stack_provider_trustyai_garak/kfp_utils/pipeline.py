@@ -1,10 +1,10 @@
 from kfp import dsl, kubernetes
 from typing import NamedTuple, List, Dict
+import os
 
 @dsl.component(
     # base_image='quay.io/modh/runtime-images:runtime-cuda-pytorch-ubi9-python-3.11-20250813',
-    base_image='quay.io/spandraj/trustyai-garak-provider:latest',
-    packages_to_install=['boto3']
+    base_image=os.getenv('KUBEFLOW_BASE_IMAGE', 'quay.io/spandraj/trustyai-garak-provider:latest')
 )
 def garak_scan(
     command: List[str],

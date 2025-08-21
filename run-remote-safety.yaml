@@ -21,7 +21,7 @@ providers:
     - provider_id: trustyai_garak
       provider_type: remote::trustyai_garak
       config:
-        base_url: ${env.BASE_URL:=https://c7d9bcc7e9da.ngrok-free.app/v1} # llama-stack service base url (should be accessible from kf pods)
+        base_url: ${env.BASE_URL:=https://b31dc9b91cf1.ngrok-free.app/v1} # llama-stack service base url (should be accessible from kf pods)
         timeout: ${env.GARAK_TIMEOUT:=10800} # 3 hours max timeout for garak scan
         max_concurrent_jobs: ${env.GARAK_MAX_CONCURRENT_JOBS:=5} # 5 max concurrent garak scans
         tls_verify: ${env.GARAK_TLS_VERIFY:=true}
@@ -57,37 +57,37 @@ models:
   provider_id: vllm
   model_type: llm
 benchmarks:
-  - benchmark_id: quick
+  - benchmark_id: trustyai_garak::quick
     dataset_id: garak
     scoring_functions:
       - garak_scoring
     provider_id: trustyai_garak
     provider_benchmark_id: quick
-  - benchmark_id: standard
+  - benchmark_id: trustyai_garak::standard
     dataset_id: garak
     scoring_functions:
       - garak_scoring
     provider_id: trustyai_garak
     provider_benchmark_id: standard
-  - benchmark_id: owasp_llm_top10
+  - benchmark_id: trustyai_garak::owasp_llm_top10
     dataset_id: garak
     scoring_functions:
       - garak_scoring
     provider_id: trustyai_garak
     provider_benchmark_id: owasp_llm_top10
-  - benchmark_id: avid_security
+  - benchmark_id: trustyai_garak::avid_security
     dataset_id: garak
     scoring_functions:
       - garak_scoring
     provider_id: trustyai_garak
     provider_benchmark_id: avid_security
-  - benchmark_id: avid_ethics
+  - benchmark_id: trustyai_garak::avid_ethics
     dataset_id: garak
     scoring_functions:
       - garak_scoring
     provider_id: trustyai_garak
     provider_benchmark_id: avid_ethics
-  - benchmark_id: avid_performance
+  - benchmark_id: trustyai_garak::avid_performance
     dataset_id: garak
     scoring_functions:
       - garak_scoring
