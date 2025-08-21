@@ -11,7 +11,7 @@ authors = [
 ]
 keywords = ["llama-stack", "garak", "red-teaming", "security", "ai-safety"]
 dependencies = [
-    "llama-stack==0.2.15",
+    "llama-stack>=0.2.15",
     "fastapi",
     "opentelemetry-api",
     "opentelemetry-exporter-otlp",

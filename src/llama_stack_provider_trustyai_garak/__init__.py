@@ -1,12 +1,12 @@
 import logging
 from typing import Dict, Optional
 
+from .provider import get_provider_spec
 from llama_stack.apis.datatypes import Api
 from llama_stack.providers.datatypes import ProviderSpec
 from .config import GarakEvalProviderConfig, GarakRemoteConfig
 from .garak_eval import GarakEvalAdapter
 from .garak_remote_eval import GarakRemoteEvalAdapter
-from .provider import get_provider_spec
 
 # Set up logging
 logger = logging.getLogger(__name__)
