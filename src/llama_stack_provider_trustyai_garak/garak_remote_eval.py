@@ -3,10 +3,8 @@ from llama_stack.apis.inference import SamplingParams, SamplingStrategy, TopPSam
 from llama_stack.providers.datatypes import ProviderSpec, BenchmarksProtocolPrivate
 from llama_stack.apis.datatypes import Api
 from llama_stack.apis.files import Files
-from fastapi import Response
 from llama_stack.apis.benchmarks import Benchmark, Benchmarks
 from llama_stack.apis.common.job_types import Job, JobStatus
-from llama_stack.apis.scoring import ScoringResult
 from typing import List, Dict, Optional, Any, Union, Set
 import os
 import logging
@@ -266,6 +264,7 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             cmd: List[str] = await self._build_command(benchmark_config, benchmark_id, scan_profile_config)
 
             from .kfp_utils.pipeline import garak_scan_pipeline
+            
             if not self.kfp_client:
                 self._create_kfp_client()
             
@@ -274,9 +273,10 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
                 arguments={
                     "command": cmd,
                     "llama_stack_url": self._config.base_url.rstrip("/").removesuffix("/v1"),
-                    "max_retries": 3,
                     "job_id": job_id,
-                    # TODO: add timeout?
+                    "eval_threshold": float(benchmark_metadata.get("eval_threshold", self.scan_config.VULNERABLE_SCORE)),
+                    "timeout_seconds": int(scan_profile_config.get("timeout", self._config.timeout)),
+                    "max_retries": int(benchmark_metadata.get("max_retries", 3))
                 },
                 run_name=f"garak-{benchmark_id.split('::')[-1]}-{job_id.removeprefix(JOB_ID_PREFIX)}",
                 namespace=self._config.kubeflow_config.namespace,
@@ -515,101 +515,6 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             if not await self.shields_api.get_shield(shield_id):
                 raise GarakValidationError(error_msg.format(type="Output", shield_id=shield_id))
 
-    async def _parse_scan_results(self, report_file_id: str, job_id: str, benchmark_metadata: dict) -> EvaluateResponse:
-        """Parse the scan results from the report file.
-        
-        Args:
-            report_file_id: The id of the report file
-            job_id: The id of the job
-        """
-        report_file_content: Response = await self.file_api.openai_retrieve_file_content(report_file_id)
-        if not report_file_content:
-            logger.warning(f"Report file not found for job {job_id}")
-            return EvaluateResponse(generations=[], scores={})
-        
-        try:
-            generations: List[Dict[str, Any]] = []
-            # Each key is a garak probe/attack_type and value is a ScoringResult object containing scores from respective garak detectors
-            scores: Dict[str, ScoringResult] = {} 
-
-            score_rows: Dict[str, List[Dict[str, float]]] = {}
-            aggregated_results_by_probe: Dict[str, Dict[str, List[float]]] = {}
-            report_file_content_str: str = report_file_content.body.decode("utf-8")
-            eval_threshold: float = float(benchmark_metadata.get("eval_threshold", self.scan_config.VULNERABLE_SCORE))
-
-            for line in report_file_content_str.split("\n"):
-                if not line.strip():
-                    continue
-                try:
-                    entry = json.loads(line)
-                    generation: Dict[str, Any] = {}
-
-                    # Handle attempt entries
-                    if (entry.get("entry_type") == "attempt" and entry.get("status") == 2):
-                        probe_name: str = entry.get("probe_classname", "unknown")
-                        probe_category: str = probe_name.split('.')[0]
-
-                        detector_results: dict = entry.get("detector_results", {})
-                        detector_maxscore_map: Dict[str, float] = {}
-                        is_vulnerable: bool = False
-                        
-                        for detector, _scores in detector_results.items():
-                            _scores = _scores if isinstance(_scores, list) else [_scores]
-                            if any(score >= eval_threshold for score in _scores):
-                                is_vulnerable = True
-                            detector_maxscore_map[detector] = max(_scores) if _scores else 0
-                        outputs: list = entry.get("outputs", [])
-
-                        generation["probe"] = probe_name
-                        # generation["attack_type"] = self.scan_config.PROBE_TO_ATTACK.get(probe_category, AttackType.CUSTOM)
-                        generation["vulnerable"] = is_vulnerable
-                        generation["prompt"] = entry.get("prompt", "")
-                        generation["response"] = outputs[0] if len(outputs) > 0 and outputs[0] else ""
-                        generations.append(generation)
-
-                        if probe_name not in score_rows:
-                            score_rows[probe_name] = []
-                        score_rows[probe_name].append(detector_maxscore_map)
-
-                        if probe_name not in aggregated_results_by_probe:
-                            aggregated_results_by_probe[probe_name] = {}
-                        for detector, score in detector_maxscore_map.items():
-                            if detector not in aggregated_results_by_probe[probe_name]:
-                                aggregated_results_by_probe[probe_name][detector] = []
-                            aggregated_results_by_probe[probe_name][detector].append(score)
-                
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Invalid JSON line in report file for job {job_id}: {line} - {e}")
-                    continue
-                except Exception as e:
-                    logger.warning(f"Error parsing line in report file for job {job_id}: {line} - {e}")
-                    continue
-
-            # Calculate the mean of the scores for each probe
-            aggregated_results_mean: Dict[str, Dict[str, float]] = {}
-            for probe_name, results in aggregated_results_by_probe.items():
-                aggregated_results_mean[probe_name] = {}
-                for detector, _scores in results.items():
-                    detector_mean_score: float = round(sum(_scores) / len(_scores), 3) if _scores else 0
-                    aggregated_results_mean[probe_name][f"{detector}_mean"] = detector_mean_score
-
-            if len(aggregated_results_mean.keys()) != len(score_rows.keys()):
-                raise GarakValidationError(f"Number of probes in aggregated results ({len(aggregated_results_mean.keys())}) "
-                                    f"does not match number of probes in score rows ({len(score_rows.keys())})")
-            
-            all_probes: List[str] = list(aggregated_results_mean.keys())
-            for probe_name in all_probes:
-                scores[probe_name] = ScoringResult(
-                    score_rows=score_rows[probe_name],
-                    aggregated_results=aggregated_results_mean[probe_name]
-                    )
-
-            return EvaluateResponse(generations=generations, scores=scores)    
-
-        except Exception as e:
-            logger.error(f"Error parsing scan results for job {job_id}: {e}")
-            return EvaluateResponse(generations=[], scores={})
-
     def _map_kfp_run_state_to_job_status(self, run_state) -> JobStatus:
         """Map the KFP run state to the job status."""
         from kfp_server_api.models import V2beta1RuntimeState
@@ -695,50 +600,40 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             benchmark_id: The benchmark id
             job_id: The job id
         """
-        job = self._jobs.get(job_id)
+        job_status = await self.job_status(benchmark_id, job_id)
         stored_benchmark = await self.get_benchmark(benchmark_id)
         if not stored_benchmark:
             raise BenchmarkNotFoundError(f"Benchmark {benchmark_id} not found")
 
-        benchmark_metadata: dict = getattr(stored_benchmark, "metadata", {})
-
-        if not job:
+        if job_status["status"] == "not_found":
             logger.warning(f"Job {job_id} not found")
             return EvaluateResponse(generations=[], scores={})
         
-        if job.status in [JobStatus.scheduled, JobStatus.in_progress]:
+        if job_status["status"] in [JobStatus.scheduled, JobStatus.in_progress]:
             logger.warning(f"Job {job_id} is not completed")
             return EvaluateResponse(generations=[], scores={})
         
-        elif job.status == JobStatus.failed:
+        elif job_status["status"] == JobStatus.failed:
             logger.warning(f"Job {job_id} failed")
             return EvaluateResponse(generations=[], scores={})
         
-        elif job.status == JobStatus.cancelled:
+        elif job_status["status"] == JobStatus.cancelled:
             logger.warning(f"Job {job_id} was cancelled")
             return EvaluateResponse(generations=[], scores={})
         
-        elif job.status == JobStatus.completed:
-            if self._job_metadata[job_id].get("results", None):
-                return EvaluateResponse(**self._job_metadata[job_id]["results"])
+        elif job_status["status"] == JobStatus.completed:
+            if self._job_metadata[job_id].get("scan_result.json", None):
+                scan_result_file_id: str = self._job_metadata[job_id].get("scan_result.json", "")
+                results = await self.file_api.openai_retrieve_file_content(scan_result_file_id)
+                return EvaluateResponse(**json.loads(results.body.decode("utf-8")))
 
-            scan_report_file_id: str = self._job_metadata[job_id].get("scan.report.jsonl", "")
-            if not scan_report_file_id:
-                logger.warning(f"No scan report file found for job {job_id}")
-                return EvaluateResponse(generations=[], scores={})
-            try:
-                results:EvaluateResponse = await self._parse_scan_results(report_file_id = scan_report_file_id, job_id = job_id, benchmark_metadata = benchmark_metadata)
-            except Exception as e:
-                logger.error(f"Error parsing scan results for job {job_id}: {e}")
+            else:
+                logger.error(f"Error parsing scan results for job {job_id}")
                 return EvaluateResponse(generations=[], scores={})
 
-            # storing all Job results in memory.. 
-            # FIXME: Upload results to file storage? or parse the results from the scan report file every time?
-            self._job_metadata[job_id]["results"] = results.model_dump()
-            return results
         
         else:
-            logger.warning(f"Job {job_id} has an unknown status: {job.status}")
+            logger.warning(f"Job {job_id} has an unknown status: {job_status['status']}")
             return EvaluateResponse(generations=[], scores={})
     
     async def job_cancel(self, benchmark_id: str, job_id: str) -> None:
