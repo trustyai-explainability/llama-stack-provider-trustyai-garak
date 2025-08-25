@@ -272,6 +272,22 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
                     purpose=OpenAIFilePurpose.ASSISTANTS)
                 if upload_scan_report_html:
                     self._job_metadata[job.job_id]["scan.report.html"] = upload_scan_report_html.id
+                
+                # parse results
+                scan_report_file_id: str = self._job_metadata[job.job_id].get("scan.report.jsonl", "")
+                if scan_report_file_id:
+                    scan_result = await self._parse_scan_results(scan_report_file_id, job.job_id, benchmark_metadata)
+
+                    # save file and upload results to llama stack
+                    scan_result_file = Path(job_scan_dir) / "scan_result.json"
+                    with open(scan_result_file, 'w') as f:
+                        json.dump(scan_result.model_dump(), f)
+                    
+                    upload_scan_result: OpenAIFileObject = await self._upload_file(
+                        file=scan_result_file, 
+                        purpose=OpenAIFilePurpose.ASSISTANTS)
+                    if upload_scan_result:
+                        self._job_metadata[job.job_id]["scan_result.json"] = upload_scan_result.id
 
                 job.status = JobStatus.completed
                 # cleanup the tmp job dir
@@ -680,23 +696,16 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             return EvaluateResponse(generations=[], scores={})
         
         elif job.status == JobStatus.completed:
-            if self._job_metadata[job_id].get("results", None):
-                return EvaluateResponse(**self._job_metadata[job_id]["results"])
-
-            scan_report_file_id: str = self._job_metadata[job_id].get("scan.report.jsonl", "")
-            if not scan_report_file_id:
-                logger.warning(f"No scan report file found for job {job_id}")
+            if self._job_metadata[job_id].get("scan_result.json", None):
+                scan_result_file_id: str = self._job_metadata[job_id].get("scan_result.json", "")
+                scan_result: Response = await self.file_api.openai_retrieve_file_content(scan_result_file_id)
+                return EvaluateResponse(**json.loads(scan_result.body.decode("utf-8")))
+            elif not self._job_metadata[job_id].get("scan.report.jsonl", None):
+                logger.error(f"No scan.report.jsonl/scan_result.json file found for job {job_id}")
                 return EvaluateResponse(generations=[], scores={})
-            try:
-                results:EvaluateResponse = await self._parse_scan_results(report_file_id = scan_report_file_id, job_id = job_id, benchmark_metadata = benchmark_metadata)
-            except Exception as e:
-                logger.error(f"Error parsing scan results for job {job_id}: {e}")
+            else:
+                logger.error(f"Results not found for job {job_id}")
                 return EvaluateResponse(generations=[], scores={})
-
-            # storing all Job results in memory.. 
-            # FIXME: Upload results to file storage? or parse the results from the scan report file every time?
-            self._job_metadata[job_id]["results"] = results.model_dump()
-            return results
         
         else:
             logger.warning(f"Job {job_id} has an unknown status: {job.status}")
