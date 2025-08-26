@@ -20,8 +20,9 @@ providers:
   eval:
     - provider_id: trustyai_garak
       provider_type: remote::trustyai_garak
+      module: llama_stack_provider_trustyai_garak.remote
       config:
-        base_url: ${env.BASE_URL:=https://b31dc9b91cf1.ngrok-free.app/v1} # llama-stack service base url (should be accessible from kf pods)
+        base_url: ${env.BASE_URL:=https://f70b2fb955e7.ngrok-free.app/v1} # llama-stack service base url (should be accessible from kf pods)
         timeout: ${env.GARAK_TIMEOUT:=10800} # 3 hours max timeout for garak scan
         max_concurrent_jobs: ${env.GARAK_MAX_CONCURRENT_JOBS:=5} # 5 max concurrent garak scans
         tls_verify: ${env.GARAK_TLS_VERIFY:=true}
@@ -90,4 +91,4 @@ benchmarks:
     provider_benchmark_id: avid_performance
 server:
   port: 8321
-external_providers_dir: ./providers.d
+# external_providers_dir: ./providers.d

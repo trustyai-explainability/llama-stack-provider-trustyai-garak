@@ -1,8 +1,0 @@
-adapter:
-  adapter_type: trustyai_garak
-  pip_packages: ["kfp", "kfp-kubernetes", "kfp-server-api", "boto3", "garak"]
-  config_class: llama_stack_provider_trustyai_garak.config.GarakRemoteConfig
-  module: llama_stack_provider_trustyai_garak
-api_dependencies: ["inference", "files", "benchmarks", "shields", "safety", "telemetry"]
-# FIXME: optional_api_dependencies is not working as expected with remote provider.
-# optional_api_dependencies: []

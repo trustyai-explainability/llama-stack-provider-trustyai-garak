@@ -17,6 +17,7 @@ providers:
   eval:
     - provider_id: trustyai_garak
       provider_type: inline::trustyai_garak
+      module: llama_stack_provider_trustyai_garak.inline
       config:
         base_url: ${env.BASE_URL:=http://localhost:8321/v1} # llama-stack service base url
         timeout: ${env.GARAK_TIMEOUT:=10800} # 3 hours max timeout for garak scan
@@ -75,4 +76,4 @@ benchmarks:
     provider_benchmark_id: avid_performance
 server:
   port: 8321
-external_providers_dir: ./providers.d
+# external_providers_dir: ./providers.d
