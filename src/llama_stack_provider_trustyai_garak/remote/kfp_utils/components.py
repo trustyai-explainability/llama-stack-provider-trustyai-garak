@@ -2,9 +2,11 @@ from kfp import dsl
 from typing import NamedTuple, List, Dict
 import os
 
+CPU_BASE_IMAGE = 'quay.io/spandraj/trustyai-garak-provider:cpu'
+
 # Component 1: Validation Step
 @dsl.component(
-    base_image=os.getenv('KUBEFLOW_BASE_IMAGE', 'quay.io/spandraj/trustyai-garak-provider:latest')
+    base_image=os.getenv('KUBEFLOW_BASE_IMAGE', CPU_BASE_IMAGE)
 )
 def validate_inputs(
     command: List[str],
@@ -44,7 +46,7 @@ def validate_inputs(
 
 # Component 2: Garak Scan
 @dsl.component(
-    base_image=os.getenv('KUBEFLOW_BASE_IMAGE', 'quay.io/spandraj/trustyai-garak-provider:latest'),
+    base_image=os.getenv('KUBEFLOW_BASE_IMAGE', CPU_BASE_IMAGE),
     packages_to_install=['psutil']
 )
 def garak_scan(
@@ -131,7 +133,7 @@ def garak_scan(
 
 # Component 3: Results Parser
 @dsl.component(
-    base_image=os.getenv('KUBEFLOW_BASE_IMAGE', 'quay.io/spandraj/trustyai-garak-provider:latest')
+    base_image=os.getenv('KUBEFLOW_BASE_IMAGE', CPU_BASE_IMAGE)
 )
 def parse_results(
     file_id_mapping: Dict[str, str],

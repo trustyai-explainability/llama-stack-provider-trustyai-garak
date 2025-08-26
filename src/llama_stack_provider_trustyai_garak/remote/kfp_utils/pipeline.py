@@ -27,7 +27,7 @@ def garak_scan_pipeline(
     validate_task = validate_inputs(
         command=command,
         llama_stack_url=llama_stack_url
-    ).set_
+    )
     
     # Step 2: Run the garak scan (only if inputs are valid)
     with dsl.If(validate_task.outputs['is_valid'] == True, name="validate_inputs_success"):
