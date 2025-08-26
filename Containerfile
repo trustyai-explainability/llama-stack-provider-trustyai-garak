@@ -5,8 +5,13 @@ USER root
 
 COPY . .
 
-# skip this for GPU requirement
-RUN pip install --index-url https://download.pytorch.org/whl/cpu torch>=2.6.0
+# Build argument to specify CPU or GPU build
+ARG BUILD_TYPE=gpu
+
+# Conditionally install CPU-specific torch
+RUN if [ "$BUILD_TYPE" = "cpu" ]; then \
+        pip install --index-url https://download.pytorch.org/whl/cpu torch>=2.6.0; \
+    fi
 
 RUN pip install --no-cache-dir -e ".[remote]"
 
@@ -14,6 +19,5 @@ RUN pip install --no-cache-dir -e ".[remote]"
 ENV XDG_CACHE_HOME=/tmp/.cache
 ENV XDG_DATA_HOME=/tmp/.local/share
 ENV XDG_CONFIG_HOME=/tmp/.config
-
 
 USER 1001
