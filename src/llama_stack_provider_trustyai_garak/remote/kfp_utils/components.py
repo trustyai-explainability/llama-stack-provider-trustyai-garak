@@ -80,6 +80,7 @@ def garak_scan(
     
     file_id_mapping = {}
     
+    ## TODO: why not use dsl.PipelineTask.set_retry()..?
     for attempt in range(max_retries):
         
         try:
