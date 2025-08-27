@@ -276,7 +276,8 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
                     "job_id": job_id,
                     "eval_threshold": float(benchmark_metadata.get("eval_threshold", self.scan_config.VULNERABLE_SCORE)),
                     "timeout_seconds": int(scan_profile_config.get("timeout", self._config.timeout)),
-                    "max_retries": int(benchmark_metadata.get("max_retries", 3))
+                    "max_retries": int(benchmark_metadata.get("max_retries", 3)),
+                    "use_gpu": benchmark_metadata.get("use_gpu", False),
                 },
                 run_name=f"garak-{benchmark_id.split('::')[-1]}-{job_id.removeprefix(JOB_ID_PREFIX)}",
                 namespace=self._config.kubeflow_config.namespace,
