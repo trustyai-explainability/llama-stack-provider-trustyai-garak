@@ -106,13 +106,14 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             ) from e
     
     def _get_token(self) -> str:
-        from kubernetes.client.configuration import Configuration
-        from kubernetes.config.kube_config import load_kube_config
-        from kubernetes.config.config_exception import ConfigException
-        from kubernetes.client.exceptions import ApiException
-
-        config = Configuration()
         try:
+            from kubernetes.client.configuration import Configuration
+            from kubernetes.config.kube_config import load_kube_config
+            from kubernetes.config.config_exception import ConfigException
+            from kubernetes.client.exceptions import ApiException
+
+            config = Configuration()
+
             load_kube_config(client_configuration=config)
             token = config.api_key["authorization"].split(" ")[-1]
             return token
@@ -310,6 +311,8 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
         benchmark_metadata: dict = getattr(stored_benchmark, "metadata", {})
 
         generator_options:dict = await self._get_generator_options(benchmark_config, benchmark_metadata)
+        if not benchmark_config.eval_candidate.type == "model":
+            raise GarakValidationError("Eval candidate type must be 'model'")
 
         if bool(benchmark_metadata.get("shield_ids", []) or benchmark_metadata.get("shield_config", {})):
             model_type: str = self._config.garak_model_type_function
