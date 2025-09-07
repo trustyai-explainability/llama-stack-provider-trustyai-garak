@@ -344,6 +344,8 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         benchmark_metadata: dict = getattr(stored_benchmark, "metadata", {})
 
         generator_options:dict = await self._get_generator_options(benchmark_config, benchmark_metadata)
+        if not benchmark_config.eval_candidate.type == "model":
+            raise GarakValidationError("Eval candidate type must be 'model'")
 
         if bool(benchmark_metadata.get("shield_ids", []) or benchmark_metadata.get("shield_config", {})):
             model_type: str = self._config.garak_model_type_function

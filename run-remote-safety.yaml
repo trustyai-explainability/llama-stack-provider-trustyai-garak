@@ -96,6 +96,7 @@ benchmarks:
     provider_benchmark_id: avid_performance
 shields:
 - shield_id: Prompt-Guard-86M
+  provider_id: prompt-guard
 server:
   port: 8321
 # external_providers_dir: ./providers.d
