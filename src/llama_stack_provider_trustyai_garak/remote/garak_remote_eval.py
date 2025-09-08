@@ -17,7 +17,6 @@ from llama_stack.apis.safety import Safety
 from llama_stack.apis.shields import Shields
 from ..errors import GarakError, GarakConfigError, GarakValidationError, BenchmarkNotFoundError
 from dotenv import load_dotenv
-from pathlib import Path
 
 load_dotenv()
 
@@ -94,18 +93,19 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             from kfp import Client
             from kfp_server_api.exceptions import ApiException
 
+            ssl_cert = None
             if isinstance(self._verify_ssl, str):
                 ssl_cert = self._verify_ssl
-                self._verify_ssl = True
+                verify_ssl = True
             else:
-                ssl_cert = None
+                verify_ssl = self._verify_ssl
 
             # TODO: Is this the best way to get the token?
             token = self._get_token()
             self.kfp_client = Client(
                 host=self._config.kubeflow_config.pipelines_endpoint,
                 existing_token=token,
-                verify_ssl=self._verify_ssl,
+                verify_ssl=verify_ssl,
                 ssl_ca_cert=ssl_cert
             )
         except ImportError:
@@ -163,7 +163,13 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             return []
         
         # Import garak's config parsing functionality (unfortunately not public API)
-        from garak._config import parse_plugin_spec
+        try:
+            from garak._config import parse_plugin_spec
+
+        except ImportError:
+            raise GarakError(
+                "Unable to import garak's parse_plugin_spec. The internal API may have changed."
+            )
         
         resolved_probes = []
         
@@ -199,7 +205,12 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
     def _get_all_probes(self) -> Set[str]:
         ## unfortunately, garak don't have a public API to list all probes
         ## so we need to enumerate all probes manually from private API
-        from garak._plugins import enumerate_plugins
+        try:
+            from garak._plugins import enumerate_plugins
+        except ImportError:
+            raise GarakError(
+                "Unable to import garak's enumerate_plugins. The internal API may have changed."
+            )
         probes_names = enumerate_plugins(category="probes", skip_base_classes=True)
         plugin_names = [p.replace(f"probes.", "") for p, _ in probes_names]
         module_names = set([m.split(".")[0] for m in plugin_names])
@@ -607,7 +618,8 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
                             Bucket=self._s3_bucket,
                             Key=f'{job_id}.json'
                         )
-                        
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse JSON from S3 object {job_id}.json: {e}")
                     except Exception as e:
                         logger.warning(f"Could not retrieve outputs from S3 for job {job_id}: {e}")
         except Exception as e:
@@ -689,7 +701,7 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
         """Clean up resources when shutting down."""
         logger.info("Shutting down Garak provider")
         # Kill all running jobs
-        for job_id, job in self._jobs.items():
+        for job_id, job in list(self._jobs.items()):
             if job.status in [JobStatus.in_progress, JobStatus.scheduled]:
                 await self.job_cancel("placeholder", job_id)
         

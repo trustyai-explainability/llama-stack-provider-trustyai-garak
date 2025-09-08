@@ -20,7 +20,7 @@ class TestInlineProvider:
         
         assert spec.api == Api.eval
         assert spec.provider_type == "inline::trustyai_garak"
-        assert "garak" in spec.pip_packages
+        assert "garak==0.12.0" in spec.pip_packages
         assert spec.config_class == "llama_stack_provider_trustyai_garak.config.GarakEvalProviderConfig"
         assert spec.module == "llama_stack_provider_trustyai_garak.inline"
         assert Api.inference in spec.api_dependencies
@@ -89,18 +89,12 @@ class TestInlineProvider:
         """Test provider implementation with None dependencies (converted to empty dict internally)"""
         config = GarakEvalProviderConfig()
         
-        # Provide required mock dependencies
-        mock_deps = {
-            Api.files: Mock(),
-            Api.benchmarks: Mock()
-        }
-        
         with patch.object(GarakEvalAdapter, 'initialize', new_callable=AsyncMock):
             with patch.object(GarakEvalAdapter, '_ensure_garak_installed'):
                 with patch.object(GarakEvalAdapter, '_get_all_probes', return_value=set()):
                     # Pass None but the implementation should convert it to {}
                     # We'll need to mock the constructor to handle this
-                    impl = await get_provider_impl(config, mock_deps)
+                    impl = await get_provider_impl(config, None)
                     
                     assert isinstance(impl, GarakEvalAdapter)
 

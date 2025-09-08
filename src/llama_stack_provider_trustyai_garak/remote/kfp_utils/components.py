@@ -89,6 +89,7 @@ def garak_scan(
                 stderr=subprocess.PIPE,
                 text=True,
                 env=env,
+                preexec_fn=os.setsid  # Create new process group
             )
             
             try:
@@ -97,7 +98,12 @@ def garak_scan(
             except subprocess.TimeoutExpired:
                 # Kill the entire process group
                 os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                process.wait(timeout=5)
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    # process is still running, kill it with SIGKILL
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    process.wait()
                 raise
             
             
@@ -256,17 +262,24 @@ def parse_results(
     s3_endpoint = os.environ.get('AWS_S3_ENDPOINT', '')
     
     if s3_endpoint:
-        s3_client = boto3.client(
-            's3',
-            endpoint_url=s3_endpoint,
-            aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
-            aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
-            region_name=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'),
-            use_ssl=s3_endpoint.startswith('https'),
-            verify=verify_ssl,
-        )
+        try:
+            s3_client = boto3.client(
+                's3',
+                endpoint_url=s3_endpoint,
+                aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+                aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
+                region_name=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'),
+                use_ssl=s3_endpoint.startswith('https'),
+                verify=verify_ssl,
+            )
+        except Exception as e:
+            print(f"Error creating S3 client: {e}")
+            s3_client = boto3.client('s3')
     else:
         s3_client = boto3.client('s3')
+    
+    if not s3_client:
+        raise GarakValidationError("S3 client not found")
     
     s3_client.put_object(
         Bucket=os.getenv('AWS_S3_BUCKET', 'pipeline-artifacts'),

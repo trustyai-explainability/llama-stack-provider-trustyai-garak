@@ -29,8 +29,8 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
     def __init__(self, config: GarakEvalProviderConfig, deps:dict[Api, ProviderSpec]):
         super().__init__(config)
         self._config: GarakEvalProviderConfig = config
-        self.file_api: Files = deps[Api.files]
-        self.benchmarks_api: Benchmarks = deps[Api.benchmarks]
+        self.file_api: Files = deps.get(Api.files, None)
+        self.benchmarks_api: Benchmarks = deps.get(Api.benchmarks, None)
         self.safety_api: Optional[Safety] = deps.get(Api.safety, None)
         self.shields_api: Optional[Shields] = deps.get(Api.shields, None)
         self.scan_config = GarakScanConfig()
@@ -49,6 +49,9 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         """Initialize the Garak provider"""
         logger.info("Initializing Garak provider")
 
+        if not self.file_api or not self.benchmarks_api:
+            raise GarakConfigError("Files and benchmarks APIs are required")
+        
         self.scan_config.scan_dir.mkdir(exist_ok=True, parents=True)
         
         self._ensure_garak_installed()
@@ -195,7 +198,9 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
     async def _run_scan_with_semaphore(self, job: Job, benchmark_id: str, benchmark_config: BenchmarkConfig):
         """Wrapper to run the scan with semaphore"""
         async with self._job_semaphore:
-            logger.info(f"Starting job {job.job_id} (Slots used: {self._config.max_concurrent_jobs - self._job_semaphore._value}/{self._config.max_concurrent_jobs})")
+            # logger.info(f"Starting job {job.job_id} (Slots used: {self._config.max_concurrent_jobs - self._job_semaphore._value}/{self._config.max_concurrent_jobs})")
+            active_jobs = len([j for j in self._jobs.values() if j.status in [JobStatus.in_progress, JobStatus.scheduled]])
+            logger.info(f"Starting job {job.job_id} (Slots used: {active_jobs}/{self._config.max_concurrent_jobs})")
             await self._run_scan(job, benchmark_id, benchmark_config)
         
     async def _run_scan(self, job: Job, benchmark_id: str, benchmark_config: BenchmarkConfig):
@@ -290,8 +295,6 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
                         self._job_metadata[job.job_id]["scan_result.json"] = upload_scan_result.id
 
                 job.status = JobStatus.completed
-                # cleanup the tmp job dir
-                shutil.rmtree(job_scan_dir, ignore_errors=True)
 
             else:
                 job.status = JobStatus.failed
@@ -308,6 +311,9 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
                 process.kill()
                 await process.wait()
             self._running_tasks.pop(job.job_id, None)
+            # cleanup the tmp job dir
+            if Path(job_scan_dir).exists():
+                shutil.rmtree(job_scan_dir, ignore_errors=True)
 
     async def _upload_file(self, file: Path, purpose: OpenAIFilePurpose) -> Optional[OpenAIFileObject]:
         """Upload a file to the file storage and return the file object.
@@ -662,7 +668,9 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         metadata: dict = self._job_metadata.get(job_id, {}).copy()
 
         if self._job_semaphore:
-            metadata["running_jobs"] = str(self._config.max_concurrent_jobs - self._job_semaphore._value)
+            # metadata["running_jobs"] = str(self._config.max_concurrent_jobs - self._job_semaphore._value)
+            active_jobs = len([j for j in self._jobs.values() if j.status in [JobStatus.in_progress, JobStatus.scheduled]])
+            metadata["running_jobs"] = str(active_jobs)
             metadata["max_concurrent_jobs"] = str(self._config.max_concurrent_jobs)
 
         return {"job_id": job_id, "status": job.status, "metadata": metadata}
@@ -679,7 +687,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         if not stored_benchmark:
             raise BenchmarkNotFoundError(f"Benchmark {benchmark_id} not found")
 
-        benchmark_metadata: dict = getattr(stored_benchmark, "metadata", {})
+        # benchmark_metadata: dict = getattr(stored_benchmark, "metadata", {})
 
         if not job:
             logger.warning(f"Job {job_id} not found")
@@ -734,8 +742,16 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
                 process_id: int = int(process_id)
                 logger.info(f"Killing process {process_id} for job {job_id}")
                 try:
-                    # TODO: Check if the process is graceful shutdown and if not, kill it with SIGKILL
                     os.kill(process_id, signal.SIGTERM)
+                    # Give process time to gracefully shutdown
+                    await asyncio.sleep(2)
+                    try:
+                        os.kill(process_id, 0)
+                        # process is still running, kill it with SIGKILL
+                        os.kill(process_id, signal.SIGKILL)
+                    except ProcessLookupError:
+                        # process is not running (killed gracefully), no need to kill it
+                        pass
                 except ProcessLookupError:
                     logger.warning(f"Process {process_id} not found for job {job_id}")
                 except Exception as e:

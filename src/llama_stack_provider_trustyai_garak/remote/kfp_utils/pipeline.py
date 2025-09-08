@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Union
 from kfp import dsl, kubernetes
 from .components import validate_inputs, garak_scan, parse_results
 
@@ -25,7 +25,7 @@ def garak_scan_pipeline(
     timeout_seconds: int,
     max_retries: int = 3,
     use_gpu: bool = False,
-    verify_ssl: bool | str = True,
+    verify_ssl: Union[bool, str] = True,
     resource_config: dict = {}, # TODO: parameterize gpu and cpu resource limits
     ):
 
@@ -40,7 +40,7 @@ def garak_scan_pipeline(
     }
 
     # Step 1: Validate inputs
-    validate_task:dsl.PipelineTask = validate_inputs(
+    validate_task: dsl.PipelineTask = validate_inputs(
         command=command,
         llama_stack_url=llama_stack_url
     )
@@ -50,7 +50,7 @@ def garak_scan_pipeline(
     with dsl.If(validate_task.outputs['is_valid'] == True, name="validation_passed"):
         
         with dsl.If(use_gpu == True, name="USE_GPU"):
-            scan_task_gpu:dsl.PipelineTask = garak_scan(
+            scan_task_gpu: dsl.PipelineTask = garak_scan(
                 command=command,
                 llama_stack_url=llama_stack_url,
                 max_retries=max_retries,
@@ -64,7 +64,7 @@ def garak_scan_pipeline(
 
             # Step 3: Parse the scan results ONLY if scan succeeds
             with dsl.If(scan_task_gpu.outputs['success'] == True, name="gpu_scan_succeeded"):
-                parse_task_gpu:dsl.PipelineTask = parse_results(
+                parse_task_gpu: dsl.PipelineTask = parse_results(
                     file_id_mapping=scan_task_gpu.outputs['file_id_mapping'],
                     llama_stack_url=llama_stack_url,
                     eval_threshold=eval_threshold,
@@ -82,7 +82,7 @@ def garak_scan_pipeline(
             # add_resource_limits(scan_task_gpu, resource_config)
         
         with dsl.Else(name="USE_CPU"):
-            scan_task_cpu:dsl.PipelineTask = garak_scan(
+            scan_task_cpu: dsl.PipelineTask = garak_scan(
                 command=command,
                 llama_stack_url=llama_stack_url,
                 max_retries=max_retries,
@@ -94,7 +94,7 @@ def garak_scan_pipeline(
 
             # # Step 3: Parse the scan results ONLY if scan succeeds
             with dsl.If(scan_task_cpu.outputs['success'] == True, name="cpu_scan_succeeded"):
-                parse_task_cpu:dsl.PipelineTask = parse_results(
+                parse_task_cpu: dsl.PipelineTask = parse_results(
                     file_id_mapping=scan_task_cpu.outputs['file_id_mapping'],
                     llama_stack_url=llama_stack_url,
                     eval_threshold=eval_threshold,

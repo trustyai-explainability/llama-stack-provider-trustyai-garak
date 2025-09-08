@@ -24,9 +24,8 @@ async def get_adapter_impl(
         await impl.initialize()
         return impl
     except Exception as e:
-        raise Exception(
-            f"Failed to create remote Garak implementation: {str(e)}"
-        ) from e
+        logger.error(f"Failed to create remote Garak implementation: {str(e)}")
+        raise
 
 
 __all__ = [
