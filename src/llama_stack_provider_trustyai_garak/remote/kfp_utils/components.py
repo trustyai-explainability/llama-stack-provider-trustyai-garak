@@ -46,8 +46,7 @@ def validate_inputs(
 
 # Component 2: Garak Scan
 @dsl.component(
-    base_image=os.getenv('KUBEFLOW_BASE_IMAGE', CPU_BASE_IMAGE),
-    packages_to_install=['psutil']
+    base_image=os.getenv('KUBEFLOW_BASE_IMAGE', CPU_BASE_IMAGE)
 )
 def garak_scan(
     command: List[str],
