@@ -17,6 +17,7 @@ from llama_stack.apis.safety import Safety
 from llama_stack.apis.shields import Shields
 from ..errors import GarakError, GarakConfigError, GarakValidationError, BenchmarkNotFoundError
 from dotenv import load_dotenv
+from pathlib import Path
 
 load_dotenv()
 
@@ -54,6 +55,13 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             raise GarakConfigError(error_msg_template.format(provided_api_name="Shields", missing_api_name="Safety"))
         elif not self.shields_api and self.safety_api:
             raise GarakConfigError(error_msg_template.format(provided_api_name="Safety", missing_api_name="Shields"))
+        
+        self._verify_ssl = self._config.tls_verify
+        if isinstance(self._verify_ssl, str):
+            if self._verify_ssl.lower() in ("true", "1", "yes", "on"):
+                self._verify_ssl = True
+            elif self._verify_ssl.lower() in ("false", "0", "no", "off"):
+                self._verify_ssl = False
 
         # TODO: Do we REALLY need S3 client? Is there a better way to get the mapping from pod?
         self._create_s3_client()
@@ -69,7 +77,8 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
                                         aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
                                         aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
                                         region_name=os.getenv('AWS_DEFAULT_REGION', 'us-east-1'),
-                                        endpoint_url=os.getenv('AWS_S3_ENDPOINT')  # if using MinIO
+                                        endpoint_url=os.getenv('AWS_S3_ENDPOINT'),  # if using MinIO
+                                        verify=self._verify_ssl,
                                     )
         except ImportError as e:
             raise GarakError(
@@ -84,11 +93,20 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
         try:
             from kfp import Client
             from kfp_server_api.exceptions import ApiException
+
+            if isinstance(self._verify_ssl, str):
+                ssl_cert = self._verify_ssl
+                self._verify_ssl = True
+            else:
+                ssl_cert = None
+
             # TODO: Is this the best way to get the token?
             token = self._get_token()
             self.kfp_client = Client(
                 host=self._config.kubeflow_config.pipelines_endpoint,
                 existing_token=token,
+                verify_ssl=self._verify_ssl,
+                ssl_ca_cert=ssl_cert
             )
         except ImportError:
             raise GarakError(
@@ -279,6 +297,7 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
                     "timeout_seconds": int(scan_profile_config.get("timeout", self._config.timeout)),
                     "max_retries": int(benchmark_metadata.get("max_retries", 3)),
                     "use_gpu": benchmark_metadata.get("use_gpu", False),
+                    "verify_ssl": self._verify_ssl,
                 },
                 run_name=f"garak-{benchmark_id.split('::')[-1]}-{job_id.removeprefix(JOB_ID_PREFIX)}",
                 namespace=self._config.kubeflow_config.namespace,

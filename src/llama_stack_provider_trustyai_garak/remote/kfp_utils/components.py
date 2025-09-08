@@ -140,6 +140,7 @@ def parse_results(
     llama_stack_url: str,
     eval_threshold: float,
     job_id: str,
+    verify_ssl: bool | str,
 ):
 
     """Parse results and provide analysis"""
@@ -262,7 +263,7 @@ def parse_results(
             aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
             region_name=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'),
             use_ssl=s3_endpoint.startswith('https'),
-            verify=False  # Set to True if valid certs exist
+            verify=verify_ssl,
         )
     else:
         s3_client = boto3.client('s3')

@@ -25,6 +25,7 @@ def garak_scan_pipeline(
     timeout_seconds: int,
     max_retries: int = 3,
     use_gpu: bool = False,
+    verify_ssl: bool | str = True,
     resource_config: dict = {}, # TODO: parameterize gpu and cpu resource limits
     ):
 
@@ -68,6 +69,7 @@ def garak_scan_pipeline(
                     llama_stack_url=llama_stack_url,
                     eval_threshold=eval_threshold,
                     job_id=job_id,
+                    verify_ssl=verify_ssl,
                 )
                 parse_task_gpu.set_caching_options(False)
                 
@@ -97,6 +99,7 @@ def garak_scan_pipeline(
                     llama_stack_url=llama_stack_url,
                     eval_threshold=eval_threshold,
                     job_id=job_id,
+                    verify_ssl=verify_ssl,
                 )
                 parse_task_cpu.set_caching_options(False)
                 
