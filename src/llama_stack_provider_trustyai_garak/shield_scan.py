@@ -117,8 +117,9 @@ class SimpleShieldOrchestrator:
                     shield_response = future.result()
                     if shield_response.violation and shield_response.violation.violation_level == ViolationLevel.ERROR:
                         # cancel pending futures
-                        for future in futures_to_shields:
-                            future.cancel()
+                        for f in list(futures_to_shields.keys()):
+                            if f != future:  # Don't cancel the current future
+                                f.cancel()
                         return True
                 except Exception as e:
                     logger.error(f"Error running shield {shield_id}: {e}")
