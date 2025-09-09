@@ -613,11 +613,11 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
                         for key, value in file_id_mapping.items():
                             self._job_metadata[job_id][key] = value
                         
-                        # Clean up - delete the file from S3
-                        self.s3_client.delete_object(
-                            Bucket=self._s3_bucket,
-                            Key=f'{job_id}.json'
-                        )
+                        # # Clean up - delete the file from S3
+                        # self.s3_client.delete_object(
+                        #     Bucket=self._s3_bucket,
+                        #     Key=f'{job_id}.json'
+                        # )
                     except json.JSONDecodeError as e:
                         logger.error(f"Failed to parse JSON from S3 object {job_id}.json: {e}")
                     except Exception as e:
