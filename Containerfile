@@ -20,4 +20,4 @@ ENV XDG_CACHE_HOME=/tmp/.cache
 ENV XDG_DATA_HOME=/tmp/.local/share
 ENV XDG_CONFIG_HOME=/tmp/.config
 
-USER 1001
+# USER 1001

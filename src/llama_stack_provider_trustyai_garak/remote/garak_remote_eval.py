@@ -308,7 +308,7 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
                     "timeout_seconds": int(scan_profile_config.get("timeout", self._config.timeout)),
                     "max_retries": int(benchmark_metadata.get("max_retries", 3)),
                     "use_gpu": benchmark_metadata.get("use_gpu", False),
-                    "verify_ssl": self._verify_ssl,
+                    "verify_ssl": str(self._verify_ssl),
                 },
                 run_name=f"garak-{benchmark_id.split('::')[-1]}-{job_id.removeprefix(JOB_ID_PREFIX)}",
                 namespace=self._config.kubeflow_config.namespace,

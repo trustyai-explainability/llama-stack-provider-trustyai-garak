@@ -1,4 +1,4 @@
-from typing import List, Union
+from typing import List
 from kfp import dsl, kubernetes
 from .components import validate_inputs, garak_scan, parse_results
 
@@ -25,7 +25,7 @@ def garak_scan_pipeline(
     timeout_seconds: int,
     max_retries: int = 3,
     use_gpu: bool = False,
-    verify_ssl: Union[bool, str] = True,
+    verify_ssl: str = "True",
     resource_config: dict = {}, # TODO: parameterize gpu and cpu resource limits
     ):
 
