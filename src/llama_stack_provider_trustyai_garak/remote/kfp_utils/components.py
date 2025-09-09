@@ -146,7 +146,7 @@ def parse_results(
     llama_stack_url: str,
     eval_threshold: float,
     job_id: str,
-    verify_ssl: bool | str,
+    verify_ssl: str,
 ):
 
     """Parse results and provide analysis"""
@@ -159,6 +159,15 @@ def parse_results(
     from llama_stack.apis.eval import EvaluateResponse
     from llama_stack_provider_trustyai_garak.errors import GarakValidationError
     from typing import List, Dict, Any
+
+    # Parse verify_ssl string back to bool or keep as path
+    if verify_ssl.lower() in ("true", "1", "yes", "on"):
+        parsed_verify_ssl = True
+    elif verify_ssl.lower() in ("false", "0", "no", "off"):
+        parsed_verify_ssl = False
+    else:
+        # It's a path to a certificate file
+        parsed_verify_ssl = verify_ssl
 
     client = LlamaStackClient(base_url=llama_stack_url)
     
@@ -270,7 +279,7 @@ def parse_results(
                 aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
                 region_name=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'),
                 use_ssl=s3_endpoint.startswith('https'),
-                verify=verify_ssl,
+                verify=parsed_verify_ssl,
             )
         except Exception as e:
             print(f"Error creating S3 client: {e}")

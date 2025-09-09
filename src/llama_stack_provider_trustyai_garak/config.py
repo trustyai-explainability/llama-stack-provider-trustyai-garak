@@ -1,5 +1,5 @@
 from llama_stack.schema_utils import json_schema_type
-from typing import Dict, Any
+from typing import Dict, Any, Union
 from pydantic import BaseModel, Field, field_validator
 from pathlib import Path
 
@@ -20,7 +20,7 @@ class GarakEvalProviderConfig(BaseModel):
     timeout: int = 60*60*3 # default timeout for garak scan
     max_workers: int = 5 # default max workers for shield scanning
     max_concurrent_jobs: int = 5 # max concurrent garak scans
-    tls_verify: bool | str = Field(
+    tls_verify: Union[bool, str] = Field(
         default=True,
         description="Whether to verify TLS certificates. Can be a boolean or a path to a CA certificate file.",
     )
@@ -55,7 +55,7 @@ class GarakEvalProviderConfig(BaseModel):
         timeout: int = "${env.GARAK_TIMEOUT:=10800}",
         max_workers: int = "${env.GARAK_MAX_WORKERS:=5}",
         max_concurrent_jobs: int = "${env.GARAK_MAX_CONCURRENT_JOBS:=5}",
-        tls_verify: bool | str = "${env.GARAK_TLS_VERIFY:=true}",
+        tls_verify: Union[bool, str] = "${env.GARAK_TLS_VERIFY:=true}",
         **kwargs,
     ) -> Dict[str, Any]:
 
