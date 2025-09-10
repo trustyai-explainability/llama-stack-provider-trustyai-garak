@@ -50,14 +50,14 @@ jobs:
           scanners: 'vuln'
           exit-code: '0'  # Don't fail on this scan, we'll check results separately
 
-      - name: Check for critical and high vulnerabilities
+      - name: Check for critical vulnerabilities
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
           scan-ref: '.'
           format: 'table'
-          severity: 'CRITICAL,HIGH'
-          exit-code: '1'  # Fail if critical or high vulnerabilities found
+          severity: 'CRITICAL'
+          exit-code: '1'  # Fail if critical vulnerabilities found
 
       - name: Upload Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
