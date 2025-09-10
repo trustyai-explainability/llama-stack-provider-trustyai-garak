@@ -30,7 +30,7 @@ providers:
           pipelines_endpoint: ${env.KUBEFLOW_PIPELINES_ENDPOINT:=https://ds-pipeline-dspa-model-namespace.apps.rosa.y1m4j9o2e1n6b9l.r6mx.p3.openshiftapps.com}
           namespace: ${env.KUBEFLOW_NAMESPACE:=model-namespace}
           experiment_name: ${env.KUBEFLOW_EXPERIMENT_NAME:=trustyai-garak-scans}
-          base_image: ${env.KUBEFLOW_BASE_IMAGE:=quay.io/spandraj/trustyai-garak-provider:cpu}
+          base_image: ${env.KUBEFLOW_BASE_IMAGE:=quay.io/rh-ee-spandraj/trustyai-garak-provider-dsp:cpu}
   files:
     - provider_id: meta-reference-files
       provider_type: inline::localfs
