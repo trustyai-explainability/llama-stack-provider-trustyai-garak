@@ -159,7 +159,7 @@ report = requests.get(f"http://localhost:8321/v1/openai/v1/files/{scan_html_id}/
 export KUBEFLOW_PIPELINES_ENDPOINT="https://your-kfp-endpoint"
 export KUBEFLOW_NAMESPACE="your-namespace"
 export KUBEFLOW_EXPERIMENT_NAME="trustyai-garak-scans"
-export KUBEFLOW_BASE_IMAGE="quay.io/spandraj/trustyai-garak-provider:cpu" # for gpu - "quay.io/spandraj/trustyai-garak-provider:gpu"
+export KUBEFLOW_BASE_IMAGE="quay.io/rh-ee-spandraj/trustyai-garak-provider-dsp:cpu" # for gpu - "quay.io/rh-ee-spandraj/trustyai-garak-provider-dsp:gpu"
 
 # S3 Configuration (for artifacts)
 export AWS_ACCESS_KEY_ID="your-key"

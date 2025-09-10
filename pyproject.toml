@@ -11,17 +11,9 @@ authors = [
 ]
 keywords = ["llama-stack", "garak", "red-teaming", "security", "ai-safety"]
 dependencies = [
-    "llama-stack>=0.2.15",
-    "fastapi",
-    "opentelemetry-api",
-    "opentelemetry-exporter-otlp",
-    "aiosqlite",
-    "greenlet",
-    "uvicorn",
-    "ipykernel",
-    "httpx[http2]",
-    #"grpcio-tools==1.67.1", # for pymilvus conflict (except the latest pymilvus)
-    #"grpcio-status==1.67.1", # for pymilvus conflict (except the latest pymilvus)
+    "llama-stack==0.2.18",
+    "greenlet==3.2.4", # because inline/files/localfs errors saying greenlet not found
+    "httpx[http2]==0.28.1",
     "garak==0.12.0",
 ]
 
@@ -30,14 +22,14 @@ homepage = "https://github.com/trustyai-explainability/llama-stack-provider-trus
 repository = "https://github.com/trustyai-explainability/llama-stack-provider-trustyai-garak"
 
 [build-system]
-requires = ["setuptools>=64", "wheel"]
+requires = ["setuptools==80.9.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [project.optional-dependencies]
-remote = ["kfp>=2.5.0", "kfp-kubernetes>=2.5.0", "kfp-server-api>=2.5.0", "boto3>=1.40.0"]
+remote = ["kfp==2.14.3", "kfp-kubernetes==2.14.3", "kfp-server-api==2.14.3", "boto3==1.40.27"]
 dev = ["pytest", "pytest-cov",  "pytest-asyncio", "black", "isort"]
 
 [tool.pytest.ini_options]

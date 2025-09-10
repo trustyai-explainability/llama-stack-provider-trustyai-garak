@@ -2,7 +2,7 @@ from kfp import dsl
 from typing import NamedTuple, List, Dict
 import os
 
-CPU_BASE_IMAGE = 'quay.io/spandraj/trustyai-garak-provider:cpu'
+CPU_BASE_IMAGE = 'quay.io/rh-ee-spandraj/trustyai-garak-provider-dsp:cpu'
 
 # Component 1: Validation Step
 @dsl.component(
