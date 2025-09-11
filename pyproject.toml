@@ -1,6 +1,6 @@
 [project]
 name = "llama-stack-provider-trustyai-garak"
-version = "0.1.2"
+version = "0.1.3"
 description = "Out-Of-Tree Llama Stack provider for Garak Red-teaming"
 readme = "README.md"
 requires-python = ">=3.12"
