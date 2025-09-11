@@ -62,12 +62,20 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             elif self._verify_ssl.lower() in ("false", "0", "no", "off"):
                 self._verify_ssl = False
 
-        # TODO: Do we REALLY need S3 client? Is there a better way to get the mapping from pod?
-        self._create_s3_client()
+        # # TODO: Do we REALLY need S3 client? Is there a better way to get the mapping from pod?
+        # self._create_s3_client()
         
-        self._create_kfp_client()
+        # self._create_kfp_client()
 
         self._initialized = True
+    
+    def _ensure_s3_client(self):
+        if not self.s3_client:
+            self._create_s3_client()
+    
+    def _ensure_kfp_client(self):
+        if not self.kfp_client:
+            self._create_kfp_client()
     
     def _create_s3_client(self):
         try:
@@ -295,8 +303,7 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
 
             from .kfp_utils.pipeline import garak_scan_pipeline
             
-            if not self.kfp_client:
-                self._create_kfp_client()
+            self._ensure_kfp_client()
             
             run = self.kfp_client.create_run_from_pipeline_func(
                 garak_scan_pipeline,
@@ -591,6 +598,7 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             return {"status": "not_found", "job_id": job_id}
         
         try:
+            self._ensure_kfp_client()
             run: V2beta1Run = self.kfp_client.get_run(metadata["kfp_run_id"])
             job.status = self._map_kfp_run_state_to_job_status(run.state)
             if job.status in [JobStatus.completed, JobStatus.failed, JobStatus.cancelled]:
@@ -599,8 +607,7 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
                 if job.status == JobStatus.completed:
                     # Read from S3
                     try:
-                        if not self.s3_client:
-                            self._create_s3_client()
+                        self._ensure_s3_client()
 
                         response = self.s3_client.get_object(
                             Bucket=self._s3_bucket,
@@ -687,6 +694,7 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             return
         else:
             try:
+                self._ensure_kfp_client()
                 self.kfp_client.terminate_run(self._job_metadata[job_id]["kfp_run_id"])
             except Exception as e:
                 logger.error(f"Error cancelling KFP run {self._job_metadata[job_id]['kfp_run_id']}: {e}")
