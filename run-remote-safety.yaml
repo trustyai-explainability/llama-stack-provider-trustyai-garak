@@ -38,7 +38,7 @@ providers:
         storage_dir: ${env.FILES_STORAGE_DIR:=~/.llama/distributions/trustyai-garak/files}
         metadata_store:
           type: sqlite
-          db_path: ${env.METADATA_STORE_DB_PATH:=~/.llama/distributions/trustyai-garak}/registry.db}
+          db_path: ${env.METADATA_STORE_DB_PATH:=~/.llama/distributions/trustyai-garak}/registry.db
   safety:
     - provider_id: prompt-guard
       provider_type: inline::prompt-guard
