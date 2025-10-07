@@ -2,19 +2,18 @@
 
 import pytest
 import json
-import os
-from unittest.mock import Mock, patch, AsyncMock, MagicMock, PropertyMock, call
+from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from datetime import datetime
 
 from llama_stack_provider_trustyai_garak.remote import get_adapter_impl
 from llama_stack_provider_trustyai_garak.remote.garak_remote_eval import GarakRemoteEvalAdapter
 from llama_stack_provider_trustyai_garak.remote.provider import get_provider_spec
 from llama_stack_provider_trustyai_garak.config import GarakRemoteConfig, KubeflowConfig, GarakScanConfig
-from llama_stack_provider_trustyai_garak.errors import GarakError, GarakConfigError, GarakValidationError, BenchmarkNotFoundError
+from llama_stack_provider_trustyai_garak.errors import GarakError, GarakConfigError, GarakValidationError
 
 from llama_stack.apis.datatypes import Api
 from llama_stack.apis.common.job_types import JobStatus
-from llama_stack.apis.eval import BenchmarkConfig, EvaluateResponse
+from llama_stack.apis.eval import EvaluateResponse
 
 
 class TestRemoteProvider:
@@ -25,21 +24,13 @@ class TestRemoteProvider:
         spec = get_provider_spec()
         
         assert spec.api == Api.eval
-        # Fix: Access adapter field from the spec
-        assert spec.adapter.adapter_type == "trustyai_garak"
-        assert "garak" in spec.adapter.pip_packages
-        assert "kfp" in spec.adapter.pip_packages
-        assert "kfp-kubernetes" in spec.adapter.pip_packages
-        assert "kfp-server-api" in spec.adapter.pip_packages
-        assert "boto3" in spec.adapter.pip_packages
-        assert spec.adapter.config_class == "llama_stack_provider_trustyai_garak.config.GarakRemoteConfig"
-        assert spec.adapter.module == "llama_stack_provider_trustyai_garak.remote"
-        assert Api.inference in spec.api_dependencies
-        assert Api.files in spec.api_dependencies
-        assert Api.benchmarks in spec.api_dependencies
-        assert Api.safety in spec.api_dependencies
-        assert Api.shields in spec.api_dependencies
-        assert Api.telemetry in spec.api_dependencies
+        assert spec.adapter_type == "trustyai_garak"
+        for package in ["garak", "kfp", "kfp-kubernetes", "kfp-server-api", "boto3"]:
+            assert package in spec.pip_packages, f"{package} not found in pip_packages"
+        assert spec.config_class == "llama_stack_provider_trustyai_garak.config.GarakRemoteConfig"
+        assert spec.module == "llama_stack_provider_trustyai_garak.remote"
+        for api in [Api.inference, Api.files, Api.benchmarks, Api.safety, Api.shields, Api.telemetry]:
+            assert api in spec.api_dependencies, f"{api} not found in api_dependencies"
 
 
 class TestRemoteAdapterCreation:
