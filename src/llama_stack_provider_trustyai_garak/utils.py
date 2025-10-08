@@ -5,7 +5,7 @@ from llama_stack_client import LlamaStackClient
 def wait_for_completion_with_progress(client: LlamaStackClient, job_id: str, benchmark_id: str, poll_interval: int = 10):
     """Wait for job completion with tqdm progress bar"""
     
-    def format_time(seconds: int, hours_needed: bool = True) -> str:
+    def format_time(seconds: int | None, hours_needed: bool = True) -> str:
         """Format seconds to HH:MM:SS if hours_needed is True, otherwise MM:SS"""
         if seconds is None:
             return "N/A"
@@ -32,12 +32,12 @@ def wait_for_completion_with_progress(client: LlamaStackClient, job_id: str, ben
     last_percent = 0
     
     while status.status in ["scheduled", "in_progress"]:
-        progress = status.metadata.get("progress", {})
+        progress = getattr(status, "metadata", {}).get("progress", {})
         
         if progress:
             # update overall progress bar
             current_percent = progress.get("percent", 0)
-            pbar.update(current_percent - last_percent)
+            pbar.update(max(0, current_percent - last_percent))
             last_percent = current_percent
             
             postfix_parts = []
@@ -60,18 +60,22 @@ def wait_for_completion_with_progress(client: LlamaStackClient, job_id: str, ben
             # overall metrics
             completed = int(progress.get("completed_probes", 0))
             total = int(progress.get("total_probes", 0))
-            postfix_parts.append(f"Current ({completed+1}/{total}): {probe_short}")
+            current_idx = min(completed + 1, total)
+            postfix_parts.append(f"Current ({current_idx}/{total}): {probe_short}")
             
             #probe-specific (if available)
             if probe_progress := progress.get("current_probe_progress"):
                 probe_pct = probe_progress.get("percent", 0)
                 attempts_cur = probe_progress.get("attempts_current", 0)
                 attempts_tot = probe_progress.get("attempts_total", 0)
-                probe_eta_s = probe_progress.get("probe_eta_seconds", 0)
+                probe_eta_s = probe_progress.get("probe_eta_seconds")
                 
                 #probe-level detail
-                probe_eta_str = format_time(probe_eta_s, hours_needed=False).split(':')[-2:]
-                probe_eta_display = f"{probe_eta_str[0]}:{probe_eta_str[1]}"
+                if probe_eta_s is not None:
+                    probe_eta_str = format_time(probe_eta_s, hours_needed=False).split(':')[-2:]
+                    probe_eta_display = f"{probe_eta_str[0]}:{probe_eta_str[1]}"
+                else:
+                    probe_eta_display = "N/A"
                 postfix_parts.append(
                     f"({probe_pct}%, Attempts: {attempts_cur}/{attempts_tot}, ETA:{probe_eta_display})"
                 )

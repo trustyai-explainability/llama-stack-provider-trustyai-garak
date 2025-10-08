@@ -309,8 +309,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
 
             else:
                 job.status = JobStatus.failed
-                stderr = await process.stderr.read()
-                self._job_metadata[job.job_id]["error"] = f"Scan failed with return code {process.returncode} - {stderr.decode('utf-8', errors='ignore').strip()}"
+                self._job_metadata[job.job_id]["error"] = f"Scan failed with return code {process.returncode}. Check scan.log for details."
         except asyncio.TimeoutError:
             job.status = JobStatus.failed
             self._job_metadata[job.job_id]["error"] = f"Scan timed out after {timeout} seconds."
@@ -667,6 +666,10 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         
     async def _monitor_subprocess_output(self, process: asyncio.subprocess.Process, job_id: str):
         """Stream and parse Garak's stdout for progress updates"""
+
+        if job_id not in self._job_metadata:
+            logger.warning(f"Job {job_id} metadata not found during monitoring")
+            return
         
         total_probes = 0
         completed_probes = 0
@@ -691,11 +694,14 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         complete_pattern = re.compile(r'(?:✔️\s*)?garak run complete in ([\d.]+)s', re.IGNORECASE)
 
         def time_to_seconds(time_str: str) -> int:
+            """helper for time_str in HH:MM:SS format to seconds"""
             parts = time_str.split(':')
             if len(parts) == 2:
                 return int(parts[0]) * 60 + int(parts[1])
             elif len(parts) == 3:
                 return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+            else:
+                logger.debug(f"Unexpected time format: {time_str}")
             return 0
 
         try:
