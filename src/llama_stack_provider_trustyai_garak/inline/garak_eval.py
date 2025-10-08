@@ -223,6 +223,8 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
 
         scan_log_file: Path = job_scan_dir / "scan.log"
         scan_log_file.touch(exist_ok=True)
+        self.execution_log_file: Path = job_scan_dir / "execution.log"
+        self.execution_log_file.touch(exist_ok=True)
         scan_report_prefix: Path = job_scan_dir / "scan"
         
         try:
@@ -248,9 +250,34 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             
             self._job_metadata[job.job_id]["process_id"] = str(process.pid)
             timeout: int = scan_profile_config.get("timeout", self._config.timeout)
-            
-            _, stderr = await asyncio.wait_for(process.communicate(), 
-                                                    timeout=timeout)
+
+            # Stream stdout to scan.log throughout execution
+            async def stream_stdout_to_file(proc, log_file_path):
+                with open(log_file_path, "ab") as f:
+                    while True:
+                        chunk = await proc.stdout.read(4096)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        f.flush()
+                        await asyncio.sleep(0)  # yield control
+
+            # Start streaming stdout
+            stream_task = asyncio.create_task(stream_stdout_to_file(process, self.execution_log_file))
+
+            # launch garak subprocess
+            try:
+                await asyncio.wait_for(process.wait(), timeout=timeout)
+            except Exception as e:
+                logger.error(f"Process wait error: {e}", exc_info=True)
+            await stream_task
+
+            # Read remaining stderr after process is done
+            try:
+                stderr = await process.stderr.read()
+            except Exception as e:
+                logger.error(f"Error reading stderr: {e}", exc_info=True)
+                stderr = b""
 
             if process.returncode == 0:
                 # Upload scan files to file storage
@@ -664,8 +691,17 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         if not job:
             logger.warning(f"Job {job_id} not found")
             return {"status": "not_found", "job_id": job_id}
-        
+
+
         metadata: dict = self._job_metadata.get(job_id, {}).copy()
+
+        # Add contents of execution_log to metadata
+        if self.execution_log_file.exists():
+            try:
+                with open(self.execution_log_file, "r", encoding="utf-8", errors="replace") as f:
+                    metadata["execution_log"] = f.read()
+            except Exception as e:
+                metadata["execution_log_error"] = f"Could not read execution_log: {e}"
 
         if self._job_semaphore:
             # metadata["running_jobs"] = str(self._config.max_concurrent_jobs - self._job_semaphore._value)
