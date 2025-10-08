@@ -243,7 +243,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
 
             process = await asyncio.create_subprocess_exec(*cmd, 
                                                            stdout=asyncio.subprocess.PIPE, 
-                                                           stderr=asyncio.subprocess.PIPE, 
+                                                           stderr=asyncio.subprocess.STDOUT, 
                                                            env=env)
             
             self._job_metadata[job.job_id]["process_id"] = str(process.pid)
@@ -664,113 +664,172 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         except Exception as e:
             logger.error(f"Error parsing scan results for job {job_id}: {e}")
             return EvaluateResponse(generations=[], scores={})
-
+        
     async def _monitor_subprocess_output(self, process: asyncio.subprocess.Process, job_id: str):
         """Stream and parse Garak's stdout for progress updates"""
-
+        
         total_probes = 0
         completed_probes = 0
         current_probe = None
         seen_probes = set()
+        probe_list = []
 
         def strip_ansi(text: str) -> str:
-            """Remove ANSI color codes and formatting"""
             ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
             return ansi_escape.sub('', text)
         
         # Regex patterns
         queue_pattern = re.compile(r'(?:🕵️\s*)?queue of probes:\s*(.+)', re.IGNORECASE)
         probe_result_pattern = re.compile(
-                                    r'^(\S+)\s+(\S+):\s+(PASS|FAIL)\s+ok on\s+(\d+)/\s*(\d+)\s*(?:\(failure rate:\s*([\d.]+)%\))?',
-                                    re.IGNORECASE
-                                )
+            r'^(\S+)\s+(\S+):\s+(PASS|FAIL)\s+ok on\s+(\d+)/\s*(\d+)\s*(?:\(failure rate:\s*([\d.]+)%\))?',
+            re.IGNORECASE
+        )
+        tqdm_pattern = re.compile(
+            r'probes\.(\S+):\s+(\d+)%\|[^\|]*\|\s+(\d+)/(\d+)\s+\[([0-9:]+)<([0-9:]+)(?:,\s+([0-9.]+)(s/it|it/s))?',
+            re.IGNORECASE
+        )
         complete_pattern = re.compile(r'(?:✔️\s*)?garak run complete in ([\d.]+)s', re.IGNORECASE)
 
+        def time_to_seconds(time_str: str) -> int:
+            parts = time_str.split(':')
+            if len(parts) == 2:
+                return int(parts[0]) * 60 + int(parts[1])
+            elif len(parts) == 3:
+                return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+            return 0
+
         try:
-            # Read stdout line by line
+            buffer = ""
+            
             while True:
-                line_bytes = await process.stdout.readline()
-                if not line_bytes:
-                    break  # EOF
+                # read small chunks
+                chunk = await process.stdout.read(512)
+                if not chunk:
+                    break
                 
-                # Decode and strip ANSI codes
-                line = line_bytes.decode('utf-8', errors='ignore').strip()
-                line_clean = strip_ansi(line)
+                text = chunk.decode('utf-8', errors='ignore')
+                buffer += text
                 
-                if not line_clean:
-                    continue
+                lines = re.split(r'[\r\n]+', buffer)
+                buffer = lines[-1]  # incomplete line in buffer
                 
-                # 1. Extract total probe count from queue
-                if match := queue_pattern.search(line_clean):
-                    probes_str = match.group(1)
-                    probe_list = [p.strip() for p in probes_str.split(',')]
-                    total_probes = len(probe_list)
-                    current_probe = probe_list[0] if probe_list else None
-                    logger.info(f"Job {job_id}: {total_probes} probes queued: {probe_list[:3]}...")
-                    self._job_metadata[job_id]["total_probes"] = total_probes
-                    self._job_metadata[job_id]["probe_list"] = probe_list
-                    # init
-                    self._job_metadata[job_id]["progress"] = {
-                        "percent": 0.0,
-                        "completed_probes": 0,
-                        "total_probes": total_probes,
-                        "current_probe": current_probe,
-                    }
-                
-                # 2. Parse probe result lines
-                elif match := probe_result_pattern.match(line_clean):
-                    probe_name = match.group(1)
-                    detector = match.group(2)
-                    status = match.group(3)
-                    passed = int(match.group(4))
-                    total_attempts = int(match.group(5))
-                    failure_rate = float(match.group(6)) if match.group(6) else 0.0
+                for line in lines[:-1]:  # complete lines
+                    if not line.strip():
+                        continue
                     
-                    # Track probe completion
-                    if probe_name not in seen_probes:
-                        seen_probes.add(probe_name)
-                        completed_probes = len(seen_probes)
-
-                        if completed_probes < total_probes and probe_list:
-                            # Find next probe that hasn't been seen yet (iterating to work it with multi-detector probes)
-                            for p in probe_list:
-                                if p not in seen_probes:
-                                    current_probe = p
-                                    break
+                    line_clean = strip_ansi(line.strip())
                     
-                    progress_pct = (completed_probes / total_probes * 100) if total_probes > 0 else 0
-                    
-                    # Update metadata
-                    self._job_metadata[job_id]["progress"] = {
-                        "percent": round(progress_pct, 1),
-                        "completed_probes": completed_probes,
-                        "total_probes": total_probes,
-                        "current_probe": current_probe,
-                        "last_result": {
-                            "probe": probe_name,
-                            "detector": detector,
-                            "status": status,
-                            "passed": passed,
-                            "total_attempts": total_attempts,
-                            "failure_rate": failure_rate
+                    # 1. Queue pattern
+                    if match := queue_pattern.search(line_clean):
+                        probes_str = match.group(1)
+                        probe_list = [p.strip() for p in probes_str.split(',')]
+                        total_probes = len(probe_list)
+                        current_probe = probe_list[0] if probe_list else None
+                        logger.info(f"Job {job_id}: {total_probes} probes queued")
+                        self._job_metadata[job_id]["total_probes"] = total_probes
+                        self._job_metadata[job_id]["probe_list"] = probe_list
+                        self._job_metadata[job_id]["progress"] = {
+                            "percent": 0.0,
+                            "completed_probes": 0,
+                            "total_probes": total_probes,
+                            "current_probe": current_probe,
                         }
-                    }
+                    
+                    # 2. tqdm pattern
+                    elif match := tqdm_pattern.search(line_clean):
+                        probe_name = match.group(1)
+                        probe_percent = int(match.group(2))
+                        current_attempts = int(match.group(3))
+                        total_attempts = int(match.group(4))
+                        elapsed_str = match.group(5)
+                        remaining_str = match.group(6)
+                        speed_value = match.group(7) if len(match.groups()) >= 7 else None
+                        speed_unit = match.group(8) if len(match.groups()) >= 8 else None
+                        
+                        probe_elapsed_seconds = time_to_seconds(elapsed_str)
+                        probe_eta_seconds = time_to_seconds(remaining_str)
+                        
+                        # Calculate overall progress
+                        if total_probes > 0:
+                            probe_weight = 100.0 / total_probes
+                            base_progress = completed_probes * probe_weight
+                            current_probe_contribution = (probe_percent / 100.0) * probe_weight
+                            overall_percent = base_progress + current_probe_contribution
+                        else:
+                            overall_percent = 0
+                        
+                        # update
+                        self._job_metadata[job_id]["progress"] = {
+                            "percent": round(overall_percent, 1),
+                            "completed_probes": completed_probes,
+                            "total_probes": total_probes,
+                            "current_probe": probe_name,
+                            "current_probe_progress": {
+                                "probe": probe_name,
+                                "percent": probe_percent,
+                                "attempts_current": current_attempts,
+                                "attempts_total": total_attempts,
+                                "probe_elapsed_seconds": probe_elapsed_seconds,
+                                "probe_eta_seconds": probe_eta_seconds,
+                                "speed": f"{speed_value}{speed_unit}" if speed_value else None
+                            }
+                        }
+                        
+                        logger.debug(f"Job {job_id}: {overall_percent:.1f}% | Probe {probe_percent}% ({current_attempts}/{total_attempts})")
+                    
+                    # 3. Probe result pattern
+                    elif match := probe_result_pattern.match(line_clean):
+                        probe_name = match.group(1)
+                        detector = match.group(2)
+                        status = match.group(3)
+                        passed = int(match.group(4))
+                        total_attempts = int(match.group(5))
+                        failure_rate = float(match.group(6)) if match.group(6) else 0.0
+                        
+                        if probe_name not in seen_probes:
+                            seen_probes.add(probe_name)
+                            completed_probes = len(seen_probes)
+                            
+                            if completed_probes < total_probes and probe_list:
+                                for p in probe_list:
+                                    if p not in seen_probes:
+                                        current_probe = p
+                                        break
+                        
+                        progress_pct = (completed_probes / total_probes * 100) if total_probes > 0 else 0
+                        
+                        self._job_metadata[job_id]["progress"] = {
+                            "percent": round(progress_pct, 1),
+                            "completed_probes": completed_probes,
+                            "total_probes": total_probes,
+                            "current_probe": current_probe,
+                            "last_result": {
+                                "probe": probe_name,
+                                "detector": detector,
+                                "status": status,
+                                "passed": passed,
+                                "total_attempts": total_attempts,
+                                "failure_rate": failure_rate
+                            }
+                        }
 
-                # 3. Detect completion
-                elif match := complete_pattern.search(line_clean):
-                    duration = float(match.group(1))
-                    if "progress" in self._job_metadata[job_id]:
-                        self._job_metadata[job_id]["progress"]["percent"] = 100.0
-                        self._job_metadata[job_id]["progress"]["completed_probes"] = total_probes
-                    self._job_metadata[job_id]["duration_seconds"] = duration
-                    logger.warning(f"Job {job_id}: Completed in {duration}s")
+                    
+                    # 4. Complete pattern
+                    elif match := complete_pattern.search(line_clean):
+                        duration = float(match.group(1))
+                        if "progress" in self._job_metadata[job_id]:
+                            self._job_metadata[job_id]["progress"]["percent"] = 100.0
+                            self._job_metadata[job_id]["progress"]["completed_probes"] = total_probes
+                            self._job_metadata[job_id]["progress"].pop("current_probe_progress", None)
+                        self._job_metadata[job_id]["duration_seconds"] = duration
+                        logger.info(f"Job {job_id}: Completed in {duration}s")
         
         except asyncio.CancelledError:
             logger.warning(f"Job {job_id}: Progress monitoring cancelled")
             raise
         except Exception as e:
             logger.error(f"Job {job_id}: Error monitoring progress: {e}", exc_info=True)
-        
+    
     async def job_status(self, benchmark_id: str, job_id: str) -> Dict[str, Union[str, Dict[str, str]]]:
         """Get the status of a job.
 
@@ -784,6 +843,37 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             return {"status": "not_found", "job_id": job_id}
         
         metadata: dict = self._job_metadata.get(job_id, {}).copy()
+        
+        # calculate real-time overall scan elapsed and ETA
+        if job.status in [JobStatus.in_progress, JobStatus.scheduled]:
+            started_at_str = metadata.get("started_at")
+            if started_at_str and "progress" in metadata:
+                try:
+                    started_at = datetime.fromisoformat(started_at_str)
+                    overall_elapsed = int((datetime.now() - started_at).total_seconds())
+                    
+                    # overall scan elapsed
+                    metadata["progress"]["overall_elapsed_seconds"] = overall_elapsed
+                    
+                    # overall ETA based on completed probes
+                    completed = metadata["progress"].get("completed_probes", 0)
+                    total = metadata["progress"].get("total_probes", 0)
+                    
+                    if completed > 0 and total > 0:
+                        avg_time_per_probe = overall_elapsed / completed
+                        remaining = total - completed
+                        
+                        # add partial progress of current probe if available
+                        if probe_prog := metadata["progress"].get("current_probe_progress"):
+                            probe_pct = probe_prog.get("percent", 0) / 100.0
+                            # reducing remaining by current probe's progress
+                            remaining = remaining - probe_pct
+                        
+                        overall_eta = int(avg_time_per_probe * remaining)
+                        metadata["progress"]["overall_eta_seconds"] = overall_eta
+                    
+                except Exception as e:
+                    logger.debug(f"Error calculating scan times: {e}")
 
         if self._job_semaphore:
             # metadata["running_jobs"] = str(self._config.max_concurrent_jobs - self._job_semaphore._value)
