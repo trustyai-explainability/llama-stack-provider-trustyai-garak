@@ -249,8 +249,19 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             self._job_metadata[job.job_id]["process_id"] = str(process.pid)
             timeout: int = scan_profile_config.get("timeout", self._config.timeout)
             
-            _, stderr = await asyncio.wait_for(process.communicate(), 
-                                                    timeout=timeout)
+            # _, stderr = await asyncio.wait_for(process.communicate(), 
+            #                                         timeout=timeout)
+            monitor_task = asyncio.create_task(self._monitor_subprocess_output(process, job.job_id))
+
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(process.wait(), monitor_task),
+                    timeout=timeout
+                    )
+            except asyncio.TimeoutError:
+                monitor_task.cancel()
+                logger.error(f"Job {job.job_id} timed out")
+                raise
 
             if process.returncode == 0:
                 # Upload scan files to file storage
@@ -298,7 +309,8 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
 
             else:
                 job.status = JobStatus.failed
-                self._job_metadata[job.job_id]["error"] = f"Scan failed with return code {process.returncode} - {stderr.decode('utf-8')}"
+                stderr = await process.stderr.read()
+                self._job_metadata[job.job_id]["error"] = f"Scan failed with return code {process.returncode} - {stderr.decode('utf-8', errors='ignore').strip()}"
         except asyncio.TimeoutError:
             job.status = JobStatus.failed
             self._job_metadata[job.job_id]["error"] = f"Scan timed out after {timeout} seconds."
@@ -653,6 +665,112 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             logger.error(f"Error parsing scan results for job {job_id}: {e}")
             return EvaluateResponse(generations=[], scores={})
 
+    async def _monitor_subprocess_output(self, process: asyncio.subprocess.Process, job_id: str):
+        """Stream and parse Garak's stdout for progress updates"""
+
+        total_probes = 0
+        completed_probes = 0
+        current_probe = None
+        seen_probes = set()
+
+        def strip_ansi(text: str) -> str:
+            """Remove ANSI color codes and formatting"""
+            ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
+            return ansi_escape.sub('', text)
+        
+        # Regex patterns
+        queue_pattern = re.compile(r'(?:🕵️\s*)?queue of probes:\s*(.+)', re.IGNORECASE)
+        probe_result_pattern = re.compile(
+                                    r'^(\S+)\s+(\S+):\s+(PASS|FAIL)\s+ok on\s+(\d+)/\s*(\d+)\s*(?:\(failure rate:\s*([\d.]+)%\))?',
+                                    re.IGNORECASE
+                                )
+        complete_pattern = re.compile(r'(?:✔️\s*)?garak run complete in ([\d.]+)s', re.IGNORECASE)
+
+        try:
+            # Read stdout line by line
+            while True:
+                line_bytes = await process.stdout.readline()
+                if not line_bytes:
+                    break  # EOF
+                
+                # Decode and strip ANSI codes
+                line = line_bytes.decode('utf-8', errors='ignore').strip()
+                line_clean = strip_ansi(line)
+                
+                if not line_clean:
+                    continue
+                
+                # 1. Extract total probe count from queue
+                if match := queue_pattern.search(line_clean):
+                    probes_str = match.group(1)
+                    probe_list = [p.strip() for p in probes_str.split(',')]
+                    total_probes = len(probe_list)
+                    current_probe = probe_list[0] if probe_list else None
+                    logger.info(f"Job {job_id}: {total_probes} probes queued: {probe_list[:3]}...")
+                    self._job_metadata[job_id]["total_probes"] = total_probes
+                    self._job_metadata[job_id]["probe_list"] = probe_list
+                    # init
+                    self._job_metadata[job_id]["progress"] = {
+                        "percent": 0.0,
+                        "completed_probes": 0,
+                        "total_probes": total_probes,
+                        "current_probe": current_probe,
+                    }
+                
+                # 2. Parse probe result lines
+                elif match := probe_result_pattern.match(line_clean):
+                    probe_name = match.group(1)
+                    detector = match.group(2)
+                    status = match.group(3)
+                    passed = int(match.group(4))
+                    total_attempts = int(match.group(5))
+                    failure_rate = float(match.group(6)) if match.group(6) else 0.0
+                    
+                    # Track probe completion
+                    if probe_name not in seen_probes:
+                        seen_probes.add(probe_name)
+                        completed_probes = len(seen_probes)
+
+                        if completed_probes < total_probes and probe_list:
+                            # Find next probe that hasn't been seen yet (iterating to work it with multi-detector probes)
+                            for p in probe_list:
+                                if p not in seen_probes:
+                                    current_probe = p
+                                    break
+                    
+                    progress_pct = (completed_probes / total_probes * 100) if total_probes > 0 else 0
+                    
+                    # Update metadata
+                    self._job_metadata[job_id]["progress"] = {
+                        "percent": round(progress_pct, 1),
+                        "completed_probes": completed_probes,
+                        "total_probes": total_probes,
+                        "current_probe": current_probe,
+                        "last_result": {
+                            "probe": probe_name,
+                            "detector": detector,
+                            "status": status,
+                            "passed": passed,
+                            "total_attempts": total_attempts,
+                            "failure_rate": failure_rate
+                        }
+                    }
+
+                # 3. Detect completion
+                elif match := complete_pattern.search(line_clean):
+                    duration = float(match.group(1))
+                    if "progress" in self._job_metadata[job_id]:
+                        self._job_metadata[job_id]["progress"]["percent"] = 100.0
+                        self._job_metadata[job_id]["progress"]["completed_probes"] = total_probes
+                    self._job_metadata[job_id]["duration_seconds"] = duration
+                    logger.warning(f"Job {job_id}: Completed in {duration}s")
+        
+        except asyncio.CancelledError:
+            logger.warning(f"Job {job_id}: Progress monitoring cancelled")
+            raise
+        except Exception as e:
+            logger.error(f"Job {job_id}: Error monitoring progress: {e}", exc_info=True)
+        
     async def job_status(self, benchmark_id: str, job_id: str) -> Dict[str, Union[str, Dict[str, str]]]:
         """Get the status of a job.
 
