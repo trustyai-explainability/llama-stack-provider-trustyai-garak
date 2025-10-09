@@ -78,8 +78,8 @@ if status.status == "completed":
 ### Compliance Frameworks
 | Benchmark ID | Framework | Duration |
 |-------------|-----------|----------|
-| `trustyai_garak::owasp_llm_top10` | [OWASP LLM Top 10](https://genai.owasp.org/llm-top-10/) | ~8 hours |
-| `trustyai_garak::avid_security` | [AVID Security](https://docs.avidml.org/taxonomy/effect-sep-view/security) | ~8 hours |
+| `trustyai_garak::owasp_llm_top10` | [OWASP LLM Top 10](https://genai.owasp.org/llm-top-10/) | ~1.5 hours |
+| `trustyai_garak::avid_security` | [AVID Security](https://docs.avidml.org/taxonomy/effect-sep-view/security) | ~1.5 hours |
 | `trustyai_garak::avid_ethics` | [AVID Ethics](https://docs.avidml.org/taxonomy/effect-sep-view/ethics) | ~30 minutes |
 | `trustyai_garak::avid_performance` | [AVID Performance](https://docs.avidml.org/taxonomy/effect-sep-view/performance) | ~40 minutes |
 

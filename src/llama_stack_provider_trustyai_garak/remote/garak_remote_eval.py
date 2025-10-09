@@ -17,6 +17,9 @@ from llama_stack.apis.safety import Safety
 from llama_stack.apis.shields import Shields
 from ..errors import GarakError, GarakConfigError, GarakValidationError, BenchmarkNotFoundError
 from dotenv import load_dotenv
+import asyncio
+import threading
+from ..progress_parser import ProgressParser
 
 load_dotenv()
 
@@ -38,6 +41,8 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
         self._s3_bucket: str = os.getenv('AWS_S3_BUCKET', 'pipeline-artifacts')
         self.s3_client = None
         self.kfp_client = None
+        self._job_lock = threading.Lock()
+        self._streaming_tasks: Dict[str, asyncio.Task] = {}
 
         # Job management
         self._jobs: Dict[str, Job] = {}
@@ -285,7 +290,8 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             job_id=job_id,
             status=JobStatus.scheduled
         )
-        self._jobs[job_id] = job
+        with self._job_lock:
+            self._jobs[job_id] = job
         
         stored_benchmark = await self.get_benchmark(benchmark_id)
         benchmark_metadata: dict = getattr(stored_benchmark, "metadata", {})
@@ -325,12 +331,149 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             self._job_metadata[job_id] = {
                 "created_at": self._convert_datetime_to_str(run.run_info.created_at), 
                 "kfp_run_id": run.run_id}
+            
+            stream_task = asyncio.create_task(self._stream_kfp_pod_logs(job_id, run.run_id))
+            stream_task.add_done_callback(lambda t: self._handle_stream_task_completion(job_id, t))
+            self._streaming_tasks[job_id] = stream_task
                 
             return {"job_id": job_id, "status": job.status, "metadata": self._job_metadata.get(job_id, {})}
         except Exception as e:
             logger.error(f"Error running eval: {e}")
             job.status = JobStatus.failed
             self._job_metadata[job.job_id]["error"] = str(e)
+    
+    def _handle_stream_task_completion(self, job_id: str, task: asyncio.Task):
+        """Handle completion of log streaming task"""
+        try:
+            task.result()
+        except Exception as e:
+            logger.error(f"Job {job_id}: Log streaming task failed: {e}", exc_info=True)
+        finally:
+            self._streaming_tasks.pop(job_id, None)
+            
+    async def _stream_kfp_pod_logs(self, job_id: str, run_id: str):
+        """Stream logs from KFP pod and parse progress in real-time"""
+        from kubernetes import client, config, watch
+        
+        def _sync_stream_logs(pod_name: str, namespace: str, container_name: str, parser, job_id: str):
+            try:
+                config.load_kube_config()
+                v1 = client.CoreV1Api()
+                w = watch.Watch()
+                
+                logger.debug(f"Job {job_id}: Starting sync stream from {pod_name}")
+                
+                for line in w.stream(
+                    v1.read_namespaced_pod_log,
+                    name=pod_name,
+                    namespace=namespace,
+                    container=container_name,
+                    follow=True,
+                    _preload_content=False,
+                    _request_timeout=self._config.log_stream_timeout
+                ):
+                    parser.parse_line(line)
+                    
+                    # Check if we should stop
+                    with self._job_lock:
+                        job = self._jobs.get(job_id)
+                        should_stop = not job or job.status not in [JobStatus.in_progress, JobStatus.scheduled]
+                    if should_stop:
+                        logger.debug(f"Job {job_id}: Stopping stream")
+                        w.stop()
+                        break
+                
+                logger.debug(f"Job {job_id}: Stream completed")
+                
+            except Exception as e:
+                logger.error(f"Job {job_id}: Stream error: {e}", exc_info=True)
+        
+        try:
+            config.load_kube_config()
+            v1 = client.CoreV1Api()
+            
+            namespace = self._config.kubeflow_config.namespace
+            #FIXME: Will this change?
+            label_selector = f"pipeline/runid={run_id}"
+            
+            #1. Find garak-scan pod
+            pod_name = None
+            container_name = "main" #FIXME: Will this change?
+            max_wait = self._config.pod_discovery_timeout
+            start_wait = datetime.now()
+            
+            while not pod_name:
+                if (datetime.now() - start_wait).total_seconds() > max_wait:
+                    logger.debug(f"Job {job_id}: Pod not found after {max_wait}s timeout")
+                    return
+                
+                try:
+                    pods = v1.list_namespaced_pod(namespace=namespace, label_selector=label_selector)
+                    
+                    for pod in pods.items:
+                        if 'system-container-impl' not in pod.metadata.name:
+                            continue
+                        
+                        #FIXME: Will this change?
+                        node_name = pod.metadata.annotations.get('workflows.argoproj.io/node-name', '').lower()
+                        
+                        #FIXME: Is there a better way to identify the garak-scan pod?
+                        if '.garak-scan' in node_name and '.executor' in node_name:
+                            if pod.status.phase.lower() in ['pending', 'running']:
+                                pod_name = pod.metadata.name
+                                logger.debug(f"Job {job_id}: Found pod: {pod_name}")
+                                break
+                except Exception as e:
+                    logger.debug(f"Job {job_id}: Searching... {e}")
+                
+                if not pod_name:
+                    await asyncio.sleep(5)
+            
+            # 2. Wait for container to be ready
+            logger.debug(f"Job {job_id}: Waiting for container...")
+            container_ready = False
+            max_container_wait = self._config.container_wait_timeout
+            start_container_wait = datetime.now()
+            
+            while not container_ready:
+                if (datetime.now() - start_container_wait).total_seconds() > max_container_wait:
+                    return
+                
+                try:
+                    pod = v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+                    
+                    if pod.status.container_statuses:
+                        for cs in pod.status.container_statuses:
+                            if cs.name == container_name and (cs.state.running or cs.state.terminated):
+                                container_ready = True
+                                break
+                    
+                    if pod.status.phase.lower() == 'running':
+                        container_ready = True
+                except Exception as e:
+                    logger.debug(f"Job {job_id}: Error checking container: {e}")
+                
+                if not container_ready:
+                    await asyncio.sleep(5)
+            
+            parser = ProgressParser(job_id, self._job_metadata)
+            
+            logger.debug(f"Job {job_id}: Starting async log stream")
+            
+            #3. run blocking stream in thread
+            await asyncio.to_thread(
+                _sync_stream_logs,
+                pod_name,
+                namespace,
+                container_name,
+                parser,
+                job_id
+            )
+            
+            logger.debug(f"Job {job_id}: Log streaming completed")
+            
+        except Exception as e:
+            logger.error(f"Job {job_id}: Error: {e}", exc_info=True)
         
     async def _build_command(self, benchmark_config: BenchmarkConfig, benchmark_id: str, scan_profile_config: dict) -> List[str]:
         """Build the command to run the scan.
@@ -586,7 +729,8 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             job_id: The job id
         """
         from kfp_server_api.models import V2beta1Run
-        job = self._jobs.get(job_id)
+        with self._job_lock:
+            job = self._jobs.get(job_id)
         if not job:
             logger.warning(f"Job {job_id} not found")
             return {"status": "not_found", "job_id": job_id}
@@ -596,6 +740,40 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
         if "kfp_run_id" not in metadata:
             logger.warning(f"Job {job_id} has no kfp run id")
             return {"status": "not_found", "job_id": job_id}
+        
+        # calculate overall scan elapsed and ETA
+        if job.status in [JobStatus.in_progress, JobStatus.scheduled]:
+            created_at_str = metadata.get("created_at") # remote mode only has created_at
+            if created_at_str and "progress" in metadata:
+                try:
+                    from datetime import timezone
+                    created_at = datetime.fromisoformat(created_at_str)
+                    # timezone-aware datetime if created_at has timezone info (b/c of kfp)
+                    now = datetime.now(timezone.utc) if created_at.tzinfo else datetime.now()
+                    overall_elapsed = int((now - created_at).total_seconds())
+                    
+                    # overall scan elapsed
+                    metadata["progress"]["overall_elapsed_seconds"] = overall_elapsed
+                    
+                    # overall ETA based on completed probes
+                    completed = metadata["progress"].get("completed_probes", 0)
+                    total = metadata["progress"].get("total_probes", 0)
+                    
+                    if completed > 0 and total > 0:
+                        avg_time_per_probe = overall_elapsed / completed
+                        remaining = total - completed
+                        
+                        # add partial progress of current probe if available
+                        if probe_prog := metadata["progress"].get("current_probe_progress"):
+                            probe_pct = probe_prog.get("percent", 0) / 100.0
+                            # reducing remaining by current probe's progress
+                            remaining = remaining - probe_pct
+                        
+                        overall_eta = int(avg_time_per_probe * remaining)
+                        metadata["progress"]["overall_eta_seconds"] = overall_eta
+                    
+                except Exception as e:
+                    logger.warning(f"Error calculating scan times: {e}")
         
         try:
             self._ensure_kfp_client()
@@ -708,6 +886,15 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
     async def shutdown(self) -> None:
         """Clean up resources when shutting down."""
         logger.info("Shutting down Garak provider")
+
+        # Cancel all streaming tasks
+        if hasattr(self, '_streaming_tasks'):
+            for job_id, task in list(self._streaming_tasks.items()):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*self._streaming_tasks.values(), return_exceptions=True)
+            self._streaming_tasks.clear()
+
         # Kill all running jobs
         for job_id, job in list(self._jobs.items()):
             if job.status in [JobStatus.in_progress, JobStatus.scheduled]:
