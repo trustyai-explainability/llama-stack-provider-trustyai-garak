@@ -310,6 +310,7 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             from .kfp_utils.pipeline import garak_scan_pipeline
             
             self._ensure_kfp_client()
+            scan_timeout = int(scan_profile_config.get("timeout", self._config.timeout))
             
             run = self.kfp_client.create_run_from_pipeline_func(
                 garak_scan_pipeline,
@@ -318,7 +319,7 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
                     "llama_stack_url": self._config.base_url.rstrip("/").removesuffix("/v1"),
                     "job_id": job_id,
                     "eval_threshold": float(benchmark_metadata.get("eval_threshold", self.scan_config.VULNERABLE_SCORE)),
-                    "timeout_seconds": int(scan_profile_config.get("timeout", self._config.timeout)),
+                    "timeout_seconds": scan_timeout,
                     "max_retries": int(benchmark_metadata.get("max_retries", 3)),
                     "use_gpu": benchmark_metadata.get("use_gpu", False),
                     "verify_ssl": str(self._verify_ssl),
@@ -332,7 +333,7 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
                 "created_at": self._convert_datetime_to_str(run.run_info.created_at), 
                 "kfp_run_id": run.run_id}
             
-            stream_task = asyncio.create_task(self._stream_kfp_pod_logs(job_id, run.run_id))
+            stream_task = asyncio.create_task(self._stream_kfp_pod_logs(job_id, run.run_id, scan_timeout))
             stream_task.add_done_callback(lambda t: self._handle_stream_task_completion(job_id, t))
             self._streaming_tasks[job_id] = stream_task
                 
@@ -351,11 +352,11 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
         finally:
             self._streaming_tasks.pop(job_id, None)
             
-    async def _stream_kfp_pod_logs(self, job_id: str, run_id: str):
+    async def _stream_kfp_pod_logs(self, job_id: str, run_id: str, scan_timeout: int):
         """Stream logs from KFP pod and parse progress in real-time"""
         from kubernetes import client, config, watch
         
-        def _sync_stream_logs(pod_name: str, namespace: str, container_name: str, parser, job_id: str):
+        def _sync_stream_logs(pod_name: str, namespace: str, container_name: str, parser: ProgressParser, job_id: str, scan_timeout: int):
             try:
                 config.load_kube_config()
                 v1 = client.CoreV1Api()
@@ -370,7 +371,7 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
                     container=container_name,
                     follow=True,
                     _preload_content=False,
-                    _request_timeout=self._config.log_stream_timeout
+                    _request_timeout=scan_timeout
                 ):
                     parser.parse_line(line)
                     
@@ -467,7 +468,8 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
                 namespace,
                 container_name,
                 parser,
-                job_id
+                job_id,
+                scan_timeout
             )
             
             logger.debug(f"Job {job_id}: Log streaming completed")
