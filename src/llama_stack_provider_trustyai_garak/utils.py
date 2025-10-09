@@ -34,9 +34,18 @@ def wait_for_completion_with_progress(client: LlamaStackClient, job_id: str, ben
     while status.status in ["scheduled", "in_progress"]:
         progress = getattr(status, "metadata", {}).get("progress", {})
         
-        if progress:
+        current_percent = progress.get("percent", 0) if progress else 0
+        
+        #phase-1: Validation/Setup (no progress yet)
+        if status.status in ["scheduled", "in_progress"] and not progress:
+            pbar.set_description_str("Garak Setup")
+            pbar.set_postfix_str("⚙️ Validating configuration and initializing Garak scan...")
+        
+        #phase-2: Scanning (progress available but < 100)
+        elif progress and current_percent < 100:
+            pbar.set_description_str("Garak Scan")
+            
             # update overall progress bar
-            current_percent = progress.get("percent", 0)
             pbar.update(max(0, current_percent - last_percent))
             last_percent = current_percent
             
@@ -82,6 +91,16 @@ def wait_for_completion_with_progress(client: LlamaStackClient, job_id: str, ben
             
             pbar.set_postfix_str(" ".join(postfix_parts))
         
+        #phase-3: Postprocessing (progress at 100% but job still in_progress)
+        elif progress and current_percent >= 100 and status.status == "in_progress":
+            if last_percent < 100:
+                pbar.update(100 - last_percent)
+                last_percent = 100
+            pbar.set_description_str("Garak Scan Postprocessing")
+            
+            overall_elapsed = progress.get("overall_elapsed_seconds", 0)
+            pbar.set_postfix_str(f"📊 Parsing results and uploading reports... [{format_time(overall_elapsed)}]")
+        
         time.sleep(poll_interval)
         status = client.eval.jobs.status(job_id=job_id, benchmark_id=benchmark_id)
     
@@ -89,5 +108,10 @@ def wait_for_completion_with_progress(client: LlamaStackClient, job_id: str, ben
     pbar.close()
     if status.status in ['failed', 'completed', 'cancelled']:
         print("="*100)
-        print(f"Job ended with status: {status.status}")
+        if status.status == 'completed':
+            print(f"Job ended with status: {status.status} ✅")
+        elif status.status == 'failed':
+            print(f"Job ended with status: {status.status} ❌")
+        elif status.status == 'cancelled':
+            print(f"Job ended with status: {status.status} 🚫")
     return status
