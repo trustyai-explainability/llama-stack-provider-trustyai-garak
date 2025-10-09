@@ -80,16 +80,16 @@ if status.status == "completed":
 |-------------|-----------|----------|
 | `trustyai_garak::owasp_llm_top10` | [OWASP LLM Top 10](https://genai.owasp.org/llm-top-10/) | ~1.5 hours |
 | `trustyai_garak::avid_security` | [AVID Security](https://docs.avidml.org/taxonomy/effect-sep-view/security) | ~1.5 hours |
-| `trustyai_garak::avid_ethics` | [AVID Ethics](https://docs.avidml.org/taxonomy/effect-sep-view/ethics) | ~30 minutes |
-| `trustyai_garak::avid_performance` | [AVID Performance](https://docs.avidml.org/taxonomy/effect-sep-view/performance) | ~40 minutes |
+| `trustyai_garak::avid_ethics` | [AVID Ethics](https://docs.avidml.org/taxonomy/effect-sep-view/ethics) | ~10 minutes |
+| `trustyai_garak::avid_performance` | [AVID Performance](https://docs.avidml.org/taxonomy/effect-sep-view/performance) | ~10 minutes |
 
 ### Test Profiles
 | Benchmark ID | Description | Duration |
 |-------------|-------------|----------|
 | `trustyai_garak::quick` | Essential security checks (3 probes) | ~5 minutes |
-| `trustyai_garak::standard` | Standard attack vectors (5 categories) | ~1 hour |
+| `trustyai_garak::standard` | Standard attack vectors (5 categories) | ~45 minutes |
 
-_Duration estimates based on Qwen2.5 7B via vLLM_
+_Note: Duration estimates are for Qwen2.5 7B served via vLLM on OpenShift and scanning done with Llama Stack inline mode_
 
 ## Advanced Usage
 
