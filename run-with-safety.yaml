@@ -6,7 +6,6 @@ apis:
   - files
   - benchmarks
   - safety
-  - telemetry
 providers:
   inference:
     - provider_id: vllm
@@ -32,66 +31,76 @@ providers:
       config:
         storage_dir: ${env.FILES_STORAGE_DIR:=~/.llama/distributions/trustyai-garak/files}
         metadata_store:
-          type: sqlite
-          db_path: ${env.METADATA_STORE_DB_PATH:=~/.llama/distributions/trustyai-garak}/registry.db
+          table_name: files_metadata
+          backend: sql_default
   safety:
     - provider_id: prompt-guard
       provider_type: inline::prompt-guard
       config:
         excluded_categories: []
-  telemetry:
-  - provider_id: meta-reference
-    provider_type: inline::meta-reference
-    config:
-      service_name: "${env.OTEL_SERVICE_NAME:=\u200B}"
-      sinks: ${env.TELEMETRY_SINKS:=console,sqlite}
-      sqlite_db_path: ${env.SQLITE_STORE_DIR:=~/.llama/distributions/trustyai-garak}/trace_store.db
-      otel_exporter_otlp_endpoint: ${env.OTEL_EXPORTER_OTLP_ENDPOINT:=}
-models:
-- metadata: {}
-  model_id: ${env.INFERENCE_MODEL}
-  provider_id: vllm
-  model_type: llm
-benchmarks:
-  - benchmark_id: trustyai_garak::quick
-    dataset_id: garak
-    scoring_functions:
-      - garak_scoring
-    provider_id: trustyai_garak
-    provider_benchmark_id: quick
-  - benchmark_id: trustyai_garak::standard
-    dataset_id: garak
-    scoring_functions:
-      - garak_scoring
-    provider_id: trustyai_garak
-    provider_benchmark_id: standard
-  - benchmark_id: trustyai_garak::owasp_llm_top10
-    dataset_id: garak
-    scoring_functions:
-      - garak_scoring
-    provider_id: trustyai_garak
-    provider_benchmark_id: owasp_llm_top10
-  - benchmark_id: trustyai_garak::avid_security
-    dataset_id: garak
-    scoring_functions:
-      - garak_scoring
-    provider_id: trustyai_garak
-    provider_benchmark_id: avid_security
-  - benchmark_id: trustyai_garak::avid_ethics
-    dataset_id: garak
-    scoring_functions:
-      - garak_scoring
-    provider_id: trustyai_garak
-    provider_benchmark_id: avid_ethics
-  - benchmark_id: trustyai_garak::avid_performance
-    dataset_id: garak
-    scoring_functions:
-      - garak_scoring
-    provider_id: trustyai_garak
-    provider_benchmark_id: avid_performance
-shields:
-- shield_id: Prompt-Guard-86M
-  provider_id: prompt-guard
+
+storage:
+  backends:
+    kv_default:
+      type: kv_sqlite
+      db_path: ${env.SQLITE_STORE_DIR:=~/.llama/distributions/trustyai-garak}/kvstore.db
+    sql_default:
+      type: sql_sqlite
+      db_path: ${env.SQLITE_STORE_DIR:=~/.llama/distributions/trustyai-garak}/sql_store.db
+  stores:
+    metadata:
+      namespace: registry
+      backend: kv_default
+    inference:
+      table_name: inference_store
+      backend: sql_default
+      max_write_queue_size: 10000
+      num_writers: 4
+    conversations:
+      table_name: openai_conversations
+      backend: sql_default
+
+registered_resources:
+  benchmarks:
+    - benchmark_id: trustyai_garak::quick
+      dataset_id: garak
+      scoring_functions:
+        - garak_scoring
+      provider_id: trustyai_garak
+      provider_benchmark_id: quick
+    - benchmark_id: trustyai_garak::standard
+      dataset_id: garak
+      scoring_functions:
+        - garak_scoring
+      provider_id: trustyai_garak
+      provider_benchmark_id: standard
+    - benchmark_id: trustyai_garak::owasp_llm_top10
+      dataset_id: garak
+      scoring_functions:
+        - garak_scoring
+      provider_id: trustyai_garak
+      provider_benchmark_id: owasp_llm_top10
+    - benchmark_id: trustyai_garak::avid_security
+      dataset_id: garak
+      scoring_functions:
+        - garak_scoring
+      provider_id: trustyai_garak
+      provider_benchmark_id: avid_security
+    - benchmark_id: trustyai_garak::avid_ethics
+      dataset_id: garak
+      scoring_functions:
+        - garak_scoring
+      provider_id: trustyai_garak
+      provider_benchmark_id: avid_ethics
+    - benchmark_id: trustyai_garak::avid_performance
+      dataset_id: garak
+      scoring_functions:
+        - garak_scoring
+      provider_id: trustyai_garak
+      provider_benchmark_id: avid_performance
+  shields:
+  - shield_id: Prompt-Guard-86M
+    provider_id: prompt-guard
 server:
   port: 8321
 # external_providers_dir: ./providers.d
