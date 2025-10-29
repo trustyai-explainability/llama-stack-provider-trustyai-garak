@@ -53,7 +53,7 @@ from llama_stack_client import LlamaStackClient
 client = LlamaStackClient(base_url="http://localhost:8321")
 
 # Quick 5-minute scan
-job = client.eval.run_eval(
+job = client.alpha.eval.run_eval(
     benchmark_id="trustyai_garak::quick",
     benchmark_config={
         "eval_candidate": {
@@ -65,12 +65,12 @@ job = client.eval.run_eval(
 )
 
 # Check status
-status = client.eval.jobs.status(job_id=job.job_id, benchmark_id="trustyai_garak::quick")
+status = client.alpha.eval.jobs.status(job_id=job.job_id, benchmark_id="trustyai_garak::quick")
 print(f"Status: {status.status}")
 
 # Get results when complete
 if status.status == "completed":
-    results = client.eval.get_eval_job_result(job_id=job.job_id, benchmark_id="trustyai_garak::quick")
+    results = client.alpha.eval.get_eval_job_result(job_id=job.job_id, benchmark_id="trustyai_garak::quick")
 ```
 
 ## Available Benchmarks
@@ -178,10 +178,10 @@ _Note: If you're running Llama Stack server locally, make sure `BASE_URL` in run
 
 ```python
 # Same API, runs as KFP pipeline
-job = client.eval.run_eval(benchmark_id="trustyai_garak::owasp_llm_top10", ...)
+job = client.alpha.eval.run_eval(benchmark_id="trustyai_garak::owasp_llm_top10", ...)
 
 # Monitor pipeline
-status = client.eval.jobs.status(job_id=job.job_id, benchmark_id="trustyai_garak::owasp_llm_top10")
+status = client.alpha.eval.jobs.status(job_id=job.job_id, benchmark_id="trustyai_garak::owasp_llm_top10")
 print(f"KFP Run ID: {status.metadata['kfp_run_id']}")
 ```
 
