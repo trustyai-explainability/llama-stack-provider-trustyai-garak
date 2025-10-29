@@ -31,7 +31,6 @@ providers:
         metadata_store:
           table_name: files_metadata
           backend: sql_default
-
 storage:
   backends:
     kv_default:
@@ -52,7 +51,6 @@ storage:
     conversations:
       table_name: openai_conversations
       backend: sql_default
-
 registered_resources:
   benchmarks:
     - benchmark_id: trustyai_garak::quick

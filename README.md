@@ -34,13 +34,13 @@ export INFERENCE_MODEL="your-model-name"
 
 ```bash
 # Basic mode (standard scanning)
-llama stack run run.yaml --image-type venv
+llama stack run run.yaml
 
 # Enhanced mode (with shield testing)
-llama stack run run-with-safety.yaml --image-type venv
+llama stack run run-with-safety.yaml
 
 # Remote mode (Kubernetes/KFP)
-llama stack run run-remote.yaml --image-type venv
+llama stack run run-remote.yaml
 ```
 
 Server runs at `http://localhost:8321`
@@ -169,7 +169,7 @@ export AWS_S3_BUCKET="pipeline-artifacts"
 export AWS_DEFAULT_REGION="us-east-1"
 
 # Start server
-llama stack run run-remote.yaml --image-type venv
+llama stack run run-remote.yaml
 ```
 
 _Note: If you're running Llama Stack server locally, make sure `BASE_URL` in run-remote*.yaml is accessible from KFP pods (you can use [ngrok](https://ngrok.com/) to create an accessible endpoint for your local Llama stack service)._
