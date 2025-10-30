@@ -243,14 +243,25 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
 
             process = await asyncio.create_subprocess_exec(*cmd, 
                                                            stdout=asyncio.subprocess.PIPE, 
-                                                           stderr=asyncio.subprocess.PIPE, 
+                                                           stderr=asyncio.subprocess.STDOUT, 
                                                            env=env)
             
             self._job_metadata[job.job_id]["process_id"] = str(process.pid)
             timeout: int = scan_profile_config.get("timeout", self._config.timeout)
             
-            _, stderr = await asyncio.wait_for(process.communicate(), 
-                                                    timeout=timeout)
+            # _, stderr = await asyncio.wait_for(process.communicate(), 
+            #                                         timeout=timeout)
+            monitor_task = asyncio.create_task(self._monitor_subprocess_output(process, job.job_id))
+
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(process.wait(), monitor_task),
+                    timeout=timeout
+                    )
+            except asyncio.TimeoutError:
+                monitor_task.cancel()
+                logger.error(f"Job {job.job_id} timed out")
+                raise
 
             if process.returncode == 0:
                 # Upload scan files to file storage
@@ -298,7 +309,7 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
 
             else:
                 job.status = JobStatus.failed
-                self._job_metadata[job.job_id]["error"] = f"Scan failed with return code {process.returncode} - {stderr.decode('utf-8')}"
+                self._job_metadata[job.job_id]["error"] = f"Scan failed with return code {process.returncode}. Check scan.log for details."
         except asyncio.TimeoutError:
             job.status = JobStatus.failed
             self._job_metadata[job.job_id]["error"] = f"Scan timed out after {timeout} seconds."
@@ -649,7 +660,41 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
         except Exception as e:
             logger.error(f"Error parsing scan results for job {job_id}: {e}")
             return EvaluateResponse(generations=[], scores={})
+        
+    async def _monitor_subprocess_output(self, process: asyncio.subprocess.Process, job_id: str):
+        """Stream and parse Garak's stdout for progress updates"""
 
+        if job_id not in self._job_metadata:
+            logger.warning(f"Job {job_id} metadata not found during monitoring")
+            return
+
+        from ..progress_parser import ProgressParser
+        parser = ProgressParser(job_id, self._job_metadata)
+
+        try:
+            buffer = ""
+            
+            while True:
+                # read small chunks
+                chunk = await process.stdout.read(512)
+                if not chunk:
+                    break
+                
+                text = chunk.decode('utf-8', errors='ignore')
+                buffer += text
+                
+                lines = re.split(r'[\r\n]+', buffer)
+                buffer = lines[-1]  # incomplete line in buffer
+                
+                for line in lines[:-1]:  # complete lines
+                    parser.parse_line(line)
+        
+        except asyncio.CancelledError:
+            logger.warning(f"Job {job_id}: Progress monitoring cancelled")
+            raise
+        except Exception as e:
+            logger.error(f"Job {job_id}: Error monitoring progress: {e}", exc_info=True)
+    
     async def job_status(self, benchmark_id: str, job_id: str) -> Dict[str, Union[str, Dict[str, str]]]:
         """Get the status of a job.
 
@@ -663,6 +708,37 @@ class GarakEvalAdapter(Eval, BenchmarksProtocolPrivate):
             return {"status": "not_found", "job_id": job_id}
         
         metadata: dict = self._job_metadata.get(job_id, {}).copy()
+        
+        # calculate real-time overall scan elapsed and ETA
+        if job.status in [JobStatus.in_progress, JobStatus.scheduled]:
+            started_at_str = metadata.get("started_at")
+            if started_at_str and "progress" in metadata:
+                try:
+                    started_at = datetime.fromisoformat(started_at_str)
+                    overall_elapsed = int((datetime.now() - started_at).total_seconds())
+                    
+                    # overall scan elapsed
+                    metadata["progress"]["overall_elapsed_seconds"] = overall_elapsed
+                    
+                    # overall ETA based on completed probes
+                    completed = metadata["progress"].get("completed_probes", 0)
+                    total = metadata["progress"].get("total_probes", 0)
+                    
+                    if completed > 0 and total > 0:
+                        avg_time_per_probe = overall_elapsed / completed
+                        remaining = total - completed
+                        
+                        # add partial progress of current probe if available
+                        if probe_prog := metadata["progress"].get("current_probe_progress"):
+                            probe_pct = probe_prog.get("percent", 0) / 100.0
+                            # reducing remaining by current probe's progress
+                            remaining = remaining - probe_pct
+                        
+                        overall_eta = int(avg_time_per_probe * remaining)
+                        metadata["progress"]["overall_eta_seconds"] = overall_eta
+                    
+                except Exception as e:
+                    logger.warning(f"Error calculating scan times: {e}")
 
         if self._job_semaphore:
             # metadata["running_jobs"] = str(self._config.max_concurrent_jobs - self._job_semaphore._value)

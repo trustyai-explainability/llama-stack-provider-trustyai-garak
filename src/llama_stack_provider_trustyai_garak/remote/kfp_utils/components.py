@@ -48,7 +48,7 @@ def validate_inputs(
 @dsl.component(
     base_image=os.getenv('KUBEFLOW_BASE_IMAGE', CPU_BASE_IMAGE)
 )
-def garak_scan(
+def garak_scan( #TODO: If this name changes, need to update the get pod-name logic in `_stream_kfp_pod_logs` in `garak_remote_eval.py`
     command: List[str],
     llama_stack_url: str,
     max_retries: int,
@@ -65,6 +65,7 @@ def garak_scan(
     import signal
     from pathlib import Path
     from llama_stack_client import LlamaStackClient
+    import threading
     
     # Setup directories
     scan_dir = Path(os.getcwd()) / 'scan_files'
@@ -76,8 +77,17 @@ def garak_scan(
     command = command + ['--report_prefix', str(scan_report_prefix)]
     env = os.environ.copy()
     env["GARAK_LOG_FILE"] = str(scan_log_file)
+    env["PYTHONUNBUFFERED"] = "1"
     
     file_id_mapping = {}
+
+    def stream_output(pipe, prefix=""):
+        """Stream subprocess output to stdout (pod logs)"""
+        try:
+            for line in iter(pipe.readline, ''):
+                print(f"{prefix}{line}", end='', flush=True)
+        except Exception as e:
+            print(f"Error streaming output: {e}")
     
     ## TODO: why not use dsl.PipelineTask.set_retry()..?
     for attempt in range(max_retries):
@@ -86,14 +96,24 @@ def garak_scan(
             process = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
+                bufsize=1,
+                universal_newlines=True,
                 env=env,
                 preexec_fn=os.setsid  # Create new process group
             )
             
+            stream_thread = threading.Thread(
+                target=stream_output,
+                args=(process.stdout, ""),
+                daemon=True
+            )
+            stream_thread.start()
+            
             try:
-                stdout, stderr = process.communicate(timeout=timeout_seconds)
+                process.wait(timeout=timeout_seconds)
+                stream_thread.join(timeout=5)
                 
             except subprocess.TimeoutExpired:
                 # Kill the entire process group
@@ -109,7 +129,7 @@ def garak_scan(
             
             if process.returncode != 0:
                 raise subprocess.CalledProcessError(
-                    process.returncode, command, stdout, stderr
+                    process.returncode, command, "", ""
                 )
             
             # Upload files to llama stack
