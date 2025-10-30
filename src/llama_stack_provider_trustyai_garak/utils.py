@@ -19,7 +19,7 @@ def wait_for_completion_with_progress(client: LlamaStackClient, job_id: str, ben
             secs = seconds % 60
             return f"{minutes:02d}:{secs:02d}"
     
-    status = client.eval.jobs.status(job_id=job_id, benchmark_id=benchmark_id)
+    status = client.alpha.eval.jobs.status(job_id=job_id, benchmark_id=benchmark_id)
     
     pbar = tqdm(
         total=100, 
@@ -102,7 +102,7 @@ def wait_for_completion_with_progress(client: LlamaStackClient, job_id: str, ben
             pbar.set_postfix_str(f"📊 Parsing results and uploading reports... [{format_time(overall_elapsed)}]")
         
         time.sleep(poll_interval)
-        status = client.eval.jobs.status(job_id=job_id, benchmark_id=benchmark_id)
+        status = client.alpha.eval.jobs.status(job_id=job_id, benchmark_id=benchmark_id)
     
     pbar.n = 100
     pbar.close()
