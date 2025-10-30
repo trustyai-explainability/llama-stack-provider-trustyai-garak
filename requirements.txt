@@ -450,7 +450,7 @@ cryptography==45.0.7 \
     --hash=sha256:f3df7b3d0f91b88b2106031fd995802a2e9ae13e02c36c1fc075b43f420f3a17 \
     --hash=sha256:f5414a788ecc6ee6bc58560e85ca624258a55ca434884445440a810796ea0e0b \
     --hash=sha256:fa26fa54c0a9384c27fcdc905a2fb7d60ac6e47d14bc2692145f2b3b1e2cfdbd
-    # via python-jose
+    # via pyjwt
 datasets==4.0.0 \
     --hash=sha256:7ef95e62025fd122882dbce6cb904c8cd3fbc829de6669a5eb939c77d50e203d \
     --hash=sha256:9657e7140a9050db13443ba21cb5de185af8af944479b00e7ff1e00a61c8dbf1
@@ -479,10 +479,6 @@ docstring-parser==0.17.0 \
     --hash=sha256:583de4a309722b3315439bb31d64ba3eebada841f2e2cee23b99df001434c912 \
     --hash=sha256:cf2569abd23dce8099b300f9b4fa8191e9582dda731fd533daf54c4551658708
     # via kfp
-ecdsa==0.19.1 \
-    --hash=sha256:30638e27cf77b7e15c4c4cc1973720149e1033827cfd00661ca5c8cc0cdb24c3 \
-    --hash=sha256:478cba7b62555866fcb3bb3fe985e06decbdb68ef55713c4e5ab98c57d508e61
-    # via python-jose
 ecoji==0.1.1 \
     --hash=sha256:9665b2545d73ea0b4e0c9897cc6575df8ae7dc3946a82ac9d62db2f147139a9c
     # via garak
@@ -1030,7 +1026,6 @@ huggingface-hub==0.34.4 \
     #   accelerate
     #   datasets
     #   garak
-    #   llama-stack
     #   tokenizers
     #   transformers
 hyperframe==6.1.0 \
@@ -1231,13 +1226,13 @@ litellm==1.77.0 \
     --hash=sha256:40c3ad4b4ef8eab109e04e71b62b9eab659d7af763d9e62d1a3a770ca25468ac \
     --hash=sha256:7025a99c88e54209a64c05824ec1fab968343be1ed4be3573afacc92160d561c
     # via garak
-llama-stack==0.2.23 \
-    --hash=sha256:43be14d97ca2fff77ca1e42241acb7945a67b7d183e9938bdb7159ee9610982a \
-    --hash=sha256:464d29c1ae3989fce2226513c9c18648f6236cbf5a399d3cf3a6b3dc4435be8c
+llama-stack==0.3.0 \
+    --hash=sha256:8277c54cf4a283077143a0804128f2c76f1ec9660116353176c77b659206d315 \
+    --hash=sha256:c2b999dced8970f3590ecd7eca50bef1bc0c052eec15b8aba78a5c17a0a4051d
     # via llama-stack-provider-trustyai-garak (pyproject.toml)
-llama-stack-client==0.2.23 \
-    --hash=sha256:68f34e8ac8eea6a73ed9d4977d849992b2d8bd835804d770a11843431cd5bf74 \
-    --hash=sha256:eee42c74eee8f218f9455e5a06d5d4be43f8a8c82a7937ef51ce367f916df847
+llama-stack-client==0.3.0 \
+    --hash=sha256:1e974a74d0da285e18ba7df30b9a324e250782b130253bcef3e695830c5bb03d \
+    --hash=sha256:9f85d84d508ef7da44b96ca8555d7783da717cfc9135bab6a5530fe8c852690d
     # via llama-stack
 lorem==0.1.1 \
     --hash=sha256:785f4109a241fc2891e59705e85d065f6e6d3ed6ad91750a8cb54d4f3e59d934 \
@@ -2136,7 +2131,6 @@ pyasn1==0.6.1 \
     --hash=sha256:6f580d2bdd84365380830acf45550f2511469f673cb4a5ae3857a3170128b034
     # via
     #   pyasn1-modules
-    #   python-jose
     #   rsa
 pyasn1-modules==0.4.2 \
     --hash=sha256:29253a9207ce32b64c3ac6600edc75368f98473906e8fd1043bd6b5b1de2c14a \
@@ -2270,6 +2264,10 @@ pygments==2.19.2 \
     # via
     #   markdown2
     #   rich
+pyjwt==2.10.1 \
+    --hash=sha256:3cc5772eb20009233caf06e9d8a0577824723b44e6648ee0a2aedb6cf9381953 \
+    --hash=sha256:dcdd193e30abefd5debf142f9adfcdd2b58004e644f25406ffaebd50bd98dacb
+    # via llama-stack
 pyparsing==3.2.3 \
     --hash=sha256:a749938e02d6fd0b59b356ca504a24982314bb090c383e3cf201c95ef7e2bfcf \
     --hash=sha256:b9c13f1ab8b3b542f72e28f634bad4de758ab3ce4546e4301970ad6fa77c38be
@@ -2293,10 +2291,6 @@ python-dotenv==1.1.1 \
     # via
     #   litellm
     #   llama-stack
-python-jose==3.5.0 \
-    --hash=sha256:abd1202f23d34dfad2c3d28cb8617b90acf34132c7afd60abd0b0b7d3cb55771 \
-    --hash=sha256:fb4eaa44dbeb1c26dcc69e4bd7ec54a1cb8dd64d3b4d81ef08d90ff453f2b01b
-    # via llama-stack
 python-magic==0.4.27 \
     --hash=sha256:c1ba14b08e4a5f5c31a302b7721239695b2f0f058d125bd5ce1ee36b9d9d3c3b \
     --hash=sha256:c212960ad306f700aa0d01e5d7a325d20548ff97eb9920dcd29513174f0294d3
@@ -2779,9 +2773,7 @@ rpds-py==0.27.1 \
 rsa==4.9.1 \
     --hash=sha256:68635866661c6836b8d39430f97a996acbd61bfa49406748ea243539fe239762 \
     --hash=sha256:e7bdbfdb5497da4c07dfd35530e1a902659db6ff241e39d9953cad06ebd0ae75
-    # via
-    #   google-auth
-    #   python-jose
+    # via google-auth
 s3transfer==0.14.0 \
     --hash=sha256:ea3b790c7077558ed1f02a3072fb3cb992bbbd253392f4b6e9e8976941c7d456 \
     --hash=sha256:eff12264e7c8b4985074ccce27a3b38a485bb7f7422cc8046fee9be4983e4125
@@ -2894,7 +2886,6 @@ six==1.17.0 \
     --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274 \
     --hash=sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81
     # via
-    #   ecdsa
     #   kfp-server-api
     #   kubernetes
     #   langdetect
@@ -2965,7 +2956,9 @@ sqlalchemy==2.0.43 \
     --hash=sha256:e7c08f57f75a2bb62d7ee80a89686a5e5669f199235c6d1dac75cd59374091c3 \
     --hash=sha256:f42f23e152e4545157fa367b2435a1ace7571cab016ca26038867eb7df2c3631 \
     --hash=sha256:fe2b3b4927d0bc03d02ad883f402d5de201dbc8894ac87d2e981e7d87430e60d
-    # via langchain
+    # via
+    #   langchain
+    #   llama-stack
 starlette==0.47.3 \
     --hash=sha256:6bc94f839cc176c4858894f1f8908f0ab79dfec1a6b8402f6da9be26ebea52e9 \
     --hash=sha256:89c0778ca62a76b826101e7c709e70680a1699ca7da6b44d38eb0a7e61fe4b51

@@ -445,11 +445,8 @@ class GarakRemoteEvalAdapter(Eval, BenchmarksProtocolPrivate):
             return benchmark_metadata['generator_options']
         
         base_url: str = self._config.base_url.rstrip("/")
-        if not base_url.endswith("openai/v1"):
-            if base_url.endswith("/v1"):
-                base_url = f"{base_url}/openai/v1"
-            else:
-                base_url = f"{base_url}/v1/openai/v1"
+        if not base_url.endswith("/v1"):
+            base_url = f"{base_url}/v1"
 
 
         generator_options = {

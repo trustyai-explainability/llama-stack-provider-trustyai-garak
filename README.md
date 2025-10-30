@@ -34,13 +34,13 @@ export INFERENCE_MODEL="your-model-name"
 
 ```bash
 # Basic mode (standard scanning)
-llama stack run run.yaml --image-type venv
+llama stack run run.yaml
 
 # Enhanced mode (with shield testing)
-llama stack run run-with-safety.yaml --image-type venv
+llama stack run run-with-safety.yaml
 
 # Remote mode (Kubernetes/KFP)
-llama stack run run-remote.yaml --image-type venv
+llama stack run run-remote.yaml
 ```
 
 Server runs at `http://localhost:8321`
@@ -53,7 +53,7 @@ from llama_stack_client import LlamaStackClient
 client = LlamaStackClient(base_url="http://localhost:8321")
 
 # Quick 5-minute scan
-job = client.eval.run_eval(
+job = client.alpha.eval.run_eval(
     benchmark_id="trustyai_garak::quick",
     benchmark_config={
         "eval_candidate": {
@@ -65,12 +65,12 @@ job = client.eval.run_eval(
 )
 
 # Check status
-status = client.eval.jobs.status(job_id=job.job_id, benchmark_id="trustyai_garak::quick")
+status = client.alpha.eval.jobs.status(job_id=job.job_id, benchmark_id="trustyai_garak::quick")
 print(f"Status: {status.status}")
 
 # Get results when complete
 if status.status == "completed":
-    results = client.eval.get_eval_job_result(job_id=job.job_id, benchmark_id="trustyai_garak::quick")
+    results = client.alpha.eval.get_eval_job_result(job_id=job.job_id, benchmark_id="trustyai_garak::quick")
 ```
 
 ## Available Benchmarks
@@ -169,7 +169,7 @@ export AWS_S3_BUCKET="pipeline-artifacts"
 export AWS_DEFAULT_REGION="us-east-1"
 
 # Start server
-llama stack run run-remote.yaml --image-type venv
+llama stack run run-remote.yaml
 ```
 
 _Note: If you're running Llama Stack server locally, make sure `BASE_URL` in run-remote*.yaml is accessible from KFP pods (you can use [ngrok](https://ngrok.com/) to create an accessible endpoint for your local Llama stack service)._
@@ -178,10 +178,10 @@ _Note: If you're running Llama Stack server locally, make sure `BASE_URL` in run
 
 ```python
 # Same API, runs as KFP pipeline
-job = client.eval.run_eval(benchmark_id="trustyai_garak::owasp_llm_top10", ...)
+job = client.alpha.eval.run_eval(benchmark_id="trustyai_garak::owasp_llm_top10", ...)
 
 # Monitor pipeline
-status = client.eval.jobs.status(job_id=job.job_id, benchmark_id="trustyai_garak::owasp_llm_top10")
+status = client.alpha.eval.jobs.status(job_id=job.job_id, benchmark_id="trustyai_garak::owasp_llm_top10")
 print(f"KFP Run ID: {status.metadata['kfp_run_id']}")
 ```
 

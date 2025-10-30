@@ -12,7 +12,7 @@ import threading
 
 logger = logging.getLogger(__name__)
 
-OPENAI_COMPATIBLE_INFERENCE_URI = "/openai/v1/chat/completions"
+OPENAI_COMPATIBLE_INFERENCE_URI = "/chat/completions"
 RUN_SHIELD_URI = "/safety/run-shield"
 
 ## from llama_stack/providers/inline/safety/llama_guard/llama_guard.py
