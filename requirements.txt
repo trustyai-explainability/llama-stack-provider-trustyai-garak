@@ -694,9 +694,9 @@ ftfy==6.3.1 \
     --hash=sha256:7c70eb532015cd2f9adb53f101fb6c7945988d023a085d127d1573dc49dd0083 \
     --hash=sha256:9b3c3d90f84fb267fe64d375a07b7f8912d817cf86009ae134aa03e1819506ec
     # via garak
-garak==0.12.0 \
-    --hash=sha256:c41aa11751469217cc8adcbee49a232956b609f1055a29c56ccb161f345130d2 \
-    --hash=sha256:f1a7e72177eb2d9c84bde2ea658ad53a0648168fb725888a1d33181a97109818
+garak==0.13.1 \
+    --hash=sha256:48728127e399b4c41756e2c63402580e52b502d06bb6101e288c636eadbdb1b1 \
+    --hash=sha256:e3e399855998e3637b668fc84f90e321c894632c7f4237f770f1d9e2becf468b
     # via llama-stack-provider-trustyai-garak (pyproject.toml)
 google-api-core==2.25.1 \
     --hash=sha256:8a2a56c1fef82987a524371f99f3bd0143702fecc670c72e600c1cda6bf8dbb7 \
