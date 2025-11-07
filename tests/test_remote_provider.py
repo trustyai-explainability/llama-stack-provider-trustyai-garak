@@ -31,7 +31,7 @@ class TestRemoteProvider:
         assert spec.module == "llama_stack_provider_trustyai_garak.remote"
         for api in [Api.inference, Api.files, Api.benchmarks]:
             assert api in spec.api_dependencies, f"{api} not found in api_dependencies"
-        for api in [Api.safety, Api.shields, Api.telemetry]:
+        for api in [Api.safety, Api.shields]:
             assert api in spec.optional_api_dependencies, f"{api} not found in optional_api_dependencies"
 
 
