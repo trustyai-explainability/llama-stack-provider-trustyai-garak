@@ -77,6 +77,14 @@ class GarakRemoteConfig(GarakEvalProviderConfig):
     kubeflow_config: "KubeflowConfig" = Field(
         description="Additional configuration parameters for remote execution",
     )
+    container_wait_timeout: int = Field(
+        default=300,
+        description="Timeout for container wait in seconds",
+    )
+    pod_discovery_timeout: int = Field(
+        default=300,
+        description="Timeout for pod discovery in seconds",
+    )
 
 
 class KubeflowConfig(BaseModel):
