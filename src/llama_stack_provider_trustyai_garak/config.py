@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field, field_validator
 from pathlib import Path
 
 @json_schema_type
-class GarakEvalProviderConfig(BaseModel):
+class GarakInlineConfig(BaseModel):
     base_url: str = Field(
         default="http://localhost:8321/v1",
         description="The base URL for the OpenAI API compatible remote model serving endpoint",
@@ -71,7 +71,7 @@ class GarakEvalProviderConfig(BaseModel):
         }
 
 @json_schema_type
-class GarakRemoteConfig(GarakEvalProviderConfig):
+class GarakRemoteConfig(GarakInlineConfig):
     """Configuration for Ragas evaluation provider (remote execution)."""
 
     kubeflow_config: "KubeflowConfig" = Field(
@@ -175,4 +175,4 @@ class GarakScanConfig(BaseModel):
     parallel_probes: int = 8
     cleanup_scan_dir_on_exit: bool = False
 
-__all__ = ["GarakEvalProviderConfig", "GarakScanConfig"]
+__all__ = ["GarakInlineConfig", "GarakRemoteConfig", "GarakScanConfig"]

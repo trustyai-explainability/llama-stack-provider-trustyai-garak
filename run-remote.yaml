@@ -17,7 +17,7 @@ providers:
   eval:
     - provider_id: trustyai_garak
       provider_type: remote::trustyai_garak
-      module: llama_stack_provider_trustyai_garak.remote
+      module: llama_stack_provider_trustyai_garak
       config:
         base_url: ${env.BASE_URL:=https://f70b2fb955e7.ngrok-free.app/v1} # llama-stack service base url (should be accessible from kf pods)
         timeout: ${env.GARAK_TIMEOUT:=10800} # 3 hours max timeout for garak scan
