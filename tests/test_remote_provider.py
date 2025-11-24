@@ -25,7 +25,12 @@ class TestRemoteProvider:
         
         assert spec.api == Api.eval
         assert spec.adapter_type == "trustyai_garak"
-        for package in ["garak", "kfp", "kfp-kubernetes", "kfp-server-api", "boto3"]:
+        
+        # Check for garak (may have version specifier like garak==0.12.0)
+        assert any(pkg.startswith("garak") for pkg in spec.pip_packages), "garak not found in pip_packages"
+        
+        # Check for other packages (exact match)
+        for package in ["kfp", "kfp-kubernetes", "kfp-server-api", "boto3"]:
             assert package in spec.pip_packages, f"{package} not found in pip_packages"
         assert spec.config_class == "llama_stack_provider_trustyai_garak.config.GarakRemoteConfig"
         assert spec.module == "llama_stack_provider_trustyai_garak.remote"

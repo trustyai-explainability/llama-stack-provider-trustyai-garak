@@ -5,19 +5,19 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from llama_stack_provider_trustyai_garak.config import (
-    GarakEvalProviderConfig,
+    GarakInlineConfig,
     GarakRemoteConfig,
     KubeflowConfig,
     GarakScanConfig
 )
 
 
-class TestGarakEvalProviderConfig:
-    """Test cases for GarakEvalProviderConfig"""
+class TestGarakInlineConfig:
+    """Test cases for GarakInlineConfig"""
 
     def test_default_config(self):
         """Test default configuration values"""
-        config = GarakEvalProviderConfig()
+        config = GarakInlineConfig()
         assert config.base_url == "http://localhost:8321/v1"
         assert config.garak_model_type_openai == "openai.OpenAICompatible"
         assert config.garak_model_type_function == "function.Single"
@@ -28,7 +28,7 @@ class TestGarakEvalProviderConfig:
 
     def test_custom_config(self):
         """Test custom configuration values"""
-        config = GarakEvalProviderConfig(
+        config = GarakInlineConfig(
             base_url="https://custom.api.com/v1",
             garak_model_type_openai="custom.model",
             timeout=1000,
@@ -43,10 +43,10 @@ class TestGarakEvalProviderConfig:
 
     def test_tls_verify_boolean(self):
         """Test TLS verify with boolean values"""
-        config_true = GarakEvalProviderConfig(tls_verify=True)
+        config_true = GarakInlineConfig(tls_verify=True)
         assert config_true.tls_verify is True
         
-        config_false = GarakEvalProviderConfig(tls_verify=False)
+        config_false = GarakInlineConfig(tls_verify=False)
         assert config_false.tls_verify is False
 
     def test_tls_verify_cert_path(self, tmp_path):
@@ -55,34 +55,34 @@ class TestGarakEvalProviderConfig:
         cert_file = tmp_path / "cert.pem"
         cert_file.write_text("CERTIFICATE CONTENT")
         
-        config = GarakEvalProviderConfig(tls_verify=str(cert_file))
+        config = GarakInlineConfig(tls_verify=str(cert_file))
         assert config.tls_verify == str(cert_file)
 
     def test_tls_verify_invalid_path(self):
         """Test TLS verify with invalid certificate path"""
         with pytest.raises(ValidationError) as exc_info:
-            GarakEvalProviderConfig(tls_verify="/invalid/path/cert.pem")
+            GarakInlineConfig(tls_verify="/invalid/path/cert.pem")
         assert "TLS certificate file does not exist" in str(exc_info.value)
 
     def test_tls_verify_directory_path(self, tmp_path):
         """Test TLS verify with directory path (should fail)"""
         with pytest.raises(ValidationError) as exc_info:
-            GarakEvalProviderConfig(tls_verify=str(tmp_path))
+            GarakInlineConfig(tls_verify=str(tmp_path))
         assert "TLS certificate path is not a file" in str(exc_info.value)
 
     def test_base_url_validation(self):
         """Test base URL validation (whitespace trimming)"""
-        config = GarakEvalProviderConfig(base_url="  https://api.com/v1  ")
+        config = GarakInlineConfig(base_url="  https://api.com/v1  ")
         assert config.base_url == "https://api.com/v1"
 
     def test_invalid_base_url_type(self):
         """Test invalid base URL type"""
         with pytest.raises(ValidationError):
-            GarakEvalProviderConfig(base_url=123)
+            GarakInlineConfig(base_url=123)
 
     def test_sample_run_config_with_integers(self):
         """Test sample_run_config class method with integer values"""
-        config_dict = GarakEvalProviderConfig.sample_run_config(
+        config_dict = GarakInlineConfig.sample_run_config(
             base_url="https://test.api.com",
             timeout=5000,
             max_workers=8,
@@ -101,7 +101,7 @@ class TestGarakEvalProviderConfig:
         # This is a known limitation - the method will raise an error when called with defaults
         # that are template strings trying to be converted to int
         with pytest.raises(ValueError) as exc_info:
-            GarakEvalProviderConfig.sample_run_config()
+            GarakInlineConfig.sample_run_config()
         assert "invalid literal for int()" in str(exc_info.value)
 
 
