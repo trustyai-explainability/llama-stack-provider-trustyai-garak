@@ -15,19 +15,19 @@ providers:
         api_token: ${env.VLLM_API_TOKEN:fake}
         tls_verify: ${env.VLLM_TLS_VERIFY:=true}
   eval:
-    - provider_id: trustyai_garak
+    - provider_id: trustyai_garak_remote
       provider_type: remote::trustyai_garak
       module: llama_stack_provider_trustyai_garak
       config:
-        base_url: ${env.BASE_URL:=https://f70b2fb955e7.ngrok-free.app/v1} # llama-stack service base url (should be accessible from kf pods)
-        timeout: ${env.GARAK_TIMEOUT:=10800} # 3 hours max timeout for garak scan
-        max_concurrent_jobs: ${env.GARAK_MAX_CONCURRENT_JOBS:=5} # 5 max concurrent garak scans
+        llama_stack_url: ${env.KUBEFLOW_LLAMA_STACK_URL} # should be accessible from kf pods
         tls_verify: ${env.GARAK_TLS_VERIFY:=true}
         kubeflow_config:
-          pipelines_endpoint: ${env.KUBEFLOW_PIPELINES_ENDPOINT:=https://ds-pipeline-dspa-model-namespace.apps.rosa.y1m4j9o2e1n6b9l.r6mx.p3.openshiftapps.com}
-          namespace: ${env.KUBEFLOW_NAMESPACE:=model-namespace}
-          experiment_name: ${env.KUBEFLOW_EXPERIMENT_NAME:=trustyai-garak-scans}
-          base_image: ${env.KUBEFLOW_BASE_IMAGE:=quay.io/rh-ee-spandraj/trustyai-garak-provider-dsp:cpu}
+          results_s3_prefix: ${env.KUBEFLOW_RESULTS_S3_PREFIX}
+          s3_credentials_secret_name: ${env.KUBEFLOW_S3_CREDENTIALS_SECRET_NAME}
+          pipelines_endpoint: ${env.KUBEFLOW_PIPELINES_ENDPOINT}
+          namespace: ${env.KUBEFLOW_NAMESPACE}
+          base_image: ${env.KUBEFLOW_BASE_IMAGE}
+          pipelines_api_token: ${env.KUBEFLOW_PIPELINES_TOKEN:=} # if not set, uses kubeconfig
   files:
     - provider_id: meta-reference-files
       provider_type: inline::localfs
@@ -62,37 +62,37 @@ registered_resources:
       dataset_id: garak
       scoring_functions:
         - garak_scoring
-      provider_id: trustyai_garak
+      provider_id: trustyai_garak_remote
       provider_benchmark_id: quick
     - benchmark_id: trustyai_garak::standard
       dataset_id: garak
       scoring_functions:
         - garak_scoring
-      provider_id: trustyai_garak
+      provider_id: trustyai_garak_remote
       provider_benchmark_id: standard
     - benchmark_id: trustyai_garak::owasp_llm_top10
       dataset_id: garak
       scoring_functions:
         - garak_scoring
-      provider_id: trustyai_garak
+      provider_id: trustyai_garak_remote
       provider_benchmark_id: owasp_llm_top10
     - benchmark_id: trustyai_garak::avid_security
       dataset_id: garak
       scoring_functions:
         - garak_scoring
-      provider_id: trustyai_garak
+      provider_id: trustyai_garak_remote
       provider_benchmark_id: avid_security
     - benchmark_id: trustyai_garak::avid_ethics
       dataset_id: garak
       scoring_functions:
         - garak_scoring
-      provider_id: trustyai_garak
+      provider_id: trustyai_garak_remote
       provider_benchmark_id: avid_ethics
     - benchmark_id: trustyai_garak::avid_performance
       dataset_id: garak
       scoring_functions:
         - garak_scoring
-      provider_id: trustyai_garak
+      provider_id: trustyai_garak_remote
       provider_benchmark_id: avid_performance
 server:
   port: 8321

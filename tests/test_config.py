@@ -18,7 +18,7 @@ class TestGarakInlineConfig:
     def test_default_config(self):
         """Test default configuration values"""
         config = GarakInlineConfig()
-        assert config.base_url == "http://localhost:8321/v1"
+        assert config.llama_stack_url == "http://localhost:8321"
         assert config.garak_model_type_openai == "openai.OpenAICompatible"
         assert config.garak_model_type_function == "function.Single"
         assert config.timeout == 60 * 60 * 3
@@ -29,13 +29,13 @@ class TestGarakInlineConfig:
     def test_custom_config(self):
         """Test custom configuration values"""
         config = GarakInlineConfig(
-            base_url="https://custom.api.com/v1",
+            llama_stack_url="https://custom.api.com",
             garak_model_type_openai="custom.model",
             timeout=1000,
             max_workers=10,
             max_concurrent_jobs=3
         )
-        assert config.base_url == "https://custom.api.com/v1"
+        assert config.llama_stack_url == "https://custom.api.com"
         assert config.garak_model_type_openai == "custom.model"
         assert config.timeout == 1000
         assert config.max_workers == 10
@@ -70,25 +70,25 @@ class TestGarakInlineConfig:
             GarakInlineConfig(tls_verify=str(tmp_path))
         assert "TLS certificate path is not a file" in str(exc_info.value)
 
-    def test_base_url_validation(self):
-        """Test base URL validation (whitespace trimming)"""
-        config = GarakInlineConfig(base_url="  https://api.com/v1  ")
-        assert config.base_url == "https://api.com/v1"
+    def test_llama_stack_url_validation(self):
+        """Test llama_stack_url validation (whitespace trimming)"""
+        config = GarakInlineConfig(llama_stack_url="  https://api.com  ")
+        assert config.llama_stack_url == "https://api.com"
 
-    def test_invalid_base_url_type(self):
-        """Test invalid base URL type"""
+    def test_invalid_llama_stack_url_type(self):
+        """Test invalid llama_stack_url type"""
         with pytest.raises(ValidationError):
-            GarakInlineConfig(base_url=123)
+            GarakInlineConfig(llama_stack_url=123)
 
     def test_sample_run_config_with_integers(self):
         """Test sample_run_config class method with integer values"""
         config_dict = GarakInlineConfig.sample_run_config(
-            base_url="https://test.api.com",
+            llama_stack_url="https://test.api.com",
             timeout=5000,
             max_workers=8,
             max_concurrent_jobs=10
         )
-        assert config_dict["base_url"] == "https://test.api.com"
+        assert config_dict["llama_stack_url"] == "https://test.api.com"
         assert config_dict["timeout"] == 5000
         assert config_dict["max_workers"] == 8
         assert config_dict["max_concurrent_jobs"] == 10
@@ -111,9 +111,10 @@ class TestGarakRemoteConfig:
     def test_remote_config_with_kubeflow(self):
         """Test remote config with Kubeflow settings"""
         kubeflow_config = KubeflowConfig(
+            results_s3_prefix="garak-results/scans",
+            s3_credentials_secret_name="aws-connection-pipeline-artifacts",
             pipelines_endpoint="https://kfp.example.com",
             namespace="garak-namespace",
-            experiment_name="garak-experiment",
             base_image="garak:latest"
         )
         
@@ -123,12 +124,60 @@ class TestGarakRemoteConfig:
         
         assert config.kubeflow_config.pipelines_endpoint == "https://kfp.example.com"
         assert config.kubeflow_config.namespace == "garak-namespace"
-        assert config.kubeflow_config.experiment_name == "garak-experiment"
         assert config.kubeflow_config.base_image == "garak:latest"
+        assert config.kubeflow_config.results_s3_prefix == "garak-results/scans"
+        assert config.kubeflow_config.s3_credentials_secret_name == "aws-connection-pipeline-artifacts"
         
         # Should inherit base config defaults
-        assert config.base_url == "http://localhost:8321/v1"
+        assert config.llama_stack_url == "http://localhost:8321"
         assert config.timeout == 60 * 60 * 3
+
+
+    def test_remote_config_inherits_base_fields(self):
+        """Test that GarakRemoteConfig inherits all base fields"""
+        kubeflow_config = KubeflowConfig(
+            results_s3_prefix="test/prefix",
+            s3_credentials_secret_name="test-secret",
+            pipelines_endpoint="https://kfp.test.com",
+            namespace="test",
+            base_image="test:latest"
+        )
+        
+        config = GarakRemoteConfig(
+            llama_stack_url="https://custom.com",
+            timeout=5000,
+            max_workers=10,
+            kubeflow_config=kubeflow_config
+        )
+        
+        # Check inherited fields
+        assert config.llama_stack_url == "https://custom.com"
+        assert config.timeout == 5000
+        assert config.max_workers == 10
+        assert config.garak_model_type_openai == "openai.OpenAICompatible"
+        
+        # Check it doesn't have inline-only field
+        assert not hasattr(config, 'max_concurrent_jobs') or config.max_concurrent_jobs == 5  # inherited default
+
+    def test_remote_config_tls_verify(self, tmp_path):
+        """Test TLS verify setting in remote config"""
+        cert_file = tmp_path / "cert.pem"
+        cert_file.write_text("CERTIFICATE")
+        
+        kubeflow_config = KubeflowConfig(
+            results_s3_prefix="test/prefix",
+            s3_credentials_secret_name="test-secret",
+            pipelines_endpoint="https://kfp.test.com",
+            namespace="test",
+            base_image="test:latest"
+        )
+        
+        config = GarakRemoteConfig(
+            tls_verify=str(cert_file),
+            kubeflow_config=kubeflow_config
+        )
+        
+        assert config.tls_verify == str(cert_file)
 
 
 class TestKubeflowConfig:
@@ -142,15 +191,107 @@ class TestKubeflowConfig:
     def test_kubeflow_config_valid(self):
         """Test valid Kubeflow configuration"""
         config = KubeflowConfig(
+            results_s3_prefix="garak-results/scans",
+            s3_credentials_secret_name="aws-connection-pipeline-artifacts",
             pipelines_endpoint="https://kfp.example.com",
             namespace="default",
-            experiment_name="test-exp",
             base_image="python:3.9"
         )
         assert config.pipelines_endpoint == "https://kfp.example.com"
         assert config.namespace == "default"
-        assert config.experiment_name == "test-exp"
         assert config.base_image == "python:3.9"
+        assert config.results_s3_prefix == "garak-results/scans"
+        assert config.s3_credentials_secret_name == "aws-connection-pipeline-artifacts"
+        assert config.pipelines_api_token is None  # Optional field
+
+    def test_kubeflow_config_missing_results_s3_prefix(self):
+        """Test that results_s3_prefix is required"""
+        with pytest.raises(ValidationError) as exc_info:
+            KubeflowConfig(
+                s3_credentials_secret_name="aws-connection",
+                pipelines_endpoint="https://kfp.example.com",
+                namespace="default",
+                base_image="python:3.9"
+            )
+        assert "results_s3_prefix" in str(exc_info.value)
+
+    def test_kubeflow_config_s3_credentials_secret_name_has_default(self):
+        """Test that s3_credentials_secret_name has a default value"""
+        config = KubeflowConfig(
+            results_s3_prefix="bucket/prefix",
+            pipelines_endpoint="https://kfp.example.com",
+            namespace="default",
+            base_image="python:3.9"
+        )
+        # Should use default value
+        assert config.s3_credentials_secret_name == "aws-connection-pipeline-artifacts"
+
+    def test_kubeflow_config_s3_prefix_formats(self):
+        """Test various S3 prefix formats are accepted"""
+        # Format: bucket/prefix
+        config1 = KubeflowConfig(
+            results_s3_prefix="my-bucket/my/prefix",
+            s3_credentials_secret_name="aws-connection",
+            pipelines_endpoint="https://kfp.example.com",
+            namespace="default",
+            base_image="test:latest"
+        )
+        assert config1.results_s3_prefix == "my-bucket/my/prefix"
+        
+        # Format: s3://bucket/prefix
+        config2 = KubeflowConfig(
+            results_s3_prefix="s3://my-bucket/my/prefix",
+            s3_credentials_secret_name="aws-connection",
+            pipelines_endpoint="https://kfp.example.com",
+            namespace="default",
+            base_image="test:latest"
+        )
+        assert config2.results_s3_prefix == "s3://my-bucket/my/prefix"
+        
+        # Format: bucket only (no prefix)
+        config3 = KubeflowConfig(
+            results_s3_prefix="my-bucket",
+            s3_credentials_secret_name="aws-connection",
+            pipelines_endpoint="https://kfp.example.com",
+            namespace="default",
+            base_image="test:latest"
+        )
+        assert config3.results_s3_prefix == "my-bucket"
+
+    def test_kubeflow_config_with_token(self):
+        """Test KubeflowConfig with pipelines_api_token"""
+        config = KubeflowConfig(
+            results_s3_prefix="bucket/prefix",
+            s3_credentials_secret_name="aws-connection",
+            pipelines_endpoint="https://kfp.example.com",
+            namespace="default",
+            base_image="test:latest",
+            pipelines_api_token="test-token-12345"
+        )
+        assert config.pipelines_api_token == "test-token-12345"
+
+    def test_kubeflow_config_token_default_none(self):
+        """Test that pipelines_api_token defaults to None"""
+        config = KubeflowConfig(
+            results_s3_prefix="bucket/prefix",
+            s3_credentials_secret_name="aws-connection",
+            pipelines_endpoint="https://kfp.example.com",
+            namespace="default",
+            base_image="test:latest"
+        )
+        assert config.pipelines_api_token is None
+
+    def test_kubeflow_config_default_s3_secret_name(self):
+        """Test s3_credentials_secret_name has proper default"""
+        config = KubeflowConfig(
+            results_s3_prefix="bucket/prefix",
+            s3_credentials_secret_name="aws-connection-pipeline-artifacts",
+            pipelines_endpoint="https://kfp.example.com",
+            namespace="default",
+            base_image="test:latest"
+        )
+        # Default should be the standard name shared with Ragas
+        assert config.s3_credentials_secret_name == "aws-connection-pipeline-artifacts"
 
 
 class TestGarakScanConfig:

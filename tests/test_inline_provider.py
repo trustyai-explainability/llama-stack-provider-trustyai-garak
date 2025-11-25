@@ -48,9 +48,9 @@ class TestInlineProvider:
                     impl.initialize.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_get_provider_impl_with_base_url(self):
-        """Test provider implementation with base_url from config"""
-        config = GarakInlineConfig(base_url="https://custom.api.com")
+    async def test_get_provider_impl_with_llama_stack_url(self):
+        """Test provider implementation with llama_stack_url from config"""
+        config = GarakInlineConfig(llama_stack_url="https://custom.api.com")
         
         # Provide required mock dependencies
         mock_deps = {
@@ -63,7 +63,7 @@ class TestInlineProvider:
                 with patch.object(GarakInlineEvalAdapter, '_get_all_probes', return_value=set()):
                     impl = await get_provider_impl(config, mock_deps)
                     
-                    assert impl._config.base_url == "https://custom.api.com"
+                    assert impl._config.llama_stack_url == "https://custom.api.com"
 
     @pytest.mark.asyncio
     async def test_get_provider_impl_error_handling(self):
