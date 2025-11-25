@@ -1,12 +1,67 @@
 from kfp import dsl
 from typing import NamedTuple, List, Dict
 import os
+from .utils import _load_kube_config
+from ...constants import (GARAK_PROVIDER_IMAGE_CONFIGMAP_NAME, GARAK_PROVIDER_IMAGE_CONFIGMAP_KEY, 
+KUBEFLOW_CANDIDATE_NAMESPACES, DEFAULT_GARAK_PROVIDER_IMAGE)
+from kubernetes import client
+from kubernetes.client.exceptions import ApiException
+import logging
+from dotenv import load_dotenv
 
-CPU_BASE_IMAGE = 'quay.io/rh-ee-spandraj/trustyai-garak-provider-dsp:cpu'
+load_dotenv()
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+
+def get_base_image() -> str:
+    """Get base image from env, fallback to k8s ConfigMap, fallback to default image.
+    
+    This function is called at module import time, so it must handle cases where
+    kubernetes config is not available (e.g., in tests or non-k8s environments).
+    """
+    # Check environment variable first (highest priority)
+    if (base_image := os.environ.get("KUBEFLOW_BASE_IMAGE")) is not None:
+        return base_image
+
+    # Try to load from kubernetes ConfigMap
+    try:
+        _load_kube_config()
+        api = client.CoreV1Api()
+
+        for candidate_namespace in KUBEFLOW_CANDIDATE_NAMESPACES:
+            try:
+                configmap = api.read_namespaced_config_map(
+                    name=GARAK_PROVIDER_IMAGE_CONFIGMAP_NAME,
+                    namespace=candidate_namespace,
+                )
+
+                data: dict[str, str] | None = configmap.data
+                if data and GARAK_PROVIDER_IMAGE_CONFIGMAP_KEY in data:
+                    return data[GARAK_PROVIDER_IMAGE_CONFIGMAP_KEY]
+            except ApiException as api_exc:
+                if api_exc.status == 404:
+                    continue
+                else:
+                    logger.warning(f"Warning: Could not read from ConfigMap: {api_exc}")
+            except Exception as e:
+                logger.warning(f"Warning: Could not read from ConfigMap: {e}")
+        else:
+            # None of the candidate namespaces had the required ConfigMap/key
+            logger.debug(
+                f"ConfigMap '{GARAK_PROVIDER_IMAGE_CONFIGMAP_NAME}' with key "
+                f"'{GARAK_PROVIDER_IMAGE_CONFIGMAP_KEY}' not found in any of the namespaces: "
+                f"{KUBEFLOW_CANDIDATE_NAMESPACES}. Using default image."
+            )
+            return DEFAULT_GARAK_PROVIDER_IMAGE
+    except Exception as e:
+        # Kubernetes config not available (e.g., in tests or non-k8s environment)
+        logger.debug(f"Kubernetes config not available: {e}. Using default image.")
+        return DEFAULT_GARAK_PROVIDER_IMAGE
 
 # Component 1: Validation Step
 @dsl.component(
-    base_image=os.getenv('KUBEFLOW_BASE_IMAGE', CPU_BASE_IMAGE)
+    base_image=get_base_image()
 )
 def validate_inputs(
     command: List[str],
@@ -46,7 +101,7 @@ def validate_inputs(
 
 # Component 2: Garak Scan
 @dsl.component(
-    base_image=os.getenv('KUBEFLOW_BASE_IMAGE', CPU_BASE_IMAGE)
+    base_image=get_base_image()
 )
 def garak_scan(
     command: List[str],
@@ -167,7 +222,7 @@ def garak_scan(
 
 # Component 3: Results Parser
 @dsl.component(
-    base_image=os.getenv('KUBEFLOW_BASE_IMAGE', CPU_BASE_IMAGE)
+    base_image=get_base_image()
 )
 def parse_results(
     file_id_mapping: Dict[str, str],
@@ -175,6 +230,9 @@ def parse_results(
     eval_threshold: float,
     job_id: str,
     verify_ssl: str,
+    s3_bucket: str,
+    s3_prefix: str,
+    html_report: dsl.Output[dsl.HTML]
 ):
     """Parse Garak scan results using shared result_utils."""
     import boto3
@@ -288,11 +346,29 @@ def parse_results(
     else:
         s3_client = boto3.client('s3')
     
-    if not s3_client:
-        raise GarakValidationError("S3 client not found")
+    # Construct S3 key with prefix
+    s3_prefix = s3_prefix.rstrip("/")
+    s3_key = f"{s3_prefix}/{job_id}.json" if s3_prefix else f"{job_id}.json"
     
-    s3_client.put_object(
-        Bucket=os.getenv('AWS_S3_BUCKET', 'pipeline-artifacts'),
-        Key=f"{job_id}.json",
-        Body=json.dumps(file_id_mapping)
-    )
+    # Upload file mapping to S3
+    try:
+        s3_client.put_object(
+            Bucket=s3_bucket,
+            Key=s3_key,
+            Body=json.dumps(file_id_mapping)
+        )
+        logger.info(f"Successfully uploaded file mapping to s3://{s3_bucket}/{s3_key}")
+    except Exception as e:
+        logger.error(f"Failed to upload file mapping to S3: {e}")
+        raise GarakValidationError(f"Failed to upload results to S3: {e}") from e
+
+    html_report_id = file_id_mapping.get("scan.report.html")
+    if html_report_id:
+        html_content = client.files.content(html_report_id)
+        if html_content:
+            with open(html_report.path, 'w') as f:
+                f.write(html_content)
+        else:
+            logger.warning("No HTML content found")
+    else:
+        logger.warning("No HTML report ID found")

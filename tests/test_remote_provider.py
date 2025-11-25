@@ -47,9 +47,10 @@ class TestRemoteAdapterCreation:
     async def test_get_adapter_impl_success(self):
         """Test successful adapter implementation creation"""
         kubeflow_config = KubeflowConfig(
+            results_s3_prefix="garak-results/scans",
+            s3_credentials_secret_name="aws-connection-pipeline-artifacts",
             pipelines_endpoint="https://kfp.example.com",
             namespace="default",
-            experiment_name="test",
             base_image="test:latest"
         )
         config = GarakRemoteConfig(kubeflow_config=kubeflow_config)
@@ -74,9 +75,10 @@ class TestRemoteAdapterCreation:
     async def test_get_adapter_impl_with_optional_deps(self):
         """Test adapter implementation with optional safety and shields dependencies"""
         kubeflow_config = KubeflowConfig(
+            results_s3_prefix="garak-results/scans",
+            s3_credentials_secret_name="aws-connection-pipeline-artifacts",
             pipelines_endpoint="https://kfp.example.com",
             namespace="default",
-            experiment_name="test",
             base_image="test:latest"
         )
         config = GarakRemoteConfig(kubeflow_config=kubeflow_config)
@@ -102,9 +104,10 @@ class TestRemoteAdapterCreation:
     async def test_get_adapter_impl_error_handling(self):
         """Test error handling in adapter implementation creation"""
         kubeflow_config = KubeflowConfig(
+            results_s3_prefix="garak-results/scans",
+            s3_credentials_secret_name="aws-connection-pipeline-artifacts",
             pipelines_endpoint="https://kfp.example.com",
             namespace="default",
-            experiment_name="test",
             base_image="test:latest"
         )
         config = GarakRemoteConfig(kubeflow_config=kubeflow_config)
@@ -130,9 +133,10 @@ class TestGarakRemoteEvalAdapter:
     def adapter_config(self):
         """Create test configuration"""
         kubeflow_config = KubeflowConfig(
+            results_s3_prefix="garak-results/scans",
+            s3_credentials_secret_name="aws-connection-pipeline-artifacts",
             pipelines_endpoint="https://kfp.example.com",
             namespace="test-namespace",
-            experiment_name="test-experiment",
             base_image="test:latest"
         )
         return GarakRemoteConfig(

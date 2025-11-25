@@ -261,12 +261,12 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         if 'generator_options' in benchmark_metadata:
             return benchmark_metadata['generator_options']
         
-        base_url: str = self._get_base_url()
+        llama_stack_url: str = self._get_llama_stack_url()
 
         generator_options = {
             "openai": {
                 "OpenAICompatible": {
-                    "uri": base_url,
+                    "uri": llama_stack_url,
                     "model": benchmark_config.eval_candidate.model,
                     "api_key": os.getenv("OPENAICOMPATIBLE_API_KEY", "DUMMY"),
                     "suppressed_params": ["n"]
@@ -300,15 +300,20 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
             generator_options["openai"]["OpenAICompatible"].update(valid_params)
         return generator_options
     
-    def _get_base_url(self) -> str:
+    def _get_llama_stack_url(self) -> str:
+        """Get the normalized Llama Stack URL with /v1 suffix.
+        
+        Returns:
+            Llama Stack URL with /v1 suffix
+        """
         import re
 
-        base_url: str = self._config.base_url.rstrip("/")
+        llama_stack_url: str = self._config.llama_stack_url.rstrip("/")
         
-        # check if base_url ends with /v{number} and if not, add v1
-        if not re.match(r"^.*\/v\d+$", base_url):
-            base_url = f"{base_url}/v1"
-        return base_url
+        # check if URL ends with /v{number} and if not, add v1
+        if not re.match(r"^.*\/v\d+$", llama_stack_url):
+            llama_stack_url = f"{llama_stack_url}/v1"
+        return llama_stack_url
 
     async def _get_function_based_generator_options(
         self, benchmark_config: "BenchmarkConfig", benchmark_metadata: dict
@@ -324,7 +329,7 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         """
         from llama_stack_provider_trustyai_garak import shield_scan
         
-        base_url: str = self._get_base_url()
+        llama_stack_url: str = self._get_llama_stack_url()
         
         # Map the shields to the input and output of LLM
         llm_io_shield_mapping: dict = {
@@ -361,7 +366,7 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
                     "name": f"{shield_scan.__name__}#simple_shield_orchestrator",
                     "kwargs": {
                         "model": benchmark_config.eval_candidate.model,
-                        "base_url": base_url,
+                        "base_url": llama_stack_url,
                         "llm_io_shield_mapping": llm_io_shield_mapping,
                         "max_workers": self._config.max_workers
                     }

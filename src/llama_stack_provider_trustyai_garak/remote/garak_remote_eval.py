@@ -10,7 +10,7 @@ import asyncio
 from ..config import GarakRemoteConfig
 from ..base_eval import GarakEvalBase
 from llama_stack_provider_trustyai_garak import shield_scan
-from ..errors import GarakError
+from ..errors import GarakError, GarakConfigError
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -26,7 +26,9 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
         super().__init__(config, deps)
         self._config: GarakRemoteConfig = config
         
-        self._s3_bucket: str = os.getenv('AWS_S3_BUCKET', 'pipeline-artifacts')
+        # S3 configuration - parse bucket and prefix from results_s3_prefix (format: bucket/prefix)
+        self._s3_bucket: str = None
+        self._s3_prefix: str = None
         self.s3_client = None
         self.kfp_client = None
         self._jobs_lock = asyncio.Lock()  # Will be initialized in async initialize()
@@ -34,6 +36,9 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
     async def initialize(self) -> None:
         """Initialize the remote Garak provider."""
         self._initialize()
+        
+        # Parse S3 configuration from results_s3_prefix (format: bucket/prefix or s3://bucket/prefix)
+        self._parse_s3_config()
 
         # # TODO: Do we REALLY need S3 client? Is there a better way to get the mapping from pod?
         # self._create_s3_client()
@@ -42,6 +47,49 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
 
         self._initialized = True
         logger.info("Initialized Garak remote provider.")
+    
+    def _parse_s3_config(self):
+        """Parse S3 bucket and prefix from results_s3_prefix.
+        
+        Raises:
+            GarakConfigError: If results_s3_prefix is invalid or missing
+        """
+        results_s3_prefix = self._config.kubeflow_config.results_s3_prefix
+        
+        # Validate input
+        if not results_s3_prefix or not results_s3_prefix.strip():
+            raise GarakConfigError(
+                "results_s3_prefix must be specified in kubeflow_config. "
+                "Format: 'bucket/prefix' or 's3://bucket/prefix'"
+            )
+        
+        results_s3_prefix = results_s3_prefix.strip()
+        
+        # Handle s3://bucket/prefix format
+        if results_s3_prefix.lower().startswith("s3://"):
+            results_s3_prefix = results_s3_prefix[len("s3://"):]
+        
+        # validate format after stripping s3:// prefix
+        if not results_s3_prefix:
+            raise GarakConfigError(
+                "results_s3_prefix cannot be just 's3://'. "
+                "Format: 'bucket/prefix' or 's3://bucket/prefix'"
+            )
+        
+        # Split bucket and prefix
+        parts = results_s3_prefix.split("/", 1)
+        self._s3_bucket = parts[0].strip()
+        self._s3_prefix = parts[1].strip() if len(parts) > 1 else ""
+        
+        # validate bucket name is not empty
+        if not self._s3_bucket:
+            raise GarakConfigError(
+                f"Invalid S3 bucket name in results_s3_prefix: '{self._config.kubeflow_config.results_s3_prefix}'. "
+                "Bucket name cannot be empty."
+            )
+        
+        
+        logger.debug(f"Parsed S3 config - bucket: {self._s3_bucket}, prefix: {self._s3_prefix}")
     
     def _ensure_s3_client(self):
         if not self.s3_client:
@@ -82,8 +130,9 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
             else:
                 verify_ssl = self._verify_ssl
 
-            # TODO: Is this the best way to get the token?
-            token = self._get_token()
+            # Use token from config if provided, otherwise get from kubeconfig
+            token = self._config.kubeflow_config.pipelines_api_token or self._get_token()
+            
             self.kfp_client = Client(
                 host=self._config.kubeflow_config.pipelines_endpoint,
                 existing_token=token,
@@ -147,6 +196,7 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
         
         async with self._jobs_lock:
             self._jobs[job_id] = job
+            self._job_metadata[job_id] = {}  # Initialize metadata dict
 
         try:
             scan_profile_config: dict = {
@@ -160,21 +210,26 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
             
             self._ensure_kfp_client()
             
+            experiment_name = f"trustyai-garak-{self._config.kubeflow_config.namespace}"
+            os.environ['KUBEFLOW_S3_CREDENTIALS_SECRET_NAME'] = self._config.kubeflow_config.s3_credentials_secret_name
+            
             run = self.kfp_client.create_run_from_pipeline_func(
                 garak_scan_pipeline,
                 arguments={
                     "command": cmd,
-                    "llama_stack_url": self._config.base_url.rstrip("/").removesuffix("/v1"),
+                    "llama_stack_url": self._config.llama_stack_url,
                     "job_id": job_id,
                     "eval_threshold": float(benchmark_metadata.get("eval_threshold", self.scan_config.VULNERABLE_SCORE)),
                     "timeout_seconds": int(scan_profile_config.get("timeout", self._config.timeout)),
                     "max_retries": int(benchmark_metadata.get("max_retries", 3)),
                     "use_gpu": benchmark_metadata.get("use_gpu", False),
                     "verify_ssl": str(self._verify_ssl),
+                    "s3_bucket": self._s3_bucket,
+                    "s3_prefix": self._s3_prefix,
                 },
                 run_name=f"garak-{benchmark_id.split('::')[-1]}-{job_id.removeprefix(JOB_ID_PREFIX)}",
                 namespace=self._config.kubeflow_config.namespace,
-                experiment_name=self._config.kubeflow_config.experiment_name
+                experiment_name=experiment_name
             )
             
             async with self._jobs_lock:
@@ -245,9 +300,10 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
                         try:
                             self._ensure_s3_client()
 
+                            s3_key = f'{self._s3_prefix}/{job_id}.json' if self._s3_prefix else f'{job_id}.json'
                             response = self.s3_client.get_object(
                                 Bucket=self._s3_bucket,
-                                Key=f'{job_id}.json'
+                                Key=s3_key
                             )
                             file_id_mapping: dict = json.loads(response['Body'].read())
                             

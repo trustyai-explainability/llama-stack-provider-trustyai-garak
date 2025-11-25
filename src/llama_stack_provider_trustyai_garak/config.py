@@ -1,25 +1,41 @@
 from llama_stack.schema_utils import json_schema_type
-from typing import Dict, Any, Union
+from typing import Dict, Any, Union, Optional
 from pydantic import BaseModel, Field, field_validator
 from pathlib import Path
 
 @json_schema_type
-class GarakInlineConfig(BaseModel):
-    base_url: str = Field(
-        default="http://localhost:8321/v1",
-        description="The base URL for the OpenAI API compatible remote model serving endpoint",
+class GarakProviderBaseConfig(BaseModel):
+    """Base configuration shared by inline and remote Garak providers."""
+
+    llama_stack_url: str = Field(
+        default="http://localhost:8321",
+        description=(
+            "Llama Stack API base URL. "
+            "For inline: local endpoint (e.g., http://localhost:8321). "
+            "For remote: URL accessible from Kubeflow pods."
+        ),
     )
+    
     garak_model_type_openai: str = Field(
         default="openai.OpenAICompatible",
         description="The model type for the OpenAI API compatible model scanning",
     )
+    
     garak_model_type_function: str = Field(
         default="function.Single",
-        description="The model type for the custom function-based shield+LLMmodel scanning",
+        description="The model type for the custom function-based shield+LLM model scanning",
     )
-    timeout: int = 60*60*3 # default timeout for garak scan
-    max_workers: int = 5 # default max workers for shield scanning
-    max_concurrent_jobs: int = 5 # max concurrent garak scans
+    
+    timeout: int = Field(
+        default=60*60*3,
+        description="Default timeout for garak scan (in seconds)",
+    )
+    
+    max_workers: int = Field(
+        default=5,
+        description="Maximum workers for parallel shield scanning",
+    )
+    
     tls_verify: Union[bool, str] = Field(
         default=True,
         description="Whether to verify TLS certificates. Can be a boolean or a path to a CA certificate file.",
@@ -38,18 +54,27 @@ class GarakInlineConfig(BaseModel):
             return v
         return v
 
-
-    @field_validator("base_url", "garak_model_type_openai", "garak_model_type_function", mode="before")
+    @field_validator("llama_stack_url", "garak_model_type_openai", "garak_model_type_function", mode="before")
     @classmethod
-    def validate_base_url_garak_model_type(cls, v):
+    def validate_string_fields(cls, v):
         if isinstance(v, str):
             return v.strip()
-        raise ValueError("base_url, garak_model_type_openai and garak_model_type_function must be strings")
+        raise ValueError("String fields must be strings")
+
+
+@json_schema_type
+class GarakInlineConfig(GarakProviderBaseConfig):
+    """Garak Configuration for inline execution."""
+    
+    max_concurrent_jobs: int = Field(
+        default=5,
+        description="Maximum number of concurrent garak scans",
+    )
     
     @classmethod
     def sample_run_config(
         cls,
-        base_url: str = "${env.BASE_URL}",
+        llama_stack_url: str = "${env.LLAMA_STACK_URL:=http://localhost:8321/v1}",
         garak_model_type_openai: str = "openai.OpenAICompatible",
         garak_model_type_function: str = "function.Single",
         timeout: int = "${env.GARAK_TIMEOUT:=10800}",
@@ -60,7 +85,7 @@ class GarakInlineConfig(BaseModel):
     ) -> Dict[str, Any]:
 
         return {
-            "base_url": base_url,
+            "llama_stack_url": llama_stack_url,
             "garak_model_type_openai": garak_model_type_openai,
             "garak_model_type_function": garak_model_type_function,
             "timeout": int(timeout),
@@ -70,32 +95,51 @@ class GarakInlineConfig(BaseModel):
             **kwargs,
         }
 
+
 @json_schema_type
-class GarakRemoteConfig(GarakInlineConfig):
-    """Configuration for Ragas evaluation provider (remote execution)."""
+class GarakRemoteConfig(GarakProviderBaseConfig):
+    """Garak Configuration for remote execution on Kubeflow Pipelines"""
 
     kubeflow_config: "KubeflowConfig" = Field(
-        description="Additional configuration parameters for remote execution",
+        description="Configuration parameters for remote execution",
     )
 
 
 class KubeflowConfig(BaseModel):
     """Configuration for Kubeflow remote execution."""
 
+    results_s3_prefix: str = Field(
+        description="S3 prefix (folder) where the evaluation results will be written.",
+    )
+
+    s3_credentials_secret_name: str = Field(
+        default="aws-connection-pipeline-artifacts",
+        description=(
+            "Name of the AWS credentials secret in Kubernetes. "
+            "Must have write access to the results S3 prefix. "
+            "Default is 'aws-connection-pipeline-artifacts'. "
+            "Note: Due to KFP limitations with nested conditionals, the pipeline uses a fixed secret name ('aws-connection-pipeline-artifacts'). "
+        ),
+    )
+
     pipelines_endpoint: str = Field(
-        description="Kubeflow Pipelines API endpoint URL (required for remote execution)",
+        description="Kubeflow Pipelines API endpoint URL.",
     )
 
     namespace: str = Field(
-        description="Kubeflow namespace for pipeline execution",
-    )
-
-    experiment_name: str = Field(
-        description="Kubeflow experiment name for pipeline execution",
+        description="Kubeflow namespace for pipeline execution.",
     )
 
     base_image: str = Field(
-        description="Base image for Kubeflow pipeline components",
+        description="Base image for Kubeflow pipeline components.",
+    )
+
+    pipelines_api_token: Optional[str] = Field(
+        description=(
+            "Kubeflow Pipelines token with access to submit pipelines. "
+            "If not provided, the token will be read from the local kubeconfig file."
+        ),
+        default=None,
     )
 
 
