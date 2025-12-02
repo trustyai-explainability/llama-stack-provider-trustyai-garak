@@ -165,8 +165,11 @@ class TestGarakRemoteEvalAdapter:
     def mock_benchmark_config(self):
         """Create a real BenchmarkConfig object"""
         # Import the actual classes
-        from llama_stack.apis.eval import BenchmarkConfig
-        from llama_stack.apis.inference import SamplingParams, TopPSamplingStrategy
+        from llama_stack_provider_trustyai_garak.compat import (
+            BenchmarkConfig,
+            SamplingParams,
+            TopPSamplingStrategy
+        )
         
         # Create a real BenchmarkConfig with required fields
         config = BenchmarkConfig(
@@ -594,7 +597,7 @@ class TestGarakRemoteEvalAdapter:
     async def test_get_openai_compatible_generator_options(self, adapter, mock_benchmark_config):
         """Test OpenAI compatible generator options"""
         # Use isinstance to check for the right type
-        from llama_stack.apis.inference import TopPSamplingStrategy
+        from llama_stack_provider_trustyai_garak.compat import TopPSamplingStrategy
         
         mock_benchmark_config.eval_candidate.sampling_params.strategy = TopPSamplingStrategy(
             temperature=0.8,
