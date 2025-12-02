@@ -38,7 +38,8 @@ def garak_scan_pipeline(
     # Step 1: Validate inputs
     validate_task: dsl.PipelineTask = validate_inputs(
         command=command,
-        llama_stack_url=llama_stack_url
+        llama_stack_url=llama_stack_url,
+        verify_ssl=verify_ssl
     )
     validate_task.set_caching_options(False)
     
@@ -51,6 +52,7 @@ def garak_scan_pipeline(
                 llama_stack_url=llama_stack_url,
                 max_retries=max_retries,
                 timeout_seconds=timeout_seconds,
+                verify_ssl=verify_ssl
             )
             scan_task_gpu.after(validate_task)
             scan_task_gpu.set_caching_options(False)
@@ -83,6 +85,7 @@ def garak_scan_pipeline(
                 llama_stack_url=llama_stack_url,
                 max_retries=max_retries,
                 timeout_seconds=timeout_seconds,
+                verify_ssl=verify_ssl
             )
             scan_task_cpu.after(validate_task)
             scan_task_cpu.set_caching_options(False)

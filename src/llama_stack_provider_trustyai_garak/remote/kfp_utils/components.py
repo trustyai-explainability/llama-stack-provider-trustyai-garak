@@ -69,7 +69,8 @@ def get_base_image() -> str:
 )
 def validate_inputs(
     command: List[str],
-    llama_stack_url: str
+    llama_stack_url: str,
+    verify_ssl: str
 ) -> NamedTuple('outputs', [
     ('is_valid', bool),
     ('validation_errors', List[str])
@@ -77,17 +78,25 @@ def validate_inputs(
     """Validate inputs before running expensive scan"""
 
     from llama_stack_client import LlamaStackClient
+    from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
     
     validation_errors = []
     
     # Validate Llama Stack connectivity
     try:
-        client = LlamaStackClient(base_url=llama_stack_url)
+        client = LlamaStackClient(base_url=llama_stack_url,
+                                  http_client=get_http_client_with_tls(verify_ssl))
         # Test connection
         client.files.list(limit=1)
     except Exception as e:
         validation_errors.append(f"Cannot connect to Llama Stack: {str(e)}")
-    
+    finally:
+        if client:
+            try:
+                client.close()
+            except Exception as e:
+                logger.warning(f"Error closing client: {e}")
+
     # Validate command structure
     if not command or command[0] != 'garak':
         validation_errors.append("Invalid command: must start with 'garak'")
@@ -112,6 +121,7 @@ def garak_scan(
     llama_stack_url: str,
     max_retries: int,
     timeout_seconds: int,
+    verify_ssl: str
 ) -> NamedTuple('outputs', [
     ('exit_code', int),
     ('success', bool),
@@ -126,6 +136,7 @@ def garak_scan(
     from pathlib import Path
     from llama_stack_client import LlamaStackClient
     import logging
+    from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
 
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
@@ -200,7 +211,8 @@ def garak_scan(
                 logger.error(f"Unexpected error converting report to AVID format: {e}", exc_info=True)
 
             # Upload files to llama stack
-            client = LlamaStackClient(base_url=llama_stack_url)
+            client = LlamaStackClient(base_url=llama_stack_url,
+                                      http_client=get_http_client_with_tls(verify_ssl))
             
             for file_path in scan_dir.glob('*'):
                 if file_path.is_file():
@@ -221,7 +233,13 @@ def garak_scan(
                 time.sleep(wait_time)
             else:
                 raise e
-    
+        finally:
+            if client:
+                try:
+                    client.close()
+                except Exception as e:
+                    logger.warning(f"Error closing client: {e}")
+
     return (-1, False, file_id_mapping)
 
 # Component 3: Results Parser
@@ -240,6 +258,7 @@ def parse_results(
 ):
     """Parse Garak scan results using shared result_utils."""
     import boto3
+    from botocore.exceptions import ClientError
     import os
     import json
     from pathlib import Path
@@ -248,6 +267,7 @@ def parse_results(
     from llama_stack_provider_trustyai_garak.errors import GarakValidationError
     from llama_stack_provider_trustyai_garak import result_utils
     import logging
+    from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
 
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
@@ -261,7 +281,8 @@ def parse_results(
         # It's a path to a certificate file
         parsed_verify_ssl = verify_ssl
 
-    client = LlamaStackClient(base_url=llama_stack_url)
+    client = LlamaStackClient(base_url=llama_stack_url,
+                              http_client=get_http_client_with_tls(parsed_verify_ssl))
     
     # Get report files
     report_file_id = file_id_mapping.get("scan.report.jsonl", "")
@@ -349,6 +370,25 @@ def parse_results(
     else:
         s3_client = boto3.client('s3')
     
+    # Check if bucket exists
+    try:
+        s3_client.head_bucket(Bucket=s3_bucket)
+        logger.info(f"Bucket '{s3_bucket}' exists. Proceeding with upload.")
+    except ClientError as e:
+        # If a ClientError is returned, the bucket either doesn't exist or lack permission
+        error_code = e.response.get('Error', {}).get('Code', '')
+        if error_code == '404':
+            logger.info(f"Bucket '{s3_bucket}' not found. Creating bucket now...")
+            s3_client.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': s3_client.meta.region_name})
+            logger.info("Bucket created. Proceeding with upload.")
+        else:
+            if error_code == '403':
+                logger.error(f"Permission denied for bucket '{s3_bucket}'. Check IAM policies.")
+            raise e
+    except Exception as e:
+        logger.error(f"Unexpected error checking bucket '{s3_bucket}': {e}")
+        raise e
+
     # Construct S3 key with prefix
     s3_prefix = s3_prefix.rstrip("/")
     s3_key = f"{s3_prefix}/{job_id}.json" if s3_prefix else f"{job_id}.json"
@@ -375,3 +415,9 @@ def parse_results(
             logger.warning("No HTML content found")
     else:
         logger.warning("No HTML report ID found")
+    
+    if client:
+        try:
+            client.close()
+        except Exception as e:
+            logger.warning(f"Error closing client: {e}")

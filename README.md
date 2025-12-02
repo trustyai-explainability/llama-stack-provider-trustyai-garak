@@ -165,7 +165,7 @@ export LLAMA_STACK_URL="https://your-llama-stack-url.ngrok.io"
 # Kubeflow Configuration
 export KUBEFLOW_PIPELINES_ENDPOINT="https://your-kfp-endpoint"
 export KUBEFLOW_NAMESPACE="your-namespace"
-export KUBEFLOW_BASE_IMAGE="quay.io/rh-ee-spandraj/trustyai-garak-lls-provider-dsp:latest"
+export KUBEFLOW_BASE_IMAGE="quay.io/rh-ee-spandraj/trustyai-lls-garak-provider-dsp:latest"
 export KUBEFLOW_RESULTS_S3_PREFIX="s3://garak-results/scans"  # S3 path: bucket/prefix
 export KUBEFLOW_S3_CREDENTIALS_SECRET_NAME="aws-connection-pipeline-artifacts"  # K8s secret name
 export KUBEFLOW_PIPELINES_TOKEN=""  # Optional: If not set, uses kubeconfig
