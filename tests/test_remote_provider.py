@@ -10,11 +10,7 @@ from llama_stack_provider_trustyai_garak.remote.garak_remote_eval import GarakRe
 from llama_stack_provider_trustyai_garak.remote.provider import get_provider_spec
 from llama_stack_provider_trustyai_garak.config import GarakRemoteConfig, KubeflowConfig, GarakScanConfig
 from llama_stack_provider_trustyai_garak.errors import GarakError, GarakConfigError, GarakValidationError
-
-from llama_stack.apis.datatypes import Api
-from llama_stack.apis.common.job_types import JobStatus
-from llama_stack.apis.eval import EvaluateResponse
-
+from llama_stack_provider_trustyai_garak.compat import Api, JobStatus, EvaluateResponse
 
 class TestRemoteProvider:
     """Test cases for remote provider specification"""

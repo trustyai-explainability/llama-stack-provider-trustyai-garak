@@ -1,8 +1,4 @@
-from llama_stack.providers.datatypes import (
-    ProviderSpec,
-    Api,
-    InlineProviderSpec
-)
+from ..compat import ProviderSpec, Api, InlineProviderSpec
 from ..version_utils import get_garak_version
 
 def get_provider_spec() -> ProviderSpec:

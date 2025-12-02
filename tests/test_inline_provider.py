@@ -8,7 +8,7 @@ from llama_stack_provider_trustyai_garak.inline.garak_eval import GarakInlineEva
 from llama_stack_provider_trustyai_garak.inline.provider import get_provider_spec
 from llama_stack_provider_trustyai_garak.config import GarakInlineConfig
 
-from llama_stack.apis.datatypes import Api
+from llama_stack_provider_trustyai_garak.compat import Api
 
 
 class TestInlineProvider:

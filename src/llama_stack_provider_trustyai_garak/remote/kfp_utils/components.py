@@ -2,8 +2,12 @@ from kfp import dsl
 from typing import NamedTuple, List, Dict
 import os
 from .utils import _load_kube_config
-from ...constants import (GARAK_PROVIDER_IMAGE_CONFIGMAP_NAME, GARAK_PROVIDER_IMAGE_CONFIGMAP_KEY, 
-KUBEFLOW_CANDIDATE_NAMESPACES, DEFAULT_GARAK_PROVIDER_IMAGE)
+from ...constants import (
+    GARAK_PROVIDER_IMAGE_CONFIGMAP_NAME,
+    GARAK_PROVIDER_IMAGE_CONFIGMAP_KEY,
+    KUBEFLOW_CANDIDATE_NAMESPACES,
+    DEFAULT_GARAK_PROVIDER_IMAGE
+    )
 from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 import logging
@@ -240,8 +244,7 @@ def parse_results(
     import json
     from pathlib import Path
     from llama_stack_client import LlamaStackClient
-    from llama_stack.apis.scoring import ScoringResult
-    from llama_stack.apis.eval import EvaluateResponse
+    from llama_stack_provider_trustyai_garak.compat import ScoringResult, EvaluateResponse
     from llama_stack_provider_trustyai_garak.errors import GarakValidationError
     from llama_stack_provider_trustyai_garak import result_utils
     import logging
