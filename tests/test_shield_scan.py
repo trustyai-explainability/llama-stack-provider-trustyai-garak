@@ -8,7 +8,7 @@ from llama_stack_provider_trustyai_garak.shield_scan import (
     simple_shield_orchestrator,
     CANNED_RESPONSE_TEXT
 )
-from llama_stack.apis.safety import RunShieldResponse, ViolationLevel, SafetyViolation
+from llama_stack_provider_trustyai_garak.compat import RunShieldResponse
 
 
 class TestSimpleShieldOrchestrator:

@@ -10,11 +10,7 @@ from llama_stack_provider_trustyai_garak.remote.garak_remote_eval import GarakRe
 from llama_stack_provider_trustyai_garak.remote.provider import get_provider_spec
 from llama_stack_provider_trustyai_garak.config import GarakRemoteConfig, KubeflowConfig, GarakScanConfig
 from llama_stack_provider_trustyai_garak.errors import GarakError, GarakConfigError, GarakValidationError
-
-from llama_stack.apis.datatypes import Api
-from llama_stack.apis.common.job_types import JobStatus
-from llama_stack.apis.eval import EvaluateResponse
-
+from llama_stack_provider_trustyai_garak.compat import Api, JobStatus, EvaluateResponse
 
 class TestRemoteProvider:
     """Test cases for remote provider specification"""
@@ -169,8 +165,11 @@ class TestGarakRemoteEvalAdapter:
     def mock_benchmark_config(self):
         """Create a real BenchmarkConfig object"""
         # Import the actual classes
-        from llama_stack.apis.eval import BenchmarkConfig
-        from llama_stack.apis.inference import SamplingParams, TopPSamplingStrategy
+        from llama_stack_provider_trustyai_garak.compat import (
+            BenchmarkConfig,
+            SamplingParams,
+            TopPSamplingStrategy
+        )
         
         # Create a real BenchmarkConfig with required fields
         config = BenchmarkConfig(
@@ -598,7 +597,7 @@ class TestGarakRemoteEvalAdapter:
     async def test_get_openai_compatible_generator_options(self, adapter, mock_benchmark_config):
         """Test OpenAI compatible generator options"""
         # Use isinstance to check for the right type
-        from llama_stack.apis.inference import TopPSamplingStrategy
+        from llama_stack_provider_trustyai_garak.compat import TopPSamplingStrategy
         
         mock_benchmark_config.eval_candidate.sampling_params.strategy = TopPSamplingStrategy(
             temperature=0.8,

@@ -1,7 +1,11 @@
-from llama_stack.apis.eval import EvaluateResponse, BenchmarkConfig
-from llama_stack.providers.datatypes import ProviderSpec
-from llama_stack.apis.datatypes import Api
-from llama_stack.apis.common.job_types import Job, JobStatus
+from ..compat import (
+    EvaluateResponse, 
+    BenchmarkConfig, 
+    ProviderSpec, 
+    Api, 
+    Job, 
+    JobStatus
+)
 from typing import List, Dict, Union
 import os
 import logging

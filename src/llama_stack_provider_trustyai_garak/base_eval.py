@@ -1,13 +1,20 @@
 """Base class for Garak evaluation adapters with common functionality."""
 
-from llama_stack.apis.eval import Eval, BenchmarkConfig, EvaluateResponse
-from llama_stack.providers.datatypes import ProviderSpec, BenchmarksProtocolPrivate
-from llama_stack.apis.datatypes import Api
-from llama_stack.apis.files import Files
-from llama_stack.apis.benchmarks import Benchmark, Benchmarks
-from llama_stack.apis.common.job_types import Job, JobStatus
-from llama_stack.apis.safety import Safety
-from llama_stack.apis.shields import Shields
+from .compat import (
+    Eval,
+    BenchmarkConfig,
+    EvaluateResponse,
+    ProviderSpec,
+    BenchmarksProtocolPrivate,
+    Api,
+    Files,
+    Benchmark,
+    Benchmarks,
+    Job,
+    JobStatus,
+    Safety,
+    Shields
+)
 from typing import Dict, Optional, Set, List, Any, Union
 import logging
 import uuid
@@ -292,7 +299,7 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         Raises:
             GarakValidationError: If benchmark_config or sampling_params are invalid
         """
-        from llama_stack.apis.inference import SamplingParams, SamplingStrategy, TopPSamplingStrategy, TopKSamplingStrategy
+        from .compat import SamplingParams, SamplingStrategy, TopPSamplingStrategy, TopKSamplingStrategy
 
         if not benchmark_config:
             raise GarakValidationError("benchmark_config cannot be None")

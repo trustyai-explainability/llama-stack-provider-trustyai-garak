@@ -1,4 +1,4 @@
-from llama_stack.schema_utils import json_schema_type
+from .compat import json_schema_type
 from typing import Dict, Any, Union, Optional
 from pydantic import BaseModel, Field, field_validator
 from pathlib import Path

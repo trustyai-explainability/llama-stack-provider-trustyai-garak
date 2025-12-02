@@ -3,8 +3,11 @@
 from typing import List, Union
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from llama_stack.apis.safety import RunShieldResponse, ViolationLevel
-from llama_stack.apis.inference import OpenAIChatCompletion
+from .compat import (
+    RunShieldResponse, 
+    ViolationLevel, 
+    OpenAIChatCompletion
+)
 from llama_stack_client import LlamaStackClient
 import logging
 
