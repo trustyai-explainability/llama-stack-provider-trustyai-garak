@@ -580,13 +580,15 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
                 probes = [probes]
         
         if probes != ["all"]:
-            for probe in probes:
-                if probe not in self.all_probes:
-                    raise GarakValidationError(
-                        f"Probe '{probe}' not found in garak. "
-                        "Please provide valid garak probe name. "
-                        "Or you can just use predefined scan profiles ('quick', 'standard') as benchmark_id."
-                    )
+            # Skip validation if all_probes is empty (remote mode - validation happens in container)
+            if self.all_probes:
+                for probe in probes:
+                    if probe not in self.all_probes:
+                        raise GarakValidationError(
+                            f"Probe '{probe}' not found in garak. "
+                            "Please provide valid garak probe name. "
+                            "Or you can just use predefined scan profiles ('quick', 'standard') as benchmark_id."
+                        )
             cmd.extend(["--probes", ",".join(probes)])
         return cmd
 

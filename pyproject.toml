@@ -1,6 +1,6 @@
 [project]
 name = "llama-stack-provider-trustyai-garak"
-version = "0.1.6"
+version = "0.1.7"
 description = "Out-Of-Tree Llama Stack provider for Garak Red-teaming"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -12,10 +12,11 @@ authors = [
 keywords = ["llama-stack", "garak", "red-teaming", "security", "ai-safety"]
 dependencies = [
     "llama-stack>=0.3.0",
-    "greenlet==3.2.4", # because inline/files/localfs errors saying greenlet not found
-    "httpx[http2]==0.28.1",
-    "langchain==0.3.27", # latest langchain breaks garak, so must be '>=0.3.25,<1.0.0'
-    "garak==0.12.0",
+    # Remote execution dependencies
+    "kfp>=2.14.6",
+    "kfp-kubernetes>=2.14.6",
+    "kfp-server-api>=2.14.6",
+    "boto3>=1.35.88",
 ]
 
 [project.urls]
@@ -30,7 +31,10 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [project.optional-dependencies]
-remote = ["kfp==2.14.6", "kfp-kubernetes==2.14.6", "kfp-server-api==2.14.6", "boto3==1.40.27"]
+inline = [
+    "langchain==0.3.27",  # latest langchain breaks garak, so must be '>=0.3.25,<1.0.0'
+    "garak==0.12.0",
+]
 dev = ["pytest", "pytest-cov",  "pytest-asyncio", "black", "isort"]
 
 [tool.pytest.ini_options]

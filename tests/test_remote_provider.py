@@ -271,20 +271,15 @@ class TestGarakRemoteEvalAdapter:
                 assert adapter.kfp_client == mock_kfp_client
 
     def test_resolve_framework_to_probes(self, adapter):
-        """Test resolving framework ID to probes"""
+        """Test resolving framework ID to probes for remote provider"""
         adapter.scan_config = GarakScanConfig()
         
-        with patch('garak._config.parse_plugin_spec') as mock_parse:
-            mock_parse.return_value = (
-                ['probes.test1', 'probes.test2'],
-                []
-            )
-            
-            probes = adapter._resolve_framework_to_probes('trustyai_garak::owasp_llm_top10')
-            
-            assert 'test1' in probes
-            assert 'test2' in probes
-            assert 'probes.' not in probes[0]
+        # Remote provider returns ['all'] and sets probe_tags in metadata
+        # Actual probe resolution happens in the KFP pod
+        probes = adapter._resolve_framework_to_probes('trustyai_garak::owasp_llm_top10')
+        
+        # Remote mode returns ['all'] - filtering via probe_tags
+        assert probes == ['all']
 
     def test_get_job_id(self, adapter):
         """Test job ID generation"""

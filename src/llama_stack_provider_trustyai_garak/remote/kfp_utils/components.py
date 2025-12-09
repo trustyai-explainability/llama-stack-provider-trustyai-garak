@@ -65,7 +65,9 @@ def get_base_image() -> str:
 
 # Component 1: Validation Step
 @dsl.component(
-    base_image=get_base_image()
+    base_image=get_base_image(),
+    install_kfp_package=False,  # All dependencies pre-installed in base image
+    packages_to_install=[]  # No additional packages needed
 )
 def validate_inputs(
     command: List[str],
@@ -96,6 +98,13 @@ def validate_inputs(
                 client.close()
             except Exception as e:
                 logger.warning(f"Error closing client: {e}")
+    
+    # Check garak is installed
+    try:
+        import garak
+    except ImportError as e:
+        validation_errors.append(f"Garak is not installed. Please install it using 'pip install garak': {e}")
+        raise e
 
     # Validate command structure
     if not command or command[0] != 'garak':
@@ -114,7 +123,9 @@ def validate_inputs(
 
 # Component 2: Garak Scan
 @dsl.component(
-    base_image=get_base_image()
+    base_image=get_base_image(),
+    install_kfp_package=False,  # All dependencies pre-installed in base image
+    packages_to_install=[]  # No additional packages needed
 )
 def garak_scan(
     command: List[str],
@@ -133,17 +144,17 @@ def garak_scan(
     import os
     import signal
     import json
-    from pathlib import Path
     from llama_stack_client import LlamaStackClient
     import logging
-    from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
+    from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls, get_scan_base_dir
 
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
 
-    # Setup directories
-    scan_dir = Path(os.getcwd()) / 'scan_files'
+    # Setup directories using shared XDG-based scan directory (automatically uses /tmp/.cache)
+    scan_dir = get_scan_base_dir()
     scan_dir.mkdir(exist_ok=True, parents=True)
+    logger.info(f"Scan directory: {scan_dir}")
     
     scan_log_file = scan_dir / "scan.log"
     scan_report_prefix = scan_dir / "scan"
@@ -244,7 +255,9 @@ def garak_scan(
 
 # Component 3: Results Parser
 @dsl.component(
-    base_image=get_base_image()
+    base_image=get_base_image(),
+    install_kfp_package=False,  # All dependencies pre-installed in base image
+    packages_to_install=[]  # No additional packages needed
 )
 def parse_results(
     file_id_mapping: Dict[str, str],
@@ -261,13 +274,12 @@ def parse_results(
     from botocore.exceptions import ClientError
     import os
     import json
-    from pathlib import Path
     from llama_stack_client import LlamaStackClient
     from llama_stack_provider_trustyai_garak.compat import ScoringResult, EvaluateResponse
     from llama_stack_provider_trustyai_garak.errors import GarakValidationError
     from llama_stack_provider_trustyai_garak import result_utils
     import logging
-    from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
+    from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls, get_scan_base_dir
 
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
@@ -335,9 +347,11 @@ def parse_results(
         scores=scores_with_scoring_result
     ).model_dump()
     
-    # Save file and upload results to llama stack
+    # Save file using shared XDG-based directory
     logger.info("Saving scan result...")
-    scan_result_file = Path(os.getcwd()) / "scan_result.json"
+    scan_dir = get_scan_base_dir()
+    scan_dir.mkdir(exist_ok=True, parents=True)
+    scan_result_file = scan_dir / "scan_result.json"
     with open(scan_result_file, 'w') as f:
         json.dump(scan_result, f)
     

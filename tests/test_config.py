@@ -268,7 +268,7 @@ class TestKubeflowConfig:
             base_image="test:latest",
             pipelines_api_token="test-token-12345"
         )
-        assert config.pipelines_api_token == "test-token-12345"
+        assert config.pipelines_api_token.get_secret_value() == "test-token-12345"
 
     def test_kubeflow_config_token_default_none(self):
         """Test that pipelines_api_token defaults to None"""
@@ -314,8 +314,8 @@ class TestGarakScanConfig:
         # Check other defaults
         assert config.VULNERABLE_SCORE == 0.5
         assert config.parallel_probes == 8
-        assert config.cleanup_scan_dir_on_exit is False
-        assert config.scan_dir.name == "_scan_files"
+        assert config.cleanup_scan_dir_on_exit is True
+        assert config.scan_dir.name == "llama_stack_garak_scans"
 
     def test_framework_profile_structure(self):
         """Test framework profile structure"""
@@ -346,5 +346,5 @@ class TestGarakScanConfig:
     def test_scan_dir_path(self):
         """Test scan directory path construction"""
         config = GarakScanConfig()
-        assert config.scan_dir == config.base_dir / "_scan_files"
-        assert config.base_dir == Path(__file__).parent.parent / "src" / "llama_stack_provider_trustyai_garak"
+        assert "llama_stack_garak_scans" in str(config.scan_dir)
+        assert config.scan_dir.is_absolute()

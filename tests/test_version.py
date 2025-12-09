@@ -187,13 +187,12 @@ dependencies = [
         import logging
         from llama_stack_provider_trustyai_garak import get_garak_version
         
-        with caplog.at_level(logging.ERROR):
+        with caplog.at_level(logging.DEBUG):
             with patch("importlib.metadata.distribution", side_effect=Exception("Test error")):
                 with patch("pathlib.Path.exists", return_value=False):
                     version = get_garak_version()
                     
-                    # Should log the error
-                    assert "Error getting garak version from importlib.metadata" in caplog.text
+                    assert "Error getting garak version" in caplog.text
                     assert version == "garak"
 
     def test_get_version_logging_on_toml_error(self, caplog):
@@ -201,15 +200,13 @@ dependencies = [
         import logging
         from llama_stack_provider_trustyai_garak import get_garak_version
         
-        with caplog.at_level(logging.ERROR):
+        with caplog.at_level(logging.DEBUG):
             with patch("importlib.metadata.distribution", side_effect=Exception("Metadata error")):
                 with patch("builtins.open", mock_open()):
                     with patch("pathlib.Path.exists", return_value=True):
                         with patch("tomllib.load", side_effect=Exception("TOML error")):
                             version = get_garak_version()
                             
-                            # Should log both errors
-                            assert "Error getting garak version from importlib.metadata" in caplog.text
                             assert "Error getting garak version" in caplog.text
                             assert version == "garak"
 

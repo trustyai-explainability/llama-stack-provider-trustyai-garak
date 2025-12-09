@@ -1,6 +1,7 @@
 from ..compat import (
     EvaluateResponse, 
-    BenchmarkConfig, 
+    BenchmarkConfig,
+    Benchmark,
     ProviderSpec, 
     Api, 
     Job, 
@@ -36,6 +37,78 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
         self.s3_client = None
         self.kfp_client = None
         self._jobs_lock = asyncio.Lock()  # Will be initialized in async initialize()
+
+    def _ensure_garak_installed(self) -> None:
+        """Override: Skip garak check for remote provider - it runs in container."""
+        logger.debug("Skipping garak installation check for remote provider (runs in container)")
+        pass
+
+    def _get_all_probes(self) -> set[str]:
+        """Override: Skip probe enumeration for remote provider - validation happens in pod.
+        
+        Returns empty set to allow any probe names in benchmark metadata.
+        Remote validation will occur when the scan runs in the Kubernetes pod.
+        """
+        logger.debug("Skipping probe enumeration for remote provider (validated in container)")
+        return set()  # Allow any probes; validation happens in the pod
+
+    def _resolve_framework_to_probes(self, framework_id: str) -> List[str]:
+        """Override: Skip resolution for remote provider - use probe_tags instead.
+        
+        For remote execution, we can't resolve frameworks on the server (no garak installed).
+        Instead, we return ['all'] and set probe_tags in the metadata, letting garak
+        resolve the taxonomy filters at runtime in the KFP pod.
+        
+        Args:
+            framework_id: The framework identifier (e.g., 'trustyai_garak::owasp_llm_top10')
+            
+        Returns:
+            List containing 'all' - actual filtering happens via probe_tags
+            
+        Raises:
+            GarakValidationError: If framework is unknown
+        """
+        from ..errors import GarakValidationError
+        
+        framework_info = self.scan_config.FRAMEWORK_PROFILES.get(framework_id)
+        if not framework_info:
+            raise GarakValidationError(f"Unknown framework: {framework_id}")
+        
+        taxonomy_filters = framework_info.get('taxonomy_filters', [])
+        
+        logger.debug(
+            f"Remote mode: Framework '{framework_id}' will use probe_tags for filtering. "
+            f"Taxonomy filters: {taxonomy_filters}"
+        )
+        
+        # Return 'all' - the actual filtering will happen via --probe_tags in the command
+        # The benchmark registration will store taxonomy_filters as probe_tags in metadata
+        return ['all']
+
+    async def register_benchmark(self, benchmark: "Benchmark") -> None:
+        """Override: Handle frameworks specially for remote execution.
+        
+        For framework-based benchmarks, store taxonomy_filters as probe_tags
+        so garak can resolve them at runtime in the KFP pod.
+        """
+        # Call parent to handle basic registration
+        await super().register_benchmark(benchmark)
+        
+        # For frameworks, add probe_tags to metadata for runtime resolution
+        if benchmark.identifier in self.scan_config.FRAMEWORK_PROFILES:
+            framework_info = self.scan_config.FRAMEWORK_PROFILES[benchmark.identifier]
+            taxonomy_filters = framework_info.get('taxonomy_filters', [])
+            
+            if taxonomy_filters and not benchmark.metadata.get('probe_tags'):
+                # Store taxonomy filters as probe_tags for garak's --probe_tags flag
+                benchmark.metadata['probe_tags'] = taxonomy_filters
+                logger.info(
+                    f"Framework '{benchmark.identifier}': Set probe_tags={taxonomy_filters} "
+                    f"for runtime resolution in KFP pod"
+                )
+        
+        # Update the stored benchmark
+        self.benchmarks[benchmark.identifier] = benchmark
 
     async def initialize(self) -> None:
         """Initialize the remote Garak provider."""
@@ -130,7 +203,7 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
                 verify_ssl = self._verify_ssl
 
             # Use token from config if provided, otherwise get from kubeconfig
-            token = self._config.kubeflow_config.pipelines_api_token or self._get_token()
+            token = self._get_token()
             
             self.kfp_client = Client(
                 host=self._config.kubeflow_config.pipelines_endpoint,
@@ -154,18 +227,19 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
             ) from e
     
     def _get_token(self) -> str:
-        """Get authentication token from kubernetes config."""
+        """Get authentication token from environment variable or kubernetes config."""
+        if self._config.kubeflow_config.pipelines_api_token:
+            logger.info("Using KUBEFLOW_PIPELINES_TOKEN from config")
+            return self._config.kubeflow_config.pipelines_api_token.get_secret_value()
+        else:
+            logger.info("Using authentication token from kubernetes config")
         try:
-            from kubernetes.client.configuration import Configuration
-            from kubernetes.config.kube_config import load_kube_config
-            from kubernetes.config.config_exception import ConfigException
+            from .kfp_utils.utils import _load_kube_config
             from kubernetes.client.exceptions import ApiException
+            from kubernetes.config.config_exception import ConfigException
 
-            config = Configuration()
-
-            load_kube_config(client_configuration=config)
-            token = config.api_key["authorization"].split(" ")[-1]
-            return token
+            config = _load_kube_config()
+            token = str(config.api_key["authorization"].split(" ")[-1])
         except (KeyError, ConfigException) as e:
             raise ApiException(
                 401, "Unauthorized, try running command like `oc login` first"
@@ -174,6 +248,11 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
             raise GarakError(
                 "Kubernetes client is not installed. Install with: pip install kubernetes"
             ) from e
+        except Exception as e:
+            raise GarakError(
+                f"Unable to get authentication token from kubernetes config: {e}. Please run `oc login` and try again."
+            ) from e
+        return token
     
     async def run_eval(self, benchmark_id: str, benchmark_config: BenchmarkConfig) -> Dict[str, Union[str, Dict[str, str]]]:
         """Run an evaluation for a specific benchmark and configuration.

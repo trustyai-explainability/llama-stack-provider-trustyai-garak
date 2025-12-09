@@ -43,7 +43,29 @@ class GarakInlineEvalAdapter(GarakEvalBase):
 
         self._initialize()
 
-        self.scan_config.scan_dir.mkdir(exist_ok=True, parents=True)
+        try:
+            self.scan_config.scan_dir.mkdir(exist_ok=True, parents=True)
+            # Test write permissions
+            test_file = self.scan_config.scan_dir / ".write_test"
+            test_file.touch()
+            test_file.unlink()
+            logger.info(f"Scan directory initialized: {self.scan_config.scan_dir}")
+        except PermissionError as e:
+            from ..errors import GarakConfigError
+            logger.error(
+                f"Permission denied creating scan directory: {self.scan_config.scan_dir}. "
+                f"XDG_CACHE_HOME={os.environ.get('XDG_CACHE_HOME', 'not set')}"
+            )
+            raise GarakConfigError(
+                f"Permission denied: {self.scan_config.scan_dir}. "
+                f"Set GARAK_SCAN_DIR or XDG_CACHE_HOME to a writable directory."
+            ) from e
+        except OSError as e:
+            from ..errors import GarakConfigError
+            raise GarakConfigError(
+                f"Failed to create scan directory: {self.scan_config.scan_dir}. Error: {e}"
+            ) from e
+
         self._job_semaphore = asyncio.Semaphore(self._config.max_concurrent_jobs)
 
         self._initialized = True

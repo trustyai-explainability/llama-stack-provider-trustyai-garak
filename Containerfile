@@ -1,6 +1,7 @@
 FROM registry.access.redhat.com/ubi9/python-312:latest
 WORKDIR /opt/app-root
 
+# Switch to root only for installing packages
 USER root
 
 # For Rust-based Python packages
@@ -27,9 +28,10 @@ RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "x86_64" ]; then \
     fi
 
 # Install the package itself (--no-deps since dependencies already installed)
-RUN pip install --no-cache-dir --no-deps -e ".[remote]"
+# Use [inline] to get garak dependency
+RUN pip install --no-cache-dir --no-deps -e ".[inline]"
 
-# Set XDG environment variables to use /tmp (always writable) for garak to write to
-ENV XDG_CACHE_HOME=/tmp/.cache
-ENV XDG_DATA_HOME=/tmp/.local/share
-ENV XDG_CONFIG_HOME=/tmp/.config
+
+# Switch back to non-root user
+# UBI9 uses 1001
+USER 1001
