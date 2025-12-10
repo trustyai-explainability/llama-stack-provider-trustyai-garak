@@ -580,13 +580,15 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
                 probes = [probes]
         
         if probes != ["all"]:
-            for probe in probes:
-                if probe not in self.all_probes:
-                    raise GarakValidationError(
-                        f"Probe '{probe}' not found in garak. "
-                        "Please provide valid garak probe name. "
-                        "Or you can just use predefined scan profiles ('quick', 'standard') as benchmark_id."
-                    )
+            # Skip validation if all_probes is empty (remote mode - validation happens in container)
+            if self.all_probes:
+                for probe in probes:
+                    if probe not in self.all_probes:
+                        raise GarakValidationError(
+                            f"Probe '{probe}' not found in garak. "
+                            "Please provide valid garak probe name. "
+                            "Or you can just use predefined scan profiles ('quick', 'standard') as benchmark_id."
+                        )
             cmd.extend(["--probes", ",".join(probes)])
         return cmd
 
@@ -629,13 +631,13 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         
         return benchmark, benchmark_metadata
 
-    async def job_result(self, benchmark_id: str, job_id: str) -> EvaluateResponse:
+    async def job_result(self, benchmark_id: str, job_id: str, prefix: str = "") -> EvaluateResponse:
         """Get the result of a job (common implementation).
         
         Args:
             benchmark_id: The benchmark id
             job_id: The job id
-            
+            prefix: Optional prefix for scan reports
         Returns:
             EvaluateResponse with results or empty response
             
@@ -666,12 +668,12 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
             return EvaluateResponse(generations=[], scores={})
         
         elif job.status == JobStatus.completed:
-            if self._job_metadata[job_id].get("scan_result.json"):
-                scan_result_file_id: str = self._job_metadata[job_id].get("scan_result.json", "")
+            if self._job_metadata[job_id].get(f"{prefix}scan_result.json"):
+                scan_result_file_id: str = self._job_metadata[job_id].get(f"{prefix}scan_result.json", "")
                 scan_result = await self.file_api.openai_retrieve_file_content(scan_result_file_id)
                 return EvaluateResponse(**json.loads(scan_result.body.decode("utf-8")))
             else:
-                logger.error(f"No scan_result.json file found for job {job_id}")
+                logger.error(f"No {prefix}scan_result.json file found for job {job_id}")
                 return EvaluateResponse(generations=[], scores={})
         
         else:

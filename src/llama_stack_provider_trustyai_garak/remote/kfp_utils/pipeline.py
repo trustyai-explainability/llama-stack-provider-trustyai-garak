@@ -17,23 +17,11 @@ def garak_scan_pipeline(
     job_id: str,
     eval_threshold: float,
     timeout_seconds: int,
-    s3_bucket: str,
-    s3_prefix: str = "",
     max_retries: int = 3,
     use_gpu: bool = False,
     verify_ssl: str = "True",
     resource_config: dict = {}, # TODO: parameterize gpu and cpu resource limits
     ):
-
-    # AWS connection secret
-    aws_connection_secret = os.environ.get('KUBEFLOW_S3_CREDENTIALS_SECRET_NAME', 'aws-connection-pipeline-artifacts')
-    secret_key_to_env = {
-        "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY": "AWS_SECRET_ACCESS_KEY",
-        "AWS_DEFAULT_REGION": "AWS_DEFAULT_REGION",
-        "AWS_S3_BUCKET": "AWS_S3_BUCKET",
-        "AWS_S3_ENDPOINT": "AWS_S3_ENDPOINT",
-    }
 
     # Step 1: Validate inputs
     validate_task: dsl.PipelineTask = validate_inputs(
@@ -50,6 +38,7 @@ def garak_scan_pipeline(
             scan_task_gpu: dsl.PipelineTask = garak_scan(
                 command=command,
                 llama_stack_url=llama_stack_url,
+                job_id=job_id,
                 max_retries=max_retries,
                 timeout_seconds=timeout_seconds,
                 verify_ssl=verify_ssl
@@ -68,21 +57,14 @@ def garak_scan_pipeline(
                     eval_threshold=eval_threshold,
                     job_id=job_id,
                     verify_ssl=verify_ssl,
-                    s3_bucket=s3_bucket,
-                    s3_prefix=s3_prefix,
                 )
                 parse_task_gpu.set_caching_options(False)
-                
-                kubernetes.use_secret_as_env(
-                    parse_task_gpu,
-                    secret_name=aws_connection_secret,
-                    secret_key_to_env=secret_key_to_env,
-                )
         
         with dsl.Else(name="USE_CPU"):
             scan_task_cpu: dsl.PipelineTask = garak_scan(
                 command=command,
                 llama_stack_url=llama_stack_url,
+                job_id=job_id,
                 max_retries=max_retries,
                 timeout_seconds=timeout_seconds,
                 verify_ssl=verify_ssl
@@ -98,13 +80,5 @@ def garak_scan_pipeline(
                     eval_threshold=eval_threshold,
                     job_id=job_id,
                     verify_ssl=verify_ssl,
-                    s3_bucket=s3_bucket,
-                    s3_prefix=s3_prefix,
                 )
                 parse_task_cpu.set_caching_options(False)
-                
-                kubernetes.use_secret_as_env(
-                    parse_task_cpu,
-                    secret_name=aws_connection_secret,
-                    secret_key_to_env=secret_key_to_env,
-                )

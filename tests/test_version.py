@@ -168,6 +168,87 @@ dependencies = [
                         # Should return unversioned fallback
                         assert version == "garak"
 
+    def test_get_version_from_inline_extra_in_toml(self):
+        """Test that get_garak_version reads from optional-dependencies.inline in pyproject.toml"""
+        from llama_stack_provider_trustyai_garak import get_garak_version
+        
+        # Mock importlib.metadata to fail, forcing toml fallback
+        with patch("importlib.metadata.distribution", side_effect=Exception("Not found")):
+            with patch("builtins.open", mock_open()):
+                with patch("pathlib.Path.exists", return_value=True):
+                    with patch("tomllib.load") as mock_toml:
+                        # Simulate new pyproject.toml structure with garak in inline extra
+                        mock_toml.return_value = {
+                            "project": {
+                                "dependencies": [
+                                    "llama-stack>=0.3.0",
+                                    "kfp>=2.14.6",
+                                    # No garak here anymore!
+                                ],
+                                "optional-dependencies": {
+                                    "inline": [
+                                        "langchain==0.3.27",
+                                        "garak==0.12.0",  # Should be read from here
+                                    ],
+                                    "dev": ["pytest"]
+                                }
+                            }
+                        }
+                        version = get_garak_version()
+                        # Should get version from inline extra (new behavior)
+                        assert version == "garak==0.12.0"
+
+    def test_get_version_from_inline_extra_prefers_over_dependencies(self):
+        """Test that optional-dependencies.inline is preferred over dependencies"""
+        from llama_stack_provider_trustyai_garak import get_garak_version
+        
+        with patch("importlib.metadata.distribution", side_effect=Exception("Not found")):
+            with patch("builtins.open", mock_open()):
+                with patch("pathlib.Path.exists", return_value=True):
+                    with patch("tomllib.load") as mock_toml:
+                        # Both have garak, but inline should win
+                        mock_toml.return_value = {
+                            "project": {
+                                "dependencies": [
+                                    "garak==0.99.9",  # Old version in dependencies
+                                ],
+                                "optional-dependencies": {
+                                    "inline": [
+                                        "garak==0.12.0",  # Should use this one
+                                    ]
+                                }
+                            }
+                        }
+                        version = get_garak_version()
+                        # Should prefer inline extra version
+                        assert version == "garak==0.12.0"
+
+    def test_get_version_fallback_to_dependencies_when_no_inline_extra(self):
+        """Test that it falls back to dependencies when inline extra doesn't have garak"""
+        from llama_stack_provider_trustyai_garak import get_garak_version
+        
+        with patch("importlib.metadata.distribution", side_effect=Exception("Not found")):
+            with patch("builtins.open", mock_open()):
+                with patch("pathlib.Path.exists", return_value=True):
+                    with patch("tomllib.load") as mock_toml:
+                        # Inline extra exists but doesn't have garak
+                        mock_toml.return_value = {
+                            "project": {
+                                "dependencies": [
+                                    "garak==0.11.5",  # Should fall back to this
+                                ],
+                                "optional-dependencies": {
+                                    "inline": [
+                                        "langchain==0.3.27",
+                                        # No garak here
+                                    ]
+                                }
+                            }
+                        }
+                        version = get_garak_version()
+                        # Should fall back to dependencies (backwards compatibility)
+                        assert version == "garak==0.11.5"
+
     def test_get_version_real_package_metadata(self):
         """Test with real package metadata (integration test)"""
         from llama_stack_provider_trustyai_garak import get_garak_version
@@ -187,12 +268,12 @@ dependencies = [
         import logging
         from llama_stack_provider_trustyai_garak import get_garak_version
         
-        with caplog.at_level(logging.ERROR):
+        with caplog.at_level(logging.DEBUG):
             with patch("importlib.metadata.distribution", side_effect=Exception("Test error")):
                 with patch("pathlib.Path.exists", return_value=False):
                     version = get_garak_version()
                     
-                    # Should log the error
+                    # Should log specific error message
                     assert "Error getting garak version from importlib.metadata" in caplog.text
                     assert version == "garak"
 
@@ -201,16 +282,16 @@ dependencies = [
         import logging
         from llama_stack_provider_trustyai_garak import get_garak_version
         
-        with caplog.at_level(logging.ERROR):
+        with caplog.at_level(logging.DEBUG):
             with patch("importlib.metadata.distribution", side_effect=Exception("Metadata error")):
                 with patch("builtins.open", mock_open()):
                     with patch("pathlib.Path.exists", return_value=True):
                         with patch("tomllib.load", side_effect=Exception("TOML error")):
                             version = get_garak_version()
                             
-                            # Should log both errors
+                            # Should log both metadata and toml errors
                             assert "Error getting garak version from importlib.metadata" in caplog.text
-                            assert "Error getting garak version" in caplog.text
+                            assert "Error getting garak version from pyproject.toml" in caplog.text
                             assert version == "garak"
 
 

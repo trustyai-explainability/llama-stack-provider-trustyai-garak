@@ -111,8 +111,6 @@ class TestGarakRemoteConfig:
     def test_remote_config_with_kubeflow(self):
         """Test remote config with Kubeflow settings"""
         kubeflow_config = KubeflowConfig(
-            results_s3_prefix="garak-results/scans",
-            s3_credentials_secret_name="aws-connection-pipeline-artifacts",
             pipelines_endpoint="https://kfp.example.com",
             namespace="garak-namespace",
             base_image="garak:latest"
@@ -125,8 +123,6 @@ class TestGarakRemoteConfig:
         assert config.kubeflow_config.pipelines_endpoint == "https://kfp.example.com"
         assert config.kubeflow_config.namespace == "garak-namespace"
         assert config.kubeflow_config.base_image == "garak:latest"
-        assert config.kubeflow_config.results_s3_prefix == "garak-results/scans"
-        assert config.kubeflow_config.s3_credentials_secret_name == "aws-connection-pipeline-artifacts"
         
         # Should inherit base config defaults
         assert config.llama_stack_url == "http://localhost:8321"
@@ -136,8 +132,6 @@ class TestGarakRemoteConfig:
     def test_remote_config_inherits_base_fields(self):
         """Test that GarakRemoteConfig inherits all base fields"""
         kubeflow_config = KubeflowConfig(
-            results_s3_prefix="test/prefix",
-            s3_credentials_secret_name="test-secret",
             pipelines_endpoint="https://kfp.test.com",
             namespace="test",
             base_image="test:latest"
@@ -165,8 +159,6 @@ class TestGarakRemoteConfig:
         cert_file.write_text("CERTIFICATE")
         
         kubeflow_config = KubeflowConfig(
-            results_s3_prefix="test/prefix",
-            s3_credentials_secret_name="test-secret",
             pipelines_endpoint="https://kfp.test.com",
             namespace="test",
             base_image="test:latest"
@@ -191,8 +183,6 @@ class TestKubeflowConfig:
     def test_kubeflow_config_valid(self):
         """Test valid Kubeflow configuration"""
         config = KubeflowConfig(
-            results_s3_prefix="garak-results/scans",
-            s3_credentials_secret_name="aws-connection-pipeline-artifacts",
             pipelines_endpoint="https://kfp.example.com",
             namespace="default",
             base_image="python:3.9"
@@ -200,98 +190,44 @@ class TestKubeflowConfig:
         assert config.pipelines_endpoint == "https://kfp.example.com"
         assert config.namespace == "default"
         assert config.base_image == "python:3.9"
-        assert config.results_s3_prefix == "garak-results/scans"
-        assert config.s3_credentials_secret_name == "aws-connection-pipeline-artifacts"
         assert config.pipelines_api_token is None  # Optional field
 
-    def test_kubeflow_config_missing_results_s3_prefix(self):
-        """Test that results_s3_prefix is required"""
+    def test_kubeflow_config_missing_required_fields(self):
+        """Test that required fields must be provided"""
+        # Missing pipelines_endpoint
         with pytest.raises(ValidationError) as exc_info:
             KubeflowConfig(
-                s3_credentials_secret_name="aws-connection",
-                pipelines_endpoint="https://kfp.example.com",
                 namespace="default",
                 base_image="python:3.9"
             )
-        assert "results_s3_prefix" in str(exc_info.value)
+        assert "pipelines_endpoint" in str(exc_info.value)
 
-    def test_kubeflow_config_s3_credentials_secret_name_has_default(self):
-        """Test that s3_credentials_secret_name has a default value"""
-        config = KubeflowConfig(
-            results_s3_prefix="bucket/prefix",
+        # Missing namespace
+        with pytest.raises(ValidationError) as exc_info:
+            KubeflowConfig(
             pipelines_endpoint="https://kfp.example.com",
-            namespace="default",
-            base_image="python:3.9"
+                base_image="python:3.9"
         )
-        # Should use default value
-        assert config.s3_credentials_secret_name == "aws-connection-pipeline-artifacts"
-
-    def test_kubeflow_config_s3_prefix_formats(self):
-        """Test various S3 prefix formats are accepted"""
-        # Format: bucket/prefix
-        config1 = KubeflowConfig(
-            results_s3_prefix="my-bucket/my/prefix",
-            s3_credentials_secret_name="aws-connection",
-            pipelines_endpoint="https://kfp.example.com",
-            namespace="default",
-            base_image="test:latest"
-        )
-        assert config1.results_s3_prefix == "my-bucket/my/prefix"
-        
-        # Format: s3://bucket/prefix
-        config2 = KubeflowConfig(
-            results_s3_prefix="s3://my-bucket/my/prefix",
-            s3_credentials_secret_name="aws-connection",
-            pipelines_endpoint="https://kfp.example.com",
-            namespace="default",
-            base_image="test:latest"
-        )
-        assert config2.results_s3_prefix == "s3://my-bucket/my/prefix"
-        
-        # Format: bucket only (no prefix)
-        config3 = KubeflowConfig(
-            results_s3_prefix="my-bucket",
-            s3_credentials_secret_name="aws-connection",
-            pipelines_endpoint="https://kfp.example.com",
-            namespace="default",
-            base_image="test:latest"
-        )
-        assert config3.results_s3_prefix == "my-bucket"
+        assert "namespace" in str(exc_info.value)
 
     def test_kubeflow_config_with_token(self):
         """Test KubeflowConfig with pipelines_api_token"""
         config = KubeflowConfig(
-            results_s3_prefix="bucket/prefix",
-            s3_credentials_secret_name="aws-connection",
             pipelines_endpoint="https://kfp.example.com",
             namespace="default",
             base_image="test:latest",
             pipelines_api_token="test-token-12345"
         )
-        assert config.pipelines_api_token == "test-token-12345"
+        assert config.pipelines_api_token.get_secret_value() == "test-token-12345"
 
     def test_kubeflow_config_token_default_none(self):
         """Test that pipelines_api_token defaults to None"""
         config = KubeflowConfig(
-            results_s3_prefix="bucket/prefix",
-            s3_credentials_secret_name="aws-connection",
             pipelines_endpoint="https://kfp.example.com",
             namespace="default",
             base_image="test:latest"
         )
         assert config.pipelines_api_token is None
-
-    def test_kubeflow_config_default_s3_secret_name(self):
-        """Test s3_credentials_secret_name has proper default"""
-        config = KubeflowConfig(
-            results_s3_prefix="bucket/prefix",
-            s3_credentials_secret_name="aws-connection-pipeline-artifacts",
-            pipelines_endpoint="https://kfp.example.com",
-            namespace="default",
-            base_image="test:latest"
-        )
-        # Default should be the standard name shared with Ragas
-        assert config.s3_credentials_secret_name == "aws-connection-pipeline-artifacts"
 
 
 class TestGarakScanConfig:
@@ -314,8 +250,8 @@ class TestGarakScanConfig:
         # Check other defaults
         assert config.VULNERABLE_SCORE == 0.5
         assert config.parallel_probes == 8
-        assert config.cleanup_scan_dir_on_exit is False
-        assert config.scan_dir.name == "_scan_files"
+        assert config.cleanup_scan_dir_on_exit is True
+        assert config.scan_dir.name == "llama_stack_garak_scans"
 
     def test_framework_profile_structure(self):
         """Test framework profile structure"""
@@ -346,5 +282,95 @@ class TestGarakScanConfig:
     def test_scan_dir_path(self):
         """Test scan directory path construction"""
         config = GarakScanConfig()
-        assert config.scan_dir == config.base_dir / "_scan_files"
-        assert config.base_dir == Path(__file__).parent.parent / "src" / "llama_stack_provider_trustyai_garak"
+        assert "llama_stack_garak_scans" in str(config.scan_dir)
+        assert config.scan_dir.is_absolute()
+
+    def test_scan_dir_respects_garak_scan_dir_env(self, monkeypatch, tmp_path):
+        """Test that GARAK_SCAN_DIR environment variable overrides default scan_dir"""
+        custom_scan_dir = tmp_path / "custom_garak_scans"
+        custom_scan_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Set GARAK_SCAN_DIR environment variable
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(custom_scan_dir))
+        
+        # Reload utils to pick up new environment variable
+        from importlib import reload
+        from llama_stack_provider_trustyai_garak import utils
+        reload(utils)
+        
+        # Create config - should use GARAK_SCAN_DIR
+        config = GarakScanConfig()
+        
+        assert config.scan_dir == custom_scan_dir
+        assert str(config.scan_dir) == str(custom_scan_dir)
+
+    def test_scan_dir_uses_xdg_cache_home_when_no_override(self, monkeypatch, tmp_path):
+        """Test that scan_dir uses XDG_CACHE_HOME when GARAK_SCAN_DIR not set"""
+        # Clear GARAK_SCAN_DIR if it exists
+        monkeypatch.delenv("GARAK_SCAN_DIR", raising=False)
+        
+        # Set XDG_CACHE_HOME
+        custom_cache = tmp_path / "custom_cache"
+        custom_cache.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("XDG_CACHE_HOME", str(custom_cache))
+        
+        # Reload the utils module to pick up new XDG_CACHE_HOME
+        from importlib import reload
+        from llama_stack_provider_trustyai_garak import utils
+        reload(utils)
+        
+        config = GarakScanConfig()
+        
+        # Should be XDG_CACHE_HOME/llama_stack_garak_scans
+        assert str(custom_cache) in str(config.scan_dir)
+        assert "llama_stack_garak_scans" in str(config.scan_dir)
+
+    def test_cleanup_scan_dir_defaults_to_true(self):
+        """Test that cleanup_scan_dir_on_exit defaults to True for production"""
+        config = GarakScanConfig()
+        assert config.cleanup_scan_dir_on_exit is True
+
+    def test_scan_dir_respects_garak_scan_dir_env(self, monkeypatch, tmp_path):
+        """Test that GARAK_SCAN_DIR environment variable overrides default scan_dir"""
+        custom_scan_dir = tmp_path / "custom_garak_scans"
+        custom_scan_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Set GARAK_SCAN_DIR environment variable
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(custom_scan_dir))
+        
+        # Reload utils to pick up new environment variable
+        from importlib import reload
+        from llama_stack_provider_trustyai_garak import utils
+        reload(utils)
+        
+        # Create config - should use GARAK_SCAN_DIR
+        config = GarakScanConfig()
+        
+        assert config.scan_dir == custom_scan_dir
+        assert str(config.scan_dir) == str(custom_scan_dir)
+
+    def test_scan_dir_uses_xdg_cache_home_when_no_override(self, monkeypatch, tmp_path):
+        """Test that scan_dir uses XDG_CACHE_HOME when GARAK_SCAN_DIR not set"""
+        # Clear GARAK_SCAN_DIR if it exists
+        monkeypatch.delenv("GARAK_SCAN_DIR", raising=False)
+        
+        # Set XDG_CACHE_HOME
+        custom_cache = tmp_path / "custom_cache"
+        custom_cache.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("XDG_CACHE_HOME", str(custom_cache))
+        
+        # Reload the utils module to pick up new XDG_CACHE_HOME
+        from importlib import reload
+        from llama_stack_provider_trustyai_garak import utils
+        reload(utils)
+        
+        config = GarakScanConfig()
+        
+        # Should be XDG_CACHE_HOME/llama_stack_garak_scans
+        assert str(custom_cache) in str(config.scan_dir)
+        assert "llama_stack_garak_scans" in str(config.scan_dir)
+
+    def test_cleanup_scan_dir_defaults_to_true(self):
+        """Test that cleanup_scan_dir_on_exit defaults to True for production"""
+        config = GarakScanConfig()
+        assert config.cleanup_scan_dir_on_exit is True

@@ -1,7 +1,8 @@
 from .compat import json_schema_type
 from typing import Dict, Any, Union, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, SecretStr
 from pathlib import Path
+from .utils import get_scan_base_dir
 
 @json_schema_type
 class GarakProviderBaseConfig(BaseModel):
@@ -108,20 +109,6 @@ class GarakRemoteConfig(GarakProviderBaseConfig):
 class KubeflowConfig(BaseModel):
     """Configuration for Kubeflow remote execution."""
 
-    results_s3_prefix: str = Field(
-        description="S3 prefix (folder) where the evaluation results will be written.",
-    )
-
-    s3_credentials_secret_name: str = Field(
-        default="aws-connection-pipeline-artifacts",
-        description=(
-            "Name of the AWS credentials secret in Kubernetes. "
-            "Must have write access to the results S3 prefix. "
-            "Default is 'aws-connection-pipeline-artifacts'. "
-            "Note: Due to KFP limitations with nested conditionals, the pipeline uses a fixed secret name ('aws-connection-pipeline-artifacts'). "
-        ),
-    )
-
     pipelines_endpoint: str = Field(
         description="Kubeflow Pipelines API endpoint URL.",
     )
@@ -130,11 +117,15 @@ class KubeflowConfig(BaseModel):
         description="Kubeflow namespace for pipeline execution.",
     )
 
-    base_image: str = Field(
-        description="Base image for Kubeflow pipeline components.",
+    base_image: Optional[str] = Field(
+        default=None,
+        description=(
+            "Base image for Kubeflow pipeline components. "
+            "If not provided, the base image will be read from the configmap specified in constants.py."
+        ),
     )
 
-    pipelines_api_token: Optional[str] = Field(
+    pipelines_api_token: Optional[SecretStr] = Field(
         description=(
             "Kubeflow Pipelines token with access to submit pipelines. "
             "If not provided, the token will be read from the local kubeconfig file."
@@ -214,9 +205,16 @@ class GarakScanConfig(BaseModel):
     
     VULNERABLE_SCORE: float = 0.5
 
-    base_dir: Path = Path(__file__).parent
-    scan_dir: Path = base_dir / "_scan_files"
+    # Use XDG_CACHE_HOME for scan files (automatically set to /tmp/.cache )
+    # Can be overridden with GARAK_SCAN_DIR environment variable
+    scan_dir: Path = Field(
+        default_factory=get_scan_base_dir,
+        description="Directory for storing scan files. Uses XDG_CACHE_HOME or GARAK_SCAN_DIR."
+    )
     parallel_probes: int = 8
-    cleanup_scan_dir_on_exit: bool = False
+    cleanup_scan_dir_on_exit: bool = Field(
+        default=True,
+        description="Whether to cleanup scan directory on exit."
+    )
 
 __all__ = ["GarakInlineConfig", "GarakRemoteConfig", "GarakScanConfig"]

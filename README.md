@@ -13,13 +13,25 @@ This repository implements [Garak](https://github.com/NVIDIA/garak) as a Llama S
 
 ## Installation
 
+### Production (Remote Execution - Default)
+
 ```bash
 git clone https://github.com/trustyai-explainability/llama-stack-provider-trustyai-garak.git
 cd llama-stack-provider-trustyai-garak
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
-# For remote execution: pip install -e ".[remote]"
 ```
+
+This installs the **remote provider** by default, which executes scans on Kubernetes/Kubeflow Pipelines. This is the recommended mode for production deployments with lightweight dependencies.
+
+### Development (With Inline Execution)
+
+```bash
+# Install with inline provider for local development/testing
+pip install -e ".[inline]"
+```
+
+This adds support for **inline execution** (local scans), which requires heavier dependencies including `garak` and `langchain`.
 
 ## Quick Start
 
@@ -37,14 +49,17 @@ export LLAMA_STACK_URL="http://localhost:8321"
 ### 2. Start Server
 
 ```bash
-# Basic mode (standard scanning)
+# Inline mode - local scanning (requires [inline] extra)
 llama stack run run.yaml
 
-# Enhanced mode (with shield testing)
+# Inline mode with shields (requires [inline] extra)
 llama stack run run-with-safety.yaml
 
-# Remote mode (Kubernetes/KFP)
+# Remote mode - Kubernetes/KFP (default install)
 llama stack run run-remote.yaml
+
+# Remote mode with shields (default install)
+llama stack run run-remote-safety.yaml
 ```
 
 Server runs at `http://localhost:8321`
@@ -143,8 +158,12 @@ metadata={
 
 ```python
 # Get report file IDs from job status
-scan_report_id = status.metadata["scan.report.jsonl"]
-scan_html_id = status.metadata["scan.report.html"]
+job_id = job.job_id
+status = client.alpha.eval.jobs.status(job_id=job_id, benchmark_id="trustyai_garak::quick")
+
+# File IDs are in metadata (for remote: prefixed with job_id)
+scan_report_id = status.metadata.get(f"{job_id}_scan.report.jsonl") or status.metadata.get("scan.report.jsonl")
+scan_html_id = status.metadata.get(f"{job_id}_scan.report.html") or status.metadata.get("scan.report.html")
 
 # Download via Files API
 content = client.files.content(scan_report_id)
@@ -160,28 +179,22 @@ report = requests.get(f"http://localhost:8321/v1/files/{scan_html_id}/content")
 
 ```bash
 # Llama Stack URL (must be accessible from Kubeflow pods - use ngrok if local)
-export LLAMA_STACK_URL="https://your-llama-stack-url.ngrok.io"
+export KUBEFLOW_LLAMA_STACK_URL="https://your-llama-stack-url.ngrok.io"
 
 # Kubeflow Configuration
 export KUBEFLOW_PIPELINES_ENDPOINT="https://your-kfp-endpoint"
 export KUBEFLOW_NAMESPACE="your-namespace"
 export KUBEFLOW_BASE_IMAGE="quay.io/rh-ee-spandraj/trustyai-lls-garak-provider-dsp:latest"
-export KUBEFLOW_RESULTS_S3_PREFIX="s3://garak-results/scans"  # S3 path: bucket/prefix
-export KUBEFLOW_S3_CREDENTIALS_SECRET_NAME="aws-connection-pipeline-artifacts"  # K8s secret name
 export KUBEFLOW_PIPELINES_TOKEN=""  # Optional: If not set, uses kubeconfig
-
-# S3 Configuration (for server-side S3 access to retrieve results)
-# These are also stored in the Kubernetes secret specified above for pod access
-export AWS_ACCESS_KEY_ID="your-key"
-export AWS_SECRET_ACCESS_KEY="your-secret"
-export AWS_S3_ENDPOINT="https://your-s3-endpoint" # if using MinIO
-export AWS_DEFAULT_REGION="us-east-1"
 
 # Start server
 llama stack run run-remote.yaml
 ```
 
-_Note: For remote execution, `LLAMA_STACK_URL` must be accessible from KFP pods. If running locally, use [ngrok](https://ngrok.com/) to create an accessible endpoint._
+**Important Notes:**
+- For remote execution, `KUBEFLOW_LLAMA_STACK_URL` must be accessible from KFP pods. If running locally, use [ngrok](https://ngrok.com/)
+- Results are stored via the configured Files API provider (S3, LocalFS, GCS, etc.)
+- Both server and KFP pods access the same Files API backend automatically
 
 ### Usage
 
@@ -196,12 +209,13 @@ print(f"KFP Run ID: {status.metadata['kfp_run_id']}")
 
 ## Configuration Reference
 
-### Provider Config (`run.yaml`)
+### Inline Provider Config (`run.yaml`)
 
 ```yaml
 providers:
   eval:
     - provider_id: trustyai_garak
+      provider_type: inline::trustyai_garak
       config:
         llama_stack_url: ${env.LLAMA_STACK_URL:=http://localhost:8321}
         timeout: ${env.GARAK_TIMEOUT:=10800}
@@ -209,23 +223,64 @@ providers:
         max_workers: ${env.GARAK_MAX_WORKERS:=5}
 ```
 
+### Remote Provider Config (`run-remote.yaml`)
+
+```yaml
+providers:
+  eval:
+    - provider_id: trustyai_garak_remote
+      provider_type: remote::trustyai_garak
+      config:
+        llama_stack_url: ${env.KUBEFLOW_LLAMA_STACK_URL}
+        timeout: ${env.GARAK_TIMEOUT:=10800}
+        kubeflow_config:
+          pipelines_endpoint: ${env.KUBEFLOW_PIPELINES_ENDPOINT}
+          namespace: ${env.KUBEFLOW_NAMESPACE}
+          base_image: ${env.KUBEFLOW_BASE_IMAGE}
+          pipelines_api_token: ${env.KUBEFLOW_PIPELINES_TOKEN:=}
+  
+  # Files provider (S3, LocalFS, or any other backend)
+  files:
+    - provider_id: s3
+      provider_type: remote::s3
+      config:
+        bucket_name: ${env.S3_BUCKET_NAME}
+        region: ${env.AWS_DEFAULT_REGION:=us-east-1}
+        # ... S3 configuration
+```
+
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LLAMA_STACK_URL` | `http://localhost:8321/v1` | Llama Stack API URL |
+| `LLAMA_STACK_URL` | `http://localhost:8321/v1` | Llama Stack API URL (inline mode) |
+| `KUBEFLOW_LLAMA_STACK_URL` | - | Llama Stack URL accessible from KFP pods (remote mode) |
 | `GARAK_TIMEOUT` | `10800` | Max scan timeout (seconds) |
 | `GARAK_MAX_CONCURRENT_JOBS` | `5` | Max concurrent scans (inline only) |
 | `GARAK_MAX_WORKERS` | `5` | Shield scanning parallelism |
+| `GARAK_SCAN_DIR` | `/tmp/.cache/llama_stack_garak_scans` | Directory for scan files (must be writable) |
+| `XDG_CACHE_HOME` | `/tmp/.cache` | XDG cache directory (auto-configured) |
 
 ## Deployment Modes
 
-| Mode | Config File | Features |
-|------|------------|----------|
-| **Basic** | `run.yaml` | Standard scanning |
-| **Enhanced** | `run-with-safety.yaml` | + Shield integration |
-| **Remote** | `run-remote.yaml` | KFP execution |
-| **Remote+Safety** | `run-remote-safety.yaml` | + Shield integration |
+| Mode | Config File | Provider Type | Dependencies |
+|------|------------|---------------|--------------|
+| **Inline** | `run.yaml` | `inline::trustyai_garak` | Requires `[inline]` extra |
+| **Inline+Safety** | `run-with-safety.yaml` | `inline::trustyai_garak` | Requires `[inline]` extra |
+| **Remote** (Default) | `run-remote.yaml` | `remote::trustyai_garak` | Default install |
+| **Remote+Safety** | `run-remote-safety.yaml` | `remote::trustyai_garak` | Default install |
+
+## Architecture
+
+### Remote-First Design
+
+The provider uses a **remote-first architecture**:
+
+- **Default Install**: Lightweight, includes only KFP dependencies
+- **Remote Provider**: No garak on server, runs scans in Kubernetes pods
+- **Files API Integration**: Portable across any Files backend (S3, LocalFS, GCS)
+- **Automatic Configuration**: XDG directories auto-configured for writable paths
+
 
 ## Result Interpretation
 
@@ -233,10 +288,17 @@ providers:
 - **Threshold**: Scores ≥ 0.5 indicate security concerns
 - **Reports**: Available in JSON, HTML, and log formats via Files API
 
+## Installation Options
+
+| Install Command | Providers Available | Use Case |
+|----------------|--------------------|-----------| 
+| `pip install -e .` | Remote only | Production (default) |
+| `pip install -e ".[inline]"` | Remote + Inline | Development/Testing |
+
 ## Examples & Demos
 
 | Notebook | Description |
 |----------|-------------|
-| [01-getting_started](demos/01-getting_started_with_garak.ipynb) | Basic usage and custom probes |
-| [02-scan_with_shields](demos/02-scan_with_shields.ipynb) | Shield integration testing |
+| [01-getting_started](demos/01-getting_started_with_garak.ipynb) | Basic usage and custom probes (inline mode) |
+| [02-scan_with_shields](demos/02-scan_with_shields.ipynb) | Shield integration testing (inline mode) |
 | [03-remote_garak](demos/03-remote_garak.ipynb) | KFP remote execution |
