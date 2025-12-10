@@ -111,8 +111,6 @@ class TestGarakRemoteConfig:
     def test_remote_config_with_kubeflow(self):
         """Test remote config with Kubeflow settings"""
         kubeflow_config = KubeflowConfig(
-            results_s3_prefix="garak-results/scans",
-            s3_credentials_secret_name="aws-connection-pipeline-artifacts",
             pipelines_endpoint="https://kfp.example.com",
             namespace="garak-namespace",
             base_image="garak:latest"
@@ -125,8 +123,6 @@ class TestGarakRemoteConfig:
         assert config.kubeflow_config.pipelines_endpoint == "https://kfp.example.com"
         assert config.kubeflow_config.namespace == "garak-namespace"
         assert config.kubeflow_config.base_image == "garak:latest"
-        assert config.kubeflow_config.results_s3_prefix == "garak-results/scans"
-        assert config.kubeflow_config.s3_credentials_secret_name == "aws-connection-pipeline-artifacts"
         
         # Should inherit base config defaults
         assert config.llama_stack_url == "http://localhost:8321"
@@ -136,8 +132,6 @@ class TestGarakRemoteConfig:
     def test_remote_config_inherits_base_fields(self):
         """Test that GarakRemoteConfig inherits all base fields"""
         kubeflow_config = KubeflowConfig(
-            results_s3_prefix="test/prefix",
-            s3_credentials_secret_name="test-secret",
             pipelines_endpoint="https://kfp.test.com",
             namespace="test",
             base_image="test:latest"
@@ -165,8 +159,6 @@ class TestGarakRemoteConfig:
         cert_file.write_text("CERTIFICATE")
         
         kubeflow_config = KubeflowConfig(
-            results_s3_prefix="test/prefix",
-            s3_credentials_secret_name="test-secret",
             pipelines_endpoint="https://kfp.test.com",
             namespace="test",
             base_image="test:latest"
@@ -191,8 +183,6 @@ class TestKubeflowConfig:
     def test_kubeflow_config_valid(self):
         """Test valid Kubeflow configuration"""
         config = KubeflowConfig(
-            results_s3_prefix="garak-results/scans",
-            s3_credentials_secret_name="aws-connection-pipeline-artifacts",
             pipelines_endpoint="https://kfp.example.com",
             namespace="default",
             base_image="python:3.9"
@@ -200,69 +190,29 @@ class TestKubeflowConfig:
         assert config.pipelines_endpoint == "https://kfp.example.com"
         assert config.namespace == "default"
         assert config.base_image == "python:3.9"
-        assert config.results_s3_prefix == "garak-results/scans"
-        assert config.s3_credentials_secret_name == "aws-connection-pipeline-artifacts"
         assert config.pipelines_api_token is None  # Optional field
 
-    def test_kubeflow_config_missing_results_s3_prefix(self):
-        """Test that results_s3_prefix is required"""
+    def test_kubeflow_config_missing_required_fields(self):
+        """Test that required fields must be provided"""
+        # Missing pipelines_endpoint
         with pytest.raises(ValidationError) as exc_info:
             KubeflowConfig(
-                s3_credentials_secret_name="aws-connection",
-                pipelines_endpoint="https://kfp.example.com",
                 namespace="default",
                 base_image="python:3.9"
             )
-        assert "results_s3_prefix" in str(exc_info.value)
+        assert "pipelines_endpoint" in str(exc_info.value)
 
-    def test_kubeflow_config_s3_credentials_secret_name_has_default(self):
-        """Test that s3_credentials_secret_name has a default value"""
-        config = KubeflowConfig(
-            results_s3_prefix="bucket/prefix",
+        # Missing namespace
+        with pytest.raises(ValidationError) as exc_info:
+            KubeflowConfig(
             pipelines_endpoint="https://kfp.example.com",
-            namespace="default",
-            base_image="python:3.9"
+                base_image="python:3.9"
         )
-        # Should use default value
-        assert config.s3_credentials_secret_name == "aws-connection-pipeline-artifacts"
-
-    def test_kubeflow_config_s3_prefix_formats(self):
-        """Test various S3 prefix formats are accepted"""
-        # Format: bucket/prefix
-        config1 = KubeflowConfig(
-            results_s3_prefix="my-bucket/my/prefix",
-            s3_credentials_secret_name="aws-connection",
-            pipelines_endpoint="https://kfp.example.com",
-            namespace="default",
-            base_image="test:latest"
-        )
-        assert config1.results_s3_prefix == "my-bucket/my/prefix"
-        
-        # Format: s3://bucket/prefix
-        config2 = KubeflowConfig(
-            results_s3_prefix="s3://my-bucket/my/prefix",
-            s3_credentials_secret_name="aws-connection",
-            pipelines_endpoint="https://kfp.example.com",
-            namespace="default",
-            base_image="test:latest"
-        )
-        assert config2.results_s3_prefix == "s3://my-bucket/my/prefix"
-        
-        # Format: bucket only (no prefix)
-        config3 = KubeflowConfig(
-            results_s3_prefix="my-bucket",
-            s3_credentials_secret_name="aws-connection",
-            pipelines_endpoint="https://kfp.example.com",
-            namespace="default",
-            base_image="test:latest"
-        )
-        assert config3.results_s3_prefix == "my-bucket"
+        assert "namespace" in str(exc_info.value)
 
     def test_kubeflow_config_with_token(self):
         """Test KubeflowConfig with pipelines_api_token"""
         config = KubeflowConfig(
-            results_s3_prefix="bucket/prefix",
-            s3_credentials_secret_name="aws-connection",
             pipelines_endpoint="https://kfp.example.com",
             namespace="default",
             base_image="test:latest",
@@ -273,25 +223,11 @@ class TestKubeflowConfig:
     def test_kubeflow_config_token_default_none(self):
         """Test that pipelines_api_token defaults to None"""
         config = KubeflowConfig(
-            results_s3_prefix="bucket/prefix",
-            s3_credentials_secret_name="aws-connection",
             pipelines_endpoint="https://kfp.example.com",
             namespace="default",
             base_image="test:latest"
         )
         assert config.pipelines_api_token is None
-
-    def test_kubeflow_config_default_s3_secret_name(self):
-        """Test s3_credentials_secret_name has proper default"""
-        config = KubeflowConfig(
-            results_s3_prefix="bucket/prefix",
-            s3_credentials_secret_name="aws-connection-pipeline-artifacts",
-            pipelines_endpoint="https://kfp.example.com",
-            namespace="default",
-            base_image="test:latest"
-        )
-        # Default should be the standard name shared with Ragas
-        assert config.s3_credentials_secret_name == "aws-connection-pipeline-artifacts"
 
 
 class TestGarakScanConfig:

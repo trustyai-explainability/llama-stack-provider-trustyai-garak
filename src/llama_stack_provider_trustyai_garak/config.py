@@ -109,19 +109,6 @@ class GarakRemoteConfig(GarakProviderBaseConfig):
 class KubeflowConfig(BaseModel):
     """Configuration for Kubeflow remote execution."""
 
-    results_s3_prefix: str = Field(
-        description="S3 prefix (folder) where the evaluation results will be written.",
-    )
-
-    s3_credentials_secret_name: str = Field(
-        default="aws-connection-pipeline-artifacts",
-        description=(
-            "Name of the AWS credentials secret in Kubernetes. "
-            "Must have write access to the results S3 prefix. "
-            "Default is 'aws-connection-pipeline-artifacts'. "
-        ),
-    )
-
     pipelines_endpoint: str = Field(
         description="Kubeflow Pipelines API endpoint URL.",
     )

@@ -5,7 +5,8 @@ from ..compat import (
     ProviderSpec, 
     Api, 
     Job, 
-    JobStatus
+    JobStatus,
+    OpenAIFilePurpose
 )
 from typing import List, Dict, Union
 import os
@@ -31,10 +32,6 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
         super().__init__(config, deps)
         self._config: GarakRemoteConfig = config
         
-        # S3 configuration - parse bucket and prefix from results_s3_prefix (format: bucket/prefix)
-        self._s3_bucket: str = None
-        self._s3_prefix: str = None
-        self.s3_client = None
         self.kfp_client = None
         self._jobs_lock = asyncio.Lock()  # Will be initialized in async initialize()
 
@@ -113,82 +110,13 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
     async def initialize(self) -> None:
         """Initialize the remote Garak provider."""
         self._initialize()
-        
-        # Parse S3 configuration from results_s3_prefix (format: bucket/prefix or s3://bucket/prefix)
-        self._parse_s3_config()
 
         self._initialized = True
         logger.info("Initialized Garak remote provider.")
     
-    def _parse_s3_config(self):
-        """Parse S3 bucket and prefix from results_s3_prefix.
-        
-        Raises:
-            GarakConfigError: If results_s3_prefix is invalid or missing
-        """
-        results_s3_prefix = self._config.kubeflow_config.results_s3_prefix
-        
-        # Validate input
-        if not results_s3_prefix or not results_s3_prefix.strip():
-            raise GarakConfigError(
-                "results_s3_prefix must be specified in kubeflow_config. "
-                "Format: 'bucket/prefix' or 's3://bucket/prefix'"
-            )
-        
-        results_s3_prefix = results_s3_prefix.strip()
-        
-        # Handle s3://bucket/prefix format
-        if results_s3_prefix.lower().startswith("s3://"):
-            results_s3_prefix = results_s3_prefix[len("s3://"):]
-        
-        # validate format after stripping s3:// prefix
-        if not results_s3_prefix:
-            raise GarakConfigError(
-                "results_s3_prefix cannot be just 's3://'. "
-                "Format: 'bucket/prefix' or 's3://bucket/prefix'"
-            )
-        
-        # Split bucket and prefix
-        parts = results_s3_prefix.split("/", 1)
-        self._s3_bucket = parts[0].strip()
-        self._s3_prefix = parts[1].strip() if len(parts) > 1 else ""
-        
-        # validate bucket name is not empty
-        if not self._s3_bucket:
-            raise GarakConfigError(
-                f"Invalid S3 bucket name in results_s3_prefix: '{self._config.kubeflow_config.results_s3_prefix}'. "
-                "Bucket name cannot be empty."
-            )
-        
-        
-        logger.debug(f"Parsed S3 config - bucket: {self._s3_bucket}, prefix: {self._s3_prefix}")
-    
-    def _ensure_s3_client(self):
-        if not self.s3_client:
-            self._create_s3_client()
-    
     def _ensure_kfp_client(self):
         if not self.kfp_client:
             self._create_kfp_client()
-    
-    def _create_s3_client(self):
-        try:
-            import boto3
-            self.s3_client = boto3.client('s3',
-                                        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-                                        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
-                                        region_name=os.getenv('AWS_DEFAULT_REGION', 'us-east-1'),
-                                        endpoint_url=os.getenv('AWS_S3_ENDPOINT'),  # if using MinIO
-                                        verify=self._verify_ssl,
-                                    )
-        except ImportError as e:
-            raise GarakError(
-                "Boto3 is not installed. Install with: pip install boto3"
-            ) from e
-        except Exception as e:
-            raise GarakError(
-                f"Unable to connect to S3."
-            ) from e
 
     def _create_kfp_client(self):
         try:
@@ -301,13 +229,10 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
             # Validate config before creating pipeline
             if not self._config.kubeflow_config.namespace:
                 raise GarakConfigError("kubeflow_config.namespace is not configured")
-            if not self._config.kubeflow_config.s3_credentials_secret_name:
-                raise GarakConfigError("kubeflow_config.s3_credentials_secret_name is not configured")
             if not self._config.llama_stack_url:
                 raise GarakConfigError("llama_stack_url is not configured")
             
             experiment_name = f"trustyai-garak-{self._config.kubeflow_config.namespace}"
-            os.environ['KUBEFLOW_S3_CREDENTIALS_SECRET_NAME'] = self._config.kubeflow_config.s3_credentials_secret_name
             
             llama_stack_url = self._config.llama_stack_url.strip().rstrip("/")
             if not llama_stack_url:
@@ -324,8 +249,6 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
                     "max_retries": int(benchmark_metadata.get("max_retries", 3)),
                     "use_gpu": benchmark_metadata.get("use_gpu", False),
                     "verify_ssl": str(self._verify_ssl),
-                    "s3_bucket": self._s3_bucket,
-                    "s3_prefix": self._s3_prefix,
                 },
                 run_name=f"garak-{benchmark_id.split('::')[-1]}-{job_id.removeprefix(JOB_ID_PREFIX)}",
                 namespace=self._config.kubeflow_config.namespace,
@@ -397,51 +320,49 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
                     self._job_metadata[job_id]['finished_at'] = self._convert_datetime_to_str(run.finished_at)
 
                     if job.status == JobStatus.completed:
-                        # Read from S3
+                        # Retrieve file_id_mapping from Files API using predictable filename
                         try:
-                            # Skip S3 reading if bucket not configured
-                            if not self._s3_bucket:
-                                logger.warning(f"S3 bucket not configured for job {job_id}, skipping file metadata retrieval")
+                            # The KFP pod uploads mapping with filename: {job_id}_mapping.json
+                            mapping_filename = f"{job_id}_mapping.json"
+                            
+                            logger.debug(f"Searching for mapping file: {mapping_filename}")
+                            
+                            if 'mapping_file_id' not in self._job_metadata[job_id]:
+                                # List files and find the mapping file by name
+                                files_list = await self.file_api.openai_list_files(purpose=OpenAIFilePurpose.BATCH)
+                                
+                                for file_obj in files_list.data:
+                                    if hasattr(file_obj, 'filename') and file_obj.filename == mapping_filename:
+                                        self._job_metadata[job_id]['mapping_file_id'] = file_obj.id
+                                        logger.debug(f"Found mapping file: {mapping_filename} (ID: {file_obj.id})")
+                                        break
+                            
+                            if mapping_file_id := self._job_metadata[job_id].get('mapping_file_id'):
+                                # Retrieve the mapping file via Files API
+                                mapping_content = await self.file_api.openai_retrieve_file_content(mapping_file_id)
+                                if mapping_content:
+                                    file_id_mapping: dict = json.loads(mapping_content.body.decode("utf-8"))
+                                    
+                                    if not isinstance(file_id_mapping, dict):
+                                        raise ValueError(f"Invalid file mapping format: {type(file_id_mapping)}")
+                                    
+                                    # Store the file IDs in job metadata
+                                    for key, value in file_id_mapping.items():
+                                        self._job_metadata[job_id][key] = value
+                                    
+                                    logger.debug(f"Successfully retrieved {len(file_id_mapping)} file IDs from Files API")
+                                else:
+                                    logger.warning(f"Empty mapping file content for file ID: {mapping_file_id}")
                             else:
-                                self._ensure_s3_client()
-
-                                s3_key = f'{self._s3_prefix}/{job_id}.json' if self._s3_prefix else f'{job_id}.json'
-                                
-                                # Validate S3 object exists before reading
-                                try:
-                                    response = self.s3_client.get_object(
-                                        Bucket=self._s3_bucket,
-                                        Key=s3_key
-                                    )
-                                except Exception as s3_err:
-                                    logger.warning(f"S3 object not found or inaccessible: {s3_key} in bucket {self._s3_bucket}: {s3_err}")
-                                    raise
-                                
-                                # Read and parse response
-                                body_content = response['Body'].read()
-                                if not body_content:
-                                    logger.warning(f"Empty S3 object for job {job_id}: {s3_key}")
-                                    raise ValueError(f"Empty S3 object: {s3_key}")
-                                
-                                try:
-                                    file_id_mapping: dict = json.loads(body_content)
-                                except json.JSONDecodeError as e:
-                                    logger.error(f"Failed to parse JSON from S3 object {s3_key}: {e}")
-                                    logger.debug(f"S3 content (first 500 chars): {body_content[:500]}")
-                                    raise
-                                
-                                if not isinstance(file_id_mapping, dict):
-                                    logger.error(f"S3 object {s3_key} did not contain a dictionary: {type(file_id_mapping)}")
-                                    raise ValueError(f"Invalid file mapping format in S3 object: {s3_key}")
-                                
-                                # Store the file IDs in job metadata
-                                for key, value in file_id_mapping.items():
-                                    self._job_metadata[job_id][key] = value
+                                logger.warning(
+                                    f"Could not find mapping file '{mapping_filename}' in Files API. "
+                                    f"This might be expected if the pipeline is still running or failed."
+                                )
                                 
                         except json.JSONDecodeError as e:
-                            logger.error(f"Failed to parse JSON from S3 object {s3_key if 's3_key' in locals() else 'unknown'}: {e}")
+                            logger.error(f"Failed to parse JSON from mapping file: {e}")
                         except Exception as e:
-                            logger.warning(f"Could not retrieve outputs from S3 for job {job_id}: {e}")
+                            logger.warning(f"Could not retrieve mapping from Files API for job {job_id}: {e}")
                 
                 return_metadata = self._job_metadata.get(job_id, {})
                 return_status = job.status
@@ -461,7 +382,7 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
         # Update job status from KFP before getting results
         await self.job_status(benchmark_id, job_id)
         
-        return await super().job_result(benchmark_id, job_id)
+        return await super().job_result(benchmark_id, job_id, prefix=f"{job_id}_")
     
     async def job_cancel(self, benchmark_id: str, job_id: str) -> None:
         """Cancel a job and kill the process.
