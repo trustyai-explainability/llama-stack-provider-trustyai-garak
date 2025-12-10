@@ -388,7 +388,7 @@ def parse_results(
         "vulnerable_responses": 0,
         "attack_success_rate": 0,
     }
-    for _, aggregated_results in aggregated_scores.items():
+    for aggregated_results in aggregated_scores.values():
         combined_metrics["total_attempts"] += aggregated_results["total_attempts"]
         combined_metrics["vulnerable_responses"] += aggregated_results["vulnerable_responses"]
     
