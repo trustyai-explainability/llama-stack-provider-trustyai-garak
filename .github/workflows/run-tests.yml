@@ -1,4 +1,4 @@
-name: Run Tests
+name: Tier 1 - unit tests
 
 on:
   pull_request:
@@ -8,25 +8,43 @@ on:
 
 jobs:
   test:
-    name: Run Tests
+    name: "Test with ${{ matrix.test-name }}"
     runs-on: ubuntu-latest
-    
+    strategy:
+      matrix:
+        include:
+          - python-version: "3.12"
+            llama-stack-source: "stable"
+            test-name: "llama-stack stable (pyproject.toml)"
+            install-cmd: "python -m pip install -e \".[dev,remote]\""
+          - python-version: "3.12"
+            llama-stack-source: "main"
+            test-name: "llama-stack main branch (upstream)"
+            install-cmd: "python -m pip install git+https://github.com/llamastack/llama-stack.git@main && python -m pip install -e \".[dev,remote]\""
+      fail-fast: false
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev,remote]"
+          ${{ matrix.install-cmd }}
 
       - name: Run tests
         env:
           PYTHONPATH: src
         run: |
           pytest tests -v
+
+      - name: Display test environment info
+        run: |
+          echo "Testing with: ${{ matrix.test-name }}"
+          python -c "import llama_stack; print(f'llama-stack location: {llama_stack.__file__}')"
+          python -m pip show llama-stack
