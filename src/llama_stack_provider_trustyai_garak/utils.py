@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 
-def _ensure_xdg_vars() -> Path:
+def _ensure_xdg_vars() -> None:
     """
     Ensure XDG environment variables are set to writable locations.
     
@@ -12,8 +12,8 @@ def _ensure_xdg_vars() -> Path:
     XDG directories might not be writable. Garak use these
     directories for cache, config, and data storage.
     
-    Returns:
-        Path: The XDG_CACHE_HOME directory (suitable for temporary scan files)
+    This function is idempotent and safe to call multiple times.
+    It only sets variables that are not already set.
     """
     # Default to /tmp subdirectories (always writable)
     xdg_defaults = {
@@ -27,13 +27,6 @@ def _ensure_xdg_vars() -> Path:
             os.environ[var] = default_path
             # Create the directory if it doesn't exist
             Path(default_path).mkdir(parents=True, exist_ok=True)
-    
-    # Return the cache home for use as scan directory
-    return Path(os.environ["XDG_CACHE_HOME"])
-
-
-# Initialize XDG variables at module import time
-_XDG_CACHE_HOME = _ensure_xdg_vars()
 
 
 def get_scan_base_dir() -> Path:
@@ -45,14 +38,19 @@ def get_scan_base_dir() -> Path:
     
     Can be overridden with GARAK_SCAN_DIR environment variable.
     
+    XDG variables are lazily initialized on first call to avoid
+    side effects at module import time.
+    
     Returns:
         Path: Base directory for scan operations
     """
+    # Lazy initialization of XDG vars (only on first use)
+    _ensure_xdg_vars()
+    
     if scan_dir := os.environ.get("GARAK_SCAN_DIR"):
         return Path(scan_dir)
     
     # Use XDG_CACHE_HOME/llama_stack_garak_scans
-    # XDG_CACHE_HOME is already set by _ensure_xdg_vars()
     return Path(os.environ["XDG_CACHE_HOME"]) / "llama_stack_garak_scans"
 
 

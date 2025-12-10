@@ -284,3 +284,93 @@ class TestGarakScanConfig:
         config = GarakScanConfig()
         assert "llama_stack_garak_scans" in str(config.scan_dir)
         assert config.scan_dir.is_absolute()
+
+    def test_scan_dir_respects_garak_scan_dir_env(self, monkeypatch, tmp_path):
+        """Test that GARAK_SCAN_DIR environment variable overrides default scan_dir"""
+        custom_scan_dir = tmp_path / "custom_garak_scans"
+        custom_scan_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Set GARAK_SCAN_DIR environment variable
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(custom_scan_dir))
+        
+        # Reload utils to pick up new environment variable
+        from importlib import reload
+        from llama_stack_provider_trustyai_garak import utils
+        reload(utils)
+        
+        # Create config - should use GARAK_SCAN_DIR
+        config = GarakScanConfig()
+        
+        assert config.scan_dir == custom_scan_dir
+        assert str(config.scan_dir) == str(custom_scan_dir)
+
+    def test_scan_dir_uses_xdg_cache_home_when_no_override(self, monkeypatch, tmp_path):
+        """Test that scan_dir uses XDG_CACHE_HOME when GARAK_SCAN_DIR not set"""
+        # Clear GARAK_SCAN_DIR if it exists
+        monkeypatch.delenv("GARAK_SCAN_DIR", raising=False)
+        
+        # Set XDG_CACHE_HOME
+        custom_cache = tmp_path / "custom_cache"
+        custom_cache.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("XDG_CACHE_HOME", str(custom_cache))
+        
+        # Reload the utils module to pick up new XDG_CACHE_HOME
+        from importlib import reload
+        from llama_stack_provider_trustyai_garak import utils
+        reload(utils)
+        
+        config = GarakScanConfig()
+        
+        # Should be XDG_CACHE_HOME/llama_stack_garak_scans
+        assert str(custom_cache) in str(config.scan_dir)
+        assert "llama_stack_garak_scans" in str(config.scan_dir)
+
+    def test_cleanup_scan_dir_defaults_to_true(self):
+        """Test that cleanup_scan_dir_on_exit defaults to True for production"""
+        config = GarakScanConfig()
+        assert config.cleanup_scan_dir_on_exit is True
+
+    def test_scan_dir_respects_garak_scan_dir_env(self, monkeypatch, tmp_path):
+        """Test that GARAK_SCAN_DIR environment variable overrides default scan_dir"""
+        custom_scan_dir = tmp_path / "custom_garak_scans"
+        custom_scan_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Set GARAK_SCAN_DIR environment variable
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(custom_scan_dir))
+        
+        # Reload utils to pick up new environment variable
+        from importlib import reload
+        from llama_stack_provider_trustyai_garak import utils
+        reload(utils)
+        
+        # Create config - should use GARAK_SCAN_DIR
+        config = GarakScanConfig()
+        
+        assert config.scan_dir == custom_scan_dir
+        assert str(config.scan_dir) == str(custom_scan_dir)
+
+    def test_scan_dir_uses_xdg_cache_home_when_no_override(self, monkeypatch, tmp_path):
+        """Test that scan_dir uses XDG_CACHE_HOME when GARAK_SCAN_DIR not set"""
+        # Clear GARAK_SCAN_DIR if it exists
+        monkeypatch.delenv("GARAK_SCAN_DIR", raising=False)
+        
+        # Set XDG_CACHE_HOME
+        custom_cache = tmp_path / "custom_cache"
+        custom_cache.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("XDG_CACHE_HOME", str(custom_cache))
+        
+        # Reload the utils module to pick up new XDG_CACHE_HOME
+        from importlib import reload
+        from llama_stack_provider_trustyai_garak import utils
+        reload(utils)
+        
+        config = GarakScanConfig()
+        
+        # Should be XDG_CACHE_HOME/llama_stack_garak_scans
+        assert str(custom_cache) in str(config.scan_dir)
+        assert "llama_stack_garak_scans" in str(config.scan_dir)
+
+    def test_cleanup_scan_dir_defaults_to_true(self):
+        """Test that cleanup_scan_dir_on_exit defaults to True for production"""
+        config = GarakScanConfig()
+        assert config.cleanup_scan_dir_on_exit is True
