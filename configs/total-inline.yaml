@@ -1,11 +1,12 @@
 version: "1"
-image_name: trustyai-garak
+image_name: trustyai-garak-inline
 apis:
   - inference
   - eval
   - files
   - benchmarks
   - safety
+  - shields
 providers:
   inference:
     - provider_id: vllm
@@ -14,16 +15,27 @@ providers:
         url: ${env.VLLM_URL}
         max_tokens: ${env.VLLM_MAX_TOKENS:=4096}
         api_token: ${env.VLLM_API_TOKEN:=fake}
-        tls_verify: ${env.VLLM_TLS_VERIFY:=true}
   eval:
     - provider_id: trustyai_garak_inline
       provider_type: inline::trustyai_garak
       module: llama_stack_provider_trustyai_garak
       config:
         llama_stack_url: ${env.LLAMA_STACK_URL:=http://localhost:8321}
-        timeout: ${env.GARAK_TIMEOUT:=10800} # 3 hours max timeout for garak scan
-        max_concurrent_jobs: ${env.GARAK_MAX_CONCURRENT_JOBS:=5} # 5 max concurrent garak scans
-        tls_verify: ${env.GARAK_TLS_VERIFY:=true}
+        timeout: ${env.GARAK_TIMEOUT:=10800}
+        max_concurrent_jobs: ${env.GARAK_MAX_CONCURRENT_JOBS:=5}
+  files:
+    - provider_id: localfs
+      provider_type: inline::localfs
+      config:
+        storage_dir: ${env.FILES_STORAGE_DIR:=~/.llama/distributions/trustyai-garak/files}
+        metadata_store:
+          table_name: files_metadata
+          backend: sql_default
+  safety:
+    - provider_id: prompt-guard
+      provider_type: inline::prompt-guard
+      config:
+        excluded_categories: []
   files:
     - provider_id: meta-reference-files
       provider_type: inline::localfs
@@ -98,6 +110,3 @@ registered_resources:
   shields:
   - shield_id: Prompt-Guard-86M
     provider_id: prompt-guard
-server:
-  port: 8321
-# external_providers_dir: ./providers.d
