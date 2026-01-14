@@ -11,7 +11,7 @@ from llama_stack_provider_trustyai_garak.remote.garak_remote_eval import GarakRe
 from llama_stack_provider_trustyai_garak.remote.provider import get_provider_spec
 from llama_stack_provider_trustyai_garak.config import GarakRemoteConfig, KubeflowConfig, GarakScanConfig
 from llama_stack_provider_trustyai_garak.errors import GarakConfigError, GarakValidationError
-from llama_stack_provider_trustyai_garak.compat import Api, JobStatus, EvaluateResponse, Benchmark
+from llama_stack_provider_trustyai_garak.compat import Api, JobStatus, EvaluateResponse, Benchmark, RetrieveFileContentRequest
 
 class TestRemoteProvider:
     """Test cases for remote provider specification"""
@@ -616,7 +616,7 @@ class TestGarakRemoteEvalAdapter:
             # Verify we used cached ID and didn't call list_files
             adapter.file_api.openai_list_files.assert_not_called()
             # But we did retrieve content using the cached ID
-            adapter.file_api.openai_retrieve_file_content.assert_called_once_with("cached-mapping-id-456")
+            adapter.file_api.openai_retrieve_file_content.assert_called_once_with(RetrieveFileContentRequest(file_id="cached-mapping-id-456"))
 
     @pytest.mark.asyncio
     async def test_job_result_completed(self, adapter, mock_file_api, mock_benchmark):

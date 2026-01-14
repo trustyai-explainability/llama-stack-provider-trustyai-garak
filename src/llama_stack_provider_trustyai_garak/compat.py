@@ -20,12 +20,16 @@ try:
         json_schema_type,
         Benchmark,
         Benchmarks,
+        GetBenchmarkRequest,
         Eval,
         BenchmarkConfig,
         EvaluateResponse,
         Files,
         OpenAIFilePurpose,
         OpenAIFileObject,
+        ListFilesRequest,
+        RetrieveFileContentRequest,
+        UploadFileRequest,
         Safety,
         RunShieldResponse,
         ViolationLevel,
@@ -55,7 +59,7 @@ except ModuleNotFoundError:  # fallback to legacy llama_stack layout
 
     # evals
     from llama_stack.apis.benchmarks import (
-        Benchmark, Benchmarks
+        Benchmark, Benchmarks, GetBenchmarkRequest,
     )
     from llama_stack.apis.eval import (
         Eval, BenchmarkConfig, EvaluateResponse
@@ -65,7 +69,10 @@ except ModuleNotFoundError:  # fallback to legacy llama_stack layout
     from llama_stack.apis.files import (
         Files,
         OpenAIFilePurpose,
-        OpenAIFileObject
+        OpenAIFileObject,
+        ListFilesRequest,
+        RetrieveFileContentRequest,
+        UploadFileRequest,
     )
 
     # safety
@@ -104,6 +111,7 @@ __all__ = [
     # evals
     "Benchmark",
     "Benchmarks",
+    "GetBenchmarkRequest",
     "Eval",
     "BenchmarkConfig",
     "EvaluateResponse",
@@ -111,6 +119,9 @@ __all__ = [
     "Files",
     "OpenAIFilePurpose",
     "OpenAIFileObject",
+    "ListFilesRequest",
+    "RetrieveFileContentRequest",
+    "UploadFileRequest",
     # safety
     "Safety",
     "RunShieldResponse",

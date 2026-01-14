@@ -81,6 +81,7 @@ def validate_inputs(
 
     from llama_stack_client import LlamaStackClient
     from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
+    from llama_stack_provider_trustyai_garak.errors import GarakValidationError
     
     validation_errors = []
     
@@ -115,6 +116,9 @@ def validate_inputs(
     for flag in dangerous_flags:
         if flag in command:
             validation_errors.append(f"Dangerous flag detected: {flag}")
+    
+    if len(validation_errors) > 0:
+        raise GarakValidationError("\n".join(validation_errors))
     
     return (
         len(validation_errors) == 0,
