@@ -6,7 +6,9 @@ from ..compat import (
     Api, 
     Job, 
     JobStatus,
-    OpenAIFilePurpose
+    OpenAIFilePurpose,
+    ListFilesRequest,
+    RetrieveFileContentRequest,
 )
 from typing import List, Dict, Union
 import os
@@ -329,7 +331,7 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
                             
                             if 'mapping_file_id' not in self._job_metadata[job_id]:
                                 # List files and find the mapping file by name
-                                files_list = await self.file_api.openai_list_files(purpose=OpenAIFilePurpose.BATCH)
+                                files_list = await self.file_api.openai_list_files(ListFilesRequest(purpose=OpenAIFilePurpose.BATCH))
                                 
                                 for file_obj in files_list.data:
                                     if hasattr(file_obj, 'filename') and file_obj.filename == mapping_filename:
@@ -339,7 +341,7 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
                             
                             if mapping_file_id := self._job_metadata[job_id].get('mapping_file_id'):
                                 # Retrieve the mapping file via Files API
-                                mapping_content = await self.file_api.openai_retrieve_file_content(mapping_file_id)
+                                mapping_content = await self.file_api.openai_retrieve_file_content(RetrieveFileContentRequest(file_id=mapping_file_id))
                                 if mapping_content:
                                     file_id_mapping: dict = json.loads(mapping_content.body.decode("utf-8"))
                                     
