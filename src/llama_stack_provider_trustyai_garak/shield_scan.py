@@ -2,11 +2,14 @@
 
 from typing import List, Union
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from llama_stack.apis.safety import RunShieldResponse, ViolationLevel
-from llama_stack.apis.inference import OpenAIChatCompletion
+from .compat import (
+    RunShieldResponse, 
+    ViolationLevel, 
+    OpenAIChatCompletion
+)
 from llama_stack_client import LlamaStackClient
 import logging
+from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +50,8 @@ class SimpleShieldOrchestrator:
         
         if self.llama_stack_client is None:
             try:
-                self.llama_stack_client = LlamaStackClient(base_url=base_url)
+                self.llama_stack_client = LlamaStackClient(base_url=base_url,
+                        http_client=get_http_client_with_tls(os.getenv("GARAK_TLS_VERIFY", "True")))
             except Exception as e:
                 logger.error(f"Failed to create LlamaStackClient with base_url={base_url}: {e}")
                 raise ValueError(f"Failed to initialize LlamaStack client: {e}") from e
@@ -183,7 +187,10 @@ class SimpleShieldOrchestrator:
     def close(self):
         """Close client for current process"""
         if self.llama_stack_client:
-            self.llama_stack_client.close()
+            try:
+                self.llama_stack_client.close()
+            except Exception as e:
+                logger.warning(f"Error closing client: {e}")
             self.llama_stack_client = None
     
 

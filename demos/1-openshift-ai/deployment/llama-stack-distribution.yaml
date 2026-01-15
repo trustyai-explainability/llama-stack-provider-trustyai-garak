@@ -1,0 +1,70 @@
+apiVersion: llamastack.io/v1alpha1
+kind: LlamaStackDistribution
+metadata:
+  name: lsd-garak-example # <--- if changing this, update the `KUBEFLOW_LLAMA_STACK_URL` in `kubeflow-garak-config` ConfigMap
+spec:
+  replicas: 1
+  server:
+    containerSpec:
+      resources:
+        requests:
+          cpu: 4
+          memory: "12Gi"
+        limits:
+          cpu: 6
+          memory: "14Gi"
+      env:
+        - name: INFERENCE_MODEL
+          valueFrom:
+            secretKeyRef:
+              key: INFERENCE_MODEL
+              name: llama-stack-inference-model-secret
+              optional: true
+        - name: VLLM_URL
+          valueFrom:
+            secretKeyRef:
+              key: VLLM_URL
+              name: llama-stack-inference-model-secret
+              optional: true
+        - name: VLLM_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              key: VLLM_API_TOKEN
+              name: llama-stack-inference-model-secret
+              optional: true
+        - name: KUBEFLOW_PIPELINES_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              key: KUBEFLOW_PIPELINES_ENDPOINT
+              name: kubeflow-garak-config
+              optional: true
+        - name: KUBEFLOW_NAMESPACE
+          valueFrom:
+            configMapKeyRef:
+              key: KUBEFLOW_NAMESPACE
+              name: kubeflow-garak-config
+              optional: true
+        - name: KUBEFLOW_BASE_IMAGE
+          valueFrom:
+            configMapKeyRef:
+              key: KUBEFLOW_BASE_IMAGE
+              name: kubeflow-garak-config
+              optional: true
+        - name: KUBEFLOW_LLAMA_STACK_URL
+          valueFrom:
+            configMapKeyRef:
+              key: KUBEFLOW_LLAMA_STACK_URL
+              name: kubeflow-garak-config
+              optional: true
+        - name: EMBEDDING_MODEL
+          value: "placeholder"
+        - name: KUBEFLOW_PIPELINES_TOKEN
+          valueFrom:
+            secretKeyRef:
+              key: KUBEFLOW_PIPELINES_TOKEN
+              name: kubeflow-pipelines-token
+              optional: true
+      name: llama-stack
+      port: 8321 # <--- if changing this, update the `KUBEFLOW_LLAMA_STACK_URL` in the `kubeflow-garak-config` ConfigMap
+    distribution:
+      image: quay.io/rh-ee-spandraj/trustyai-lls-distro:lls-0.3.4-latest # <--- we will be using trusty-ai distro built from https://github.com/trustyai-explainability/llama-stack/blob/main/trustyai-distribution/Containerfile

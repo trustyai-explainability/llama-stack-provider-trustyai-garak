@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeflow-garak-config
+data:
+  KUBEFLOW_LLAMA_STACK_URL: "http://lsd-garak-example-service.model-namespace.svc.cluster.local:8321" # <--- if needed, update this with your service name, namespace and cluster local address
+  KUBEFLOW_PIPELINES_ENDPOINT: "<your-kfp-endpoint>" # <--- update this with your kubeflow pipelines endpoint
+  KUBEFLOW_NAMESPACE: "model-namespace" # <--- update this with your kubeflow namespace
+  KUBEFLOW_BASE_IMAGE: "quay.io/rh-ee-spandraj/trustyai-lls-garak-provider-dsp:latest"

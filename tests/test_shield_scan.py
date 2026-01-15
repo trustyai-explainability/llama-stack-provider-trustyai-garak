@@ -1,14 +1,14 @@
 """Tests for shield scanning functionality"""
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch, MagicMock, ANY
 
 from llama_stack_provider_trustyai_garak.shield_scan import (
     SimpleShieldOrchestrator,
     simple_shield_orchestrator,
     CANNED_RESPONSE_TEXT
 )
-from llama_stack.apis.safety import RunShieldResponse, ViolationLevel, SafetyViolation
+from llama_stack_provider_trustyai_garak.compat import RunShieldResponse
 
 
 class TestSimpleShieldOrchestrator:
@@ -33,7 +33,7 @@ class TestSimpleShieldOrchestrator:
             
             client = orchestrator._get_llama_stack_client("http://test.com")
             
-            mock_client_class.assert_called_once_with(base_url="http://test.com")
+            mock_client_class.assert_called_once_with(base_url="http://test.com", http_client=ANY)
             assert client == mock_client
             assert orchestrator.llama_stack_client == mock_client
 

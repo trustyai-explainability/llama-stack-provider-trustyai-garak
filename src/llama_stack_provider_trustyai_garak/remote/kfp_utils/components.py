@@ -2,8 +2,12 @@ from kfp import dsl
 from typing import NamedTuple, List, Dict
 import os
 from .utils import _load_kube_config
-from ...constants import (GARAK_PROVIDER_IMAGE_CONFIGMAP_NAME, GARAK_PROVIDER_IMAGE_CONFIGMAP_KEY, 
-KUBEFLOW_CANDIDATE_NAMESPACES, DEFAULT_GARAK_PROVIDER_IMAGE)
+from ...constants import (
+    GARAK_PROVIDER_IMAGE_CONFIGMAP_NAME,
+    GARAK_PROVIDER_IMAGE_CONFIGMAP_KEY,
+    KUBEFLOW_CANDIDATE_NAMESPACES,
+    DEFAULT_GARAK_PROVIDER_IMAGE
+    )
 from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 import logging
@@ -61,11 +65,14 @@ def get_base_image() -> str:
 
 # Component 1: Validation Step
 @dsl.component(
-    base_image=get_base_image()
+    base_image=get_base_image(),
+    install_kfp_package=False,  # All dependencies pre-installed in base image
+    packages_to_install=[]  # No additional packages needed
 )
 def validate_inputs(
     command: List[str],
-    llama_stack_url: str
+    llama_stack_url: str,
+    verify_ssl: str
 ) -> NamedTuple('outputs', [
     ('is_valid', bool),
     ('validation_errors', List[str])
@@ -73,17 +80,33 @@ def validate_inputs(
     """Validate inputs before running expensive scan"""
 
     from llama_stack_client import LlamaStackClient
+    from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
+    from llama_stack_provider_trustyai_garak.errors import GarakValidationError
     
     validation_errors = []
     
     # Validate Llama Stack connectivity
     try:
-        client = LlamaStackClient(base_url=llama_stack_url)
+        client = LlamaStackClient(base_url=llama_stack_url,
+                                  http_client=get_http_client_with_tls(verify_ssl))
         # Test connection
         client.files.list(limit=1)
     except Exception as e:
         validation_errors.append(f"Cannot connect to Llama Stack: {str(e)}")
+    finally:
+        if client:
+            try:
+                client.close()
+            except Exception as e:
+                logger.warning(f"Error closing client: {e}")
     
+    # Check garak is installed
+    try:
+        import garak
+    except ImportError as e:
+        validation_errors.append(f"Garak is not installed. Please install it using 'pip install garak': {e}")
+        raise e
+
     # Validate command structure
     if not command or command[0] != 'garak':
         validation_errors.append("Invalid command: must start with 'garak'")
@@ -94,6 +117,9 @@ def validate_inputs(
         if flag in command:
             validation_errors.append(f"Dangerous flag detected: {flag}")
     
+    if len(validation_errors) > 0:
+        raise GarakValidationError("\n".join(validation_errors))
+    
     return (
         len(validation_errors) == 0,
         validation_errors
@@ -101,13 +127,17 @@ def validate_inputs(
 
 # Component 2: Garak Scan
 @dsl.component(
-    base_image=get_base_image()
+    base_image=get_base_image(),
+    install_kfp_package=False,  # All dependencies pre-installed in base image
+    packages_to_install=[]  # No additional packages needed
 )
 def garak_scan(
     command: List[str],
     llama_stack_url: str,
+    job_id: str,
     max_retries: int,
     timeout_seconds: int,
+    verify_ssl: str
 ) -> NamedTuple('outputs', [
     ('exit_code', int),
     ('success', bool),
@@ -119,19 +149,20 @@ def garak_scan(
     import os
     import signal
     import json
-    from pathlib import Path
     from llama_stack_client import LlamaStackClient
     import logging
+    from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls, get_scan_base_dir
 
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
 
-    # Setup directories
-    scan_dir = Path(os.getcwd()) / 'scan_files'
+    # Setup directories using shared XDG-based scan directory (automatically uses /tmp/.cache)
+    scan_dir = get_scan_base_dir()
     scan_dir.mkdir(exist_ok=True, parents=True)
+    logger.info(f"Scan directory: {scan_dir}")
     
-    scan_log_file = scan_dir / "scan.log"
-    scan_report_prefix = scan_dir / "scan"
+    scan_log_file = scan_dir / f"{job_id}_scan.log"
+    scan_report_prefix = scan_dir / f"{job_id}_scan"
     
     command = command + ['--report_prefix', str(scan_report_prefix)]
     env = os.environ.copy()
@@ -196,7 +227,8 @@ def garak_scan(
                 logger.error(f"Unexpected error converting report to AVID format: {e}", exc_info=True)
 
             # Upload files to llama stack
-            client = LlamaStackClient(base_url=llama_stack_url)
+            client = LlamaStackClient(base_url=llama_stack_url,
+                                      http_client=get_http_client_with_tls(verify_ssl))
             
             for file_path in scan_dir.glob('*'):
                 if file_path.is_file():
@@ -217,12 +249,20 @@ def garak_scan(
                 time.sleep(wait_time)
             else:
                 raise e
-    
+        finally:
+            if client:
+                try:
+                    client.close()
+                except Exception as e:
+                    logger.warning(f"Error closing client: {e}")
+
     return (-1, False, file_id_mapping)
 
 # Component 3: Results Parser
 @dsl.component(
-    base_image=get_base_image()
+    base_image=get_base_image(),
+    install_kfp_package=False,  # All dependencies pre-installed in base image
+    packages_to_install=[]  # No additional packages needed
 )
 def parse_results(
     file_id_mapping: Dict[str, str],
@@ -230,21 +270,22 @@ def parse_results(
     eval_threshold: float,
     job_id: str,
     verify_ssl: str,
-    s3_bucket: str,
-    s3_prefix: str,
+    summary_metrics: dsl.Output[dsl.Metrics],
     html_report: dsl.Output[dsl.HTML]
 ):
-    """Parse Garak scan results using shared result_utils."""
-    import boto3
+    """Parse Garak scan results using shared result_utils.
+    
+    Uploads file_id_mapping with predictable filename pattern: {job_id}_mapping.json
+    Server retrieves it by searching Files API for this filename.
+    """
     import os
     import json
-    from pathlib import Path
     from llama_stack_client import LlamaStackClient
-    from llama_stack.apis.scoring import ScoringResult
-    from llama_stack.apis.eval import EvaluateResponse
+    from llama_stack_provider_trustyai_garak.compat import ScoringResult, EvaluateResponse
     from llama_stack_provider_trustyai_garak.errors import GarakValidationError
     from llama_stack_provider_trustyai_garak import result_utils
     import logging
+    from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls, get_scan_base_dir
 
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
@@ -258,11 +299,12 @@ def parse_results(
         # It's a path to a certificate file
         parsed_verify_ssl = verify_ssl
 
-    client = LlamaStackClient(base_url=llama_stack_url)
+    client = LlamaStackClient(base_url=llama_stack_url,
+                              http_client=get_http_client_with_tls(parsed_verify_ssl))
     
     # Get report files
-    report_file_id = file_id_mapping.get("scan.report.jsonl", "")
-    avid_file_id = file_id_mapping.get("scan.avid.jsonl", "")
+    report_file_id = file_id_mapping.get(f"{job_id}_scan.report.jsonl", "")
+    avid_file_id = file_id_mapping.get(f"{job_id}_scan.avid.jsonl", "")
     
     if not report_file_id:
         raise GarakValidationError("No report file found")
@@ -311,9 +353,11 @@ def parse_results(
         scores=scores_with_scoring_result
     ).model_dump()
     
-    # Save file and upload results to llama stack
+    # Save file using shared XDG-based directory
     logger.info("Saving scan result...")
-    scan_result_file = Path(os.getcwd()) / "scan_result.json"
+    scan_dir = get_scan_base_dir()
+    scan_dir.mkdir(exist_ok=True, parents=True)
+    scan_result_file = scan_dir / f"{job_id}_scan_result.json"
     with open(scan_result_file, 'w') as f:
         json.dump(scan_result, f)
     
@@ -326,43 +370,37 @@ def parse_results(
     
     logger.info(f"Updated file_id_mapping: {file_id_mapping}")
 
-    # Configure S3 client with endpoint URL for MinIO
-    s3_endpoint = os.environ.get('AWS_S3_ENDPOINT', '')
+    # Upload file_id_mapping to Files API with predictable filename
+    # Server will retrieve by searching for this filename pattern
+    mapping_filename = f"{job_id}_mapping.json"
+    mapping_file_path = scan_dir / mapping_filename
+    with open(mapping_file_path, 'w') as f:
+        json.dump(file_id_mapping, f)
     
-    if s3_endpoint:
-        try:
-            s3_client = boto3.client(
-                's3',
-                endpoint_url=s3_endpoint,
-                aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
-                aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
-                region_name=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'),
-                use_ssl=s3_endpoint.startswith('https'),
-                verify=parsed_verify_ssl,
-            )
-        except Exception as e:
-            logger.error(f"Error creating S3 client: {e}")
-            s3_client = boto3.client('s3')
-    else:
-        s3_client = boto3.client('s3')
-    
-    # Construct S3 key with prefix
-    s3_prefix = s3_prefix.rstrip("/")
-    s3_key = f"{s3_prefix}/{job_id}.json" if s3_prefix else f"{job_id}.json"
-    
-    # Upload file mapping to S3
-    try:
-        s3_client.put_object(
-            Bucket=s3_bucket,
-            Key=s3_key,
-            Body=json.dumps(file_id_mapping)
+    logger.info(f"Uploading file_id_mapping to Files API as '{mapping_filename}'...")
+    with open(mapping_file_path, 'rb') as f:
+        mapping_file = client.files.create(
+            file=f,
+            purpose='batch'
         )
-        logger.info(f"Successfully uploaded file mapping to s3://{s3_bucket}/{s3_key}")
-    except Exception as e:
-        logger.error(f"Failed to upload file mapping to S3: {e}")
-        raise GarakValidationError(f"Failed to upload results to S3: {e}") from e
+        logger.info(f"File mapping uploaded: {mapping_file.filename} (ID: {mapping_file.id})")
+    
+    # combine scores of all probes into a single metric to log
+    aggregated_scores = {k: v.aggregated_results for k, v in scores_with_scoring_result.items()}
+    combined_metrics = {
+        "total_attempts": 0,
+        "vulnerable_responses": 0,
+        "attack_success_rate": 0,
+    }
+    for aggregated_results in aggregated_scores.values():
+        combined_metrics["total_attempts"] += aggregated_results["total_attempts"]
+        combined_metrics["vulnerable_responses"] += aggregated_results["vulnerable_responses"]
+    
+    combined_metrics["attack_success_rate"] = round((combined_metrics["vulnerable_responses"] / combined_metrics["total_attempts"] * 100), 2) if combined_metrics["total_attempts"] > 0 else 0
+    for key, value in combined_metrics.items():
+        summary_metrics.log_metric(key, value)
 
-    html_report_id = file_id_mapping.get("scan.report.html")
+    html_report_id = file_id_mapping.get(f"{job_id}_scan.report.html")
     if html_report_id:
         html_content = client.files.content(html_report_id)
         if html_content:
@@ -372,3 +410,9 @@ def parse_results(
             logger.warning("No HTML content found")
     else:
         logger.warning("No HTML report ID found")
+    
+    if client:
+        try:
+            client.close()
+        except Exception as e:
+            logger.warning(f"Error closing client: {e}")

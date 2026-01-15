@@ -21,16 +21,16 @@ def get_garak_version() -> str:
         
         dist = distribution("llama-stack-provider-trustyai-garak")
         
-        # parse requirements to find garak
+        # parse requirements (including extras) to find garak
         if dist.requires:
             for req in dist.requires:
                 #match "garak==X.Y.Z" or "garak>=X.Y.Z" etc.
+                # This will now be in the 'inline' extra
                 if req.startswith("garak"):
                     garak_req = req.split(";")[0].strip()
                     return garak_req
     except Exception as e:
-        logger.error(f"Error getting garak version from importlib.metadata: {e}")
-        logger.warning("Error getting garak version from importlib.metadata, trying pyproject.toml")
+        logger.debug(f"Error getting garak version from importlib.metadata: {e}")
         # fallback: try to read from pyproject.toml
         try:
             from pathlib import Path
@@ -43,12 +43,19 @@ def get_garak_version() -> str:
             if toml_path.exists():
                 with open(toml_path, "rb") as f:
                     pyproject = tomllib.load(f)
-                    deps = pyproject.get("project", {}).get("dependencies", [])
+                    # Check optional-dependencies.inline first
+                    optional_deps: dict = pyproject.get("project", {}).get("optional-dependencies", {})
+                    inline_deps: list[str] = optional_deps.get("inline", [])
+                    for dep in inline_deps:
+                        if dep.startswith("garak"):
+                            return dep.split(";")[0].strip()
+                    # Fallback to main dependencies (for backwards compatibility)
+                    deps: list[str] = pyproject.get("project", {}).get("dependencies", [])
                     for dep in deps:
                         if dep.startswith("garak"):
                             return dep.split(";")[0].strip()
         except Exception as e:
-            logger.error(f"Error getting garak version: {e}")
+            logger.debug(f"Error getting garak version from pyproject.toml: {e}")
     
     # final fallback
     return "garak"

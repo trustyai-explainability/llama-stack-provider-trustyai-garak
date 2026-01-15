@@ -1,10 +1,14 @@
-from llama_stack.apis.eval import EvaluateResponse, BenchmarkConfig
-from llama_stack.providers.datatypes import ProviderSpec
-from llama_stack.apis.datatypes import Api
-from llama_stack.apis.files import OpenAIFilePurpose, OpenAIFileObject
-from fastapi import UploadFile, Response
-from llama_stack.apis.common.job_types import Job, JobStatus
-from llama_stack.apis.scoring import ScoringResult
+from ..compat import (
+    EvaluateResponse, 
+    BenchmarkConfig, 
+    ProviderSpec, 
+    Api, 
+    OpenAIFilePurpose, 
+    OpenAIFileObject, Job, JobStatus, ScoringResult,
+    UploadFileRequest,
+    RetrieveFileContentRequest,
+)
+from fastapi import UploadFile
 from typing import List, Dict, Optional, Any, Union
 import os
 import logging
@@ -17,8 +21,11 @@ import asyncio
 import signal
 import shutil
 from llama_stack_provider_trustyai_garak import shield_scan
-from ..errors import GarakValidationError
-from ..result_utils import parse_generations_from_report_content, parse_aggregated_from_avid_content, combine_parsed_results
+from ..result_utils import (
+    parse_generations_from_report_content, 
+    parse_aggregated_from_avid_content, 
+    combine_parsed_results
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +45,29 @@ class GarakInlineEvalAdapter(GarakEvalBase):
 
         self._initialize()
 
-        self.scan_config.scan_dir.mkdir(exist_ok=True, parents=True)
+        try:
+            self.scan_config.scan_dir.mkdir(exist_ok=True, parents=True)
+            # Test write permissions
+            test_file = self.scan_config.scan_dir / ".write_test"
+            test_file.touch()
+            test_file.unlink()
+            logger.info(f"Scan directory initialized: {self.scan_config.scan_dir}")
+        except PermissionError as e:
+            from ..errors import GarakConfigError
+            logger.error(
+                f"Permission denied creating scan directory: {self.scan_config.scan_dir}. "
+                f"XDG_CACHE_HOME={os.environ.get('XDG_CACHE_HOME', 'not set')}"
+            )
+            raise GarakConfigError(
+                f"Permission denied: {self.scan_config.scan_dir}. "
+                f"Set GARAK_SCAN_DIR or XDG_CACHE_HOME to a writable directory."
+            ) from e
+        except OSError as e:
+            from ..errors import GarakConfigError
+            raise GarakConfigError(
+                f"Failed to create scan directory: {self.scan_config.scan_dir}. Error: {e}"
+            ) from e
+
         self._job_semaphore = asyncio.Semaphore(self._config.max_concurrent_jobs)
 
         self._initialized = True
@@ -247,7 +276,7 @@ class GarakInlineEvalAdapter(GarakEvalBase):
                 upload_file: OpenAIFileObject = await self.file_api.openai_upload_file(
                     # file: The File object (not file name) to be uploaded.
                     file=UploadFile(file=f, filename=file.name), 
-                    purpose=purpose
+                    request=UploadFileRequest(purpose=purpose)
                 )
                 return upload_file
         else:
@@ -262,7 +291,7 @@ class GarakInlineEvalAdapter(GarakEvalBase):
         Returns:
             Tuple of (generations, score_rows_by_probe)
         """
-        report_content = await self.file_api.openai_retrieve_file_content(report_file_id)
+        report_content = await self.file_api.openai_retrieve_file_content(RetrieveFileContentRequest(file_id=report_file_id))
         if not report_content:
             return [], {}
         
@@ -279,7 +308,7 @@ class GarakInlineEvalAdapter(GarakEvalBase):
         if not avid_file_id:
             return {}
         
-        avid_content = await self.file_api.openai_retrieve_file_content(avid_file_id)
+        avid_content = await self.file_api.openai_retrieve_file_content(request=RetrieveFileContentRequest(file_id=avid_file_id))
         if not avid_content:
             return {}
         

@@ -430,9 +430,9 @@ meson-python==0.18.0 \
     # via
     #   numpy
     #   pandas
-meson==1.9.1 \
-    --hash=sha256:4e076606f2afff7881d195574bddcd8d89286f35a17b4977a216f535dc0c74ac \
-    --hash=sha256:f824ab770c041a202f532f69e114c971918ed2daff7ea56583d80642564598d0
+meson==1.10.0 \
+    --hash=sha256:4b27aafce281e652dcb437b28007457411245d975c48b5db3a797d3e93ae1585 \
+    --hash=sha256:8071860c1f46a75ea34801490fd1c445c9d75147a65508cd3a10366a7006cc1c
     # via
     #   meson-python
     #   pandas
@@ -723,10 +723,7 @@ setuptools==80.9.0 \
     #   googleapis-common-protos
     #   greenlet
     #   grpc-google-iam-v1
-    #   h2
-    #   hpack
     #   httplib2
-    #   hyperframe
     #   importlib-metadata
     #   joblib
     #   llama-stack

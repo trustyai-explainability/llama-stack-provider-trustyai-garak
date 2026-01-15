@@ -1,8 +1,7 @@
 import logging
 from typing import Dict, Optional
 
-from llama_stack.apis.datatypes import Api
-from llama_stack.providers.datatypes import ProviderSpec
+from ..compat import Api, ProviderSpec
 
 from ..config import GarakInlineConfig
 from .garak_eval import GarakInlineEvalAdapter
