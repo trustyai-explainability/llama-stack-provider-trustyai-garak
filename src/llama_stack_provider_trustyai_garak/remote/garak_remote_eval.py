@@ -234,7 +234,7 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
             if not self._config.llama_stack_url:
                 raise GarakConfigError("llama_stack_url is not configured")
             
-            experiment_name = f"trustyai-garak-{self._config.kubeflow_config.namespace}"
+            experiment_name = os.environ.get("KUBEFLOW_GARAK_EXPERIMENT_NAME", f"trustyai-garak-{self._config.kubeflow_config.namespace}")
             
             llama_stack_url = self._config.llama_stack_url.strip().rstrip("/")
             if not llama_stack_url:
