@@ -1,0 +1,391 @@
+name: E2E Integration Test (OpenShift)
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_name:
+        description: 'Model name to test (e.g., vllm/Granite-3.3-8B-Instruct)'
+        required: false
+        default: 'vllm/Granite-3.3-8B-Instruct'
+      max_wait_time:
+        description: 'Max wait time for job completion (seconds)'
+        required: false
+        default: '600'
+      cleanup:
+        description: 'Clean up OpenShift resources after test'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+  release:
+    types: [published]
+
+env:
+  QUAY_REGISTRY: quay.io
+  QUAY_IMAGE_NAME: ${{ secrets.QUAY_ORGANIZATION }}/trustyai-garak-provider
+  # OpenShift resource names (prefixed with ci- to avoid conflicts)
+  TEST_NAMESPACE: ${{ secrets.OPENSHIFT_NAMESPACE }}
+  LSD_NAME: ci-e2e-garak-test
+  CONFIG_MAP_NAME: ci-e2e-kubeflow-garak-config
+  MODEL_SECRET_NAME: ci-e2e-llama-stack-model-secret
+  TOKEN_SECRET_NAME: ci-e2e-kubeflow-pipelines-token
+
+jobs:
+  build-and-push:
+    name: Build & Push to Quay.io
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Generate version tag
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            VERSION="${{ github.event.release.tag_name }}"
+          else
+            VERSION="e2e-$(echo ${{ github.sha }} | cut -c1-7)"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Image version: $VERSION"
+
+      - name: Log in to Quay.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.QUAY_REGISTRY }}
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Generate image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.QUAY_REGISTRY }}/${{ env.QUAY_IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+
+      - name: Build and push container
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Containerfile.cpu
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Output image info
+        run: |
+          echo "### 🐳 Container Image Built" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Registry:** Quay.io" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ env.QUAY_REGISTRY }}/${{ env.QUAY_IMAGE_NAME }}:${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+
+  deploy-and-test:
+    name: Deploy to OpenShift & Test
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install llama-stack-client requests
+
+      - name: Install OpenShift CLI
+        run: |
+          curl -sLO https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz
+          tar -xzf openshift-client-linux.tar.gz
+          sudo mv oc kubectl /usr/local/bin/
+          oc version --client
+
+      - name: Login to OpenShift
+        env:
+          OPENSHIFT_SERVER: ${{ secrets.OPENSHIFT_SERVER }}
+          OPENSHIFT_USERNAME: ${{ secrets.OPENSHIFT_USERNAME }}
+          OPENSHIFT_PASSWORD: ${{ secrets.OPENSHIFT_PASSWORD }}
+        run: |
+          echo "Logging in to OpenShift..."
+          oc login -u "$OPENSHIFT_USERNAME" "$OPENSHIFT_SERVER" -p "$OPENSHIFT_PASSWORD" --insecure-skip-tls-verify=true
+          echo "✅ Logged in to OpenShift"
+          oc project ${{ env.TEST_NAMESPACE }}
+          echo "✅ Using namespace: ${{ env.TEST_NAMESPACE }}"
+
+      - name: Extract pipelines token
+        id: token
+        run: |
+          OC_TOKEN=$(oc whoami -t)
+          echo "token=$OC_TOKEN" >> $GITHUB_OUTPUT
+          echo "✅ Token extracted"
+
+      - name: Get Kubeflow Pipelines endpoint
+        id: kfp
+        run: |
+          # Find the data science pipelines route
+          KFP_ROUTE=$(oc get routes -A -o jsonpath='{.items[?(@.metadata.name=="ds-pipeline-dspa")].spec.host}' 2>/dev/null || echo "")
+          if [ -z "$KFP_ROUTE" ]; then
+            # Fallback: use secret if route not found
+            KFP_ROUTE="${{ secrets.KUBEFLOW_PIPELINES_ENDPOINT }}"
+          else
+            KFP_ROUTE="https://$KFP_ROUTE"
+          fi
+          echo "endpoint=$KFP_ROUTE" >> $GITHUB_OUTPUT
+          echo "✅ KFP endpoint: $KFP_ROUTE"
+
+      - name: Create OpenShift resources
+        env:
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_version }}
+          KFP_ENDPOINT: ${{ steps.kfp.outputs.endpoint }}
+          OC_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          echo "Creating OpenShift resources..."
+          
+          # Create model secret
+          oc create secret generic ${{ env.MODEL_SECRET_NAME }} \
+            --from-literal=INFERENCE_MODEL="${{ secrets.INFERENCE_MODEL }}" \
+            --from-literal=VLLM_URL="${{ secrets.VLLM_URL }}" \
+            --from-literal=VLLM_API_TOKEN="${{ secrets.VLLM_API_TOKEN }}" \
+            --from-literal=EMBEDDING_MODEL="placeholder" \
+            --dry-run=client -o yaml | oc apply -f -
+          echo "✅ Model secret created"
+          
+          # Create pipelines token secret
+          oc create secret generic ${{ env.TOKEN_SECRET_NAME }} \
+            --from-literal=KUBEFLOW_PIPELINES_TOKEN="$OC_TOKEN" \
+            --dry-run=client -o yaml | oc apply -f -
+          echo "✅ Pipelines token secret created"
+          
+          # Create ConfigMap
+          LLAMA_STACK_URL="http://${{ env.LSD_NAME }}-service.${{ env.TEST_NAMESPACE }}.svc.cluster.local:8321"
+          cat <<EOF | oc apply -f -
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: ${{ env.CONFIG_MAP_NAME }}
+          data:
+            KUBEFLOW_LLAMA_STACK_URL: "$LLAMA_STACK_URL"
+            KUBEFLOW_PIPELINES_ENDPOINT: "$KFP_ENDPOINT"
+            KUBEFLOW_NAMESPACE: "${{ env.TEST_NAMESPACE }}"
+            KUBEFLOW_BASE_IMAGE: "${{ env.QUAY_REGISTRY }}/${{ env.QUAY_IMAGE_NAME }}:$IMAGE_TAG"
+          EOF
+          echo "✅ ConfigMap created"
+          
+          # Create LlamaStackDistribution
+          cat <<EOF | oc apply -f -
+          apiVersion: llamastack.io/v1alpha1
+          kind: LlamaStackDistribution
+          metadata:
+            name: ${{ env.LSD_NAME }}
+            labels:
+              app: ci-e2e-test
+          spec:
+            replicas: 1
+            server:
+              containerSpec:
+                resources:
+                  requests:
+                    cpu: 2
+                    memory: "8Gi"
+                  limits:
+                    cpu: 4
+                    memory: "12Gi"
+                env:
+                  - name: INFERENCE_MODEL
+                    valueFrom:
+                      secretKeyRef:
+                        key: INFERENCE_MODEL
+                        name: ${{ env.MODEL_SECRET_NAME }}
+                  - name: VLLM_URL
+                    valueFrom:
+                      secretKeyRef:
+                        key: VLLM_URL
+                        name: ${{ env.MODEL_SECRET_NAME }}
+                  - name: VLLM_API_TOKEN
+                    valueFrom:
+                      secretKeyRef:
+                        key: VLLM_API_TOKEN
+                        name: ${{ env.MODEL_SECRET_NAME }}
+                  - name: KUBEFLOW_PIPELINES_ENDPOINT
+                    valueFrom:
+                      configMapKeyRef:
+                        key: KUBEFLOW_PIPELINES_ENDPOINT
+                        name: ${{ env.CONFIG_MAP_NAME }}
+                  - name: KUBEFLOW_NAMESPACE
+                    valueFrom:
+                      configMapKeyRef:
+                        key: KUBEFLOW_NAMESPACE
+                        name: ${{ env.CONFIG_MAP_NAME }}
+                  - name: KUBEFLOW_BASE_IMAGE
+                    valueFrom:
+                      configMapKeyRef:
+                        key: KUBEFLOW_BASE_IMAGE
+                        name: ${{ env.CONFIG_MAP_NAME }}
+                  - name: KUBEFLOW_LLAMA_STACK_URL
+                    valueFrom:
+                      configMapKeyRef:
+                        key: KUBEFLOW_LLAMA_STACK_URL
+                        name: ${{ env.CONFIG_MAP_NAME }}
+                  - name: EMBEDDING_MODEL
+                    value: "placeholder"
+                  - name: KUBEFLOW_PIPELINES_TOKEN
+                    valueFrom:
+                      secretKeyRef:
+                        key: KUBEFLOW_PIPELINES_TOKEN
+                        name: ${{ env.TOKEN_SECRET_NAME }}
+                  - name: VLLM_TLS_VERIFY
+                    value: "false"
+                  - name: GARAK_TLS_VERIFY
+                    value: "false"
+                name: llama-stack
+                port: 8321
+              distribution:
+                image: ${{ secrets.LLAMA_STACK_DISTRO_IMAGE }}
+          EOF
+          echo "✅ LlamaStackDistribution created"
+
+      - name: Wait for deployment to be ready
+        run: |
+          echo "Waiting for LlamaStackDistribution to be ready..."
+          for i in {1..60}; do
+            READY=$(oc get llamastackdistribution ${{ env.LSD_NAME }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
+            PODS_READY=$(oc get pods -l app.kubernetes.io/name=${{ env.LSD_NAME }} -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "False")
+            
+            echo "  Attempt $i/60 - LSD Ready: $READY, Pod Ready: $PODS_READY"
+            
+            if [ "$PODS_READY" = "True" ]; then
+              echo "✅ Deployment is ready!"
+              break
+            fi
+            
+            if [ $i -eq 60 ]; then
+              echo "❌ Deployment failed to become ready"
+              oc describe llamastackdistribution ${{ env.LSD_NAME }}
+              oc get pods -l app.kubernetes.io/name=${{ env.LSD_NAME }}
+              oc logs -l app.kubernetes.io/name=${{ env.LSD_NAME }} --tail=100 || true
+              exit 1
+            fi
+            
+            sleep 10
+          done
+
+      - name: Create route for external access
+        id: route
+        run: |
+          # Create a route for the service
+          oc expose service ${{ env.LSD_NAME }}-service --name=${{ env.LSD_NAME }}-route 2>/dev/null || true
+          
+          # Get the route URL
+          ROUTE_HOST=$(oc get route ${{ env.LSD_NAME }}-route -o jsonpath='{.spec.host}')
+          LLAMA_STACK_URL="http://$ROUTE_HOST"
+          
+          echo "url=$LLAMA_STACK_URL" >> $GITHUB_OUTPUT
+          echo "✅ Route created: $LLAMA_STACK_URL"
+
+      - name: Wait for service to be accessible
+        env:
+          LLAMA_STACK_URL: ${{ steps.route.outputs.url }}
+        run: |
+          echo "Waiting for service to be accessible at $LLAMA_STACK_URL..."
+          for i in {1..30}; do
+            if curl -s "$LLAMA_STACK_URL/v1/health" > /dev/null 2>&1; then
+              echo "✅ Service is accessible!"
+              exit 0
+            fi
+            echo "  Attempt $i/30..."
+            sleep 5
+          done
+          echo "❌ Service not accessible"
+          exit 1
+
+      - name: Run E2E integration test
+        env:
+          LLAMA_STACK_URL: ${{ steps.route.outputs.url }}
+          TEST_MODEL_NAME: ${{ github.event.inputs.model_name || 'vllm/Granite-3.3-8B-Instruct' }}
+          TEST_PROVIDER_ID: "trustyai_garak"
+          TEST_MAX_WAIT_TIME: ${{ github.event.inputs.max_wait_time || '600' }}
+          TEST_POLL_INTERVAL: "20"
+        run: |
+          python tests/integration/test_e2e.py
+
+      - name: Test Summary
+        if: success()
+        env:
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_version }}
+        run: |
+          echo "### ✅ E2E Test Passed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Image** | \`${{ env.QUAY_REGISTRY }}/${{ env.QUAY_IMAGE_NAME }}:$IMAGE_TAG\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Model** | \`${{ github.event.inputs.model_name || 'vllm/Granite-3.3-8B-Instruct' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Namespace** | \`${{ env.TEST_NAMESPACE }}\` |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Cleanup OpenShift resources
+        if: always() && (github.event.inputs.cleanup != 'false')
+        run: |
+          echo "Cleaning up OpenShift resources..."
+          
+          # Delete in reverse order of creation
+          oc delete route ${{ env.LSD_NAME }}-route --ignore-not-found=true
+          echo "  - Route deleted"
+          
+          oc delete llamastackdistribution ${{ env.LSD_NAME }} --ignore-not-found=true
+          echo "  - LlamaStackDistribution deleted"
+          
+          # Wait for pods to terminate
+          echo "  - Waiting for pods to terminate..."
+          for i in {1..30}; do
+            PODS=$(oc get pods -l app.kubernetes.io/name=${{ env.LSD_NAME }} --no-headers 2>/dev/null | wc -l)
+            if [ "$PODS" -eq 0 ]; then
+              break
+            fi
+            sleep 2
+          done
+          
+          oc delete configmap ${{ env.CONFIG_MAP_NAME }} --ignore-not-found=true
+          echo "  - ConfigMap deleted"
+          
+          oc delete secret ${{ env.MODEL_SECRET_NAME }} --ignore-not-found=true
+          echo "  - Model secret deleted"
+          
+          oc delete secret ${{ env.TOKEN_SECRET_NAME }} --ignore-not-found=true
+          echo "  - Token secret deleted"
+          
+          echo "✅ Cleanup complete"
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "### ❌ E2E Test Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Collecting diagnostic information..." >> $GITHUB_STEP_SUMMARY
+          
+          echo "=== Pod Status ===" 
+          oc get pods -l app.kubernetes.io/name=${{ env.LSD_NAME }} -o wide || true
+          
+          echo "=== Pod Logs ==="
+          oc logs -l app.kubernetes.io/name=${{ env.LSD_NAME }} --tail=200 || true
+          
+          echo "=== LlamaStackDistribution Status ==="
+          oc describe llamastackdistribution ${{ env.LSD_NAME }} || true

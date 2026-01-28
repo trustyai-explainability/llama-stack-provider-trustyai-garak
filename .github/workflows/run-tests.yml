@@ -16,11 +16,11 @@ jobs:
           - python-version: "3.12"
             llama-stack-source: "stable"
             test-name: "llama-stack stable (pyproject.toml)"
-            install-cmd: "python -m pip install -e \".[dev,remote]\""
+            install-cmd: "python -m pip install -e \".[dev,server]\""
           - python-version: "3.12"
             llama-stack-source: "main"
             test-name: "llama-stack main branch (upstream)"
-            install-cmd: "python -m pip install git+https://github.com/llamastack/llama-stack.git@main && python -m pip install -e \".[dev,remote]\""
+            install-cmd: "python -m pip install git+https://github.com/llamastack/llama-stack.git@main && python -m pip install -e \".[dev,server]\""
       fail-fast: false
 
     steps:
