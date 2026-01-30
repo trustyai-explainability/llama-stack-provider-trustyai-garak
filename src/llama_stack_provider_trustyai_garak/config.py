@@ -1,6 +1,6 @@
 from .compat import json_schema_type
 from typing import Dict, Any, Union, Optional
-from pydantic import BaseModel, Field, field_validator, SecretStr
+from pydantic import BaseModel, Field, field_validator, SecretStr, AliasChoices
 from pathlib import Path
 from .utils import get_scan_base_dir
 
@@ -117,11 +117,13 @@ class KubeflowConfig(BaseModel):
         description="Kubeflow namespace for pipeline execution.",
     )
 
-    base_image: Optional[str] = Field(
+    garak_base_image: Optional[str] = Field(
         default=None,
+        validation_alias=AliasChoices("garak_base_image", "base_image"),
         description=(
-            "Base image for Kubeflow pipeline components. "
-            "If not provided, the base image will be read from the configmap specified in constants.py."
+            "Garak base image for Kubeflow pipeline components. "
+            "If not provided, the base image will be read from the configmap specified in constants.py. "
+            "Can also be specified as 'base_image' for backward compatibility."
         ),
     )
 

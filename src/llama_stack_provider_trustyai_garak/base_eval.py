@@ -571,7 +571,10 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
             cmd.extend(["--taxonomy", benchmark_metadata["taxonomy"]])
         
         if "generate_autodan" in benchmark_metadata:
-            cmd.extend(["--generate_autodan", benchmark_metadata["generate_autodan"]])
+            logger.warning(
+                "Deprecated benchmark metadata key 'generate_autodan' is present but no longer supported. "
+                "Please remove it from the benchmark metadata; it is being ignored."
+            )
     
         # Add probes
         probes = scan_profile_config["probes"]
