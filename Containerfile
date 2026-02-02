@@ -35,3 +35,7 @@ RUN pip install --no-cache-dir --no-deps -e ".[inline]"
 # Switch back to non-root user
 # UBI9 uses 1001
 USER 1001
+
+# Default CMD for eval-hub (runs as K8s Job)
+# Note: KFP components override this via @dsl.component, so this shouldn't affect KFP usage
+CMD ["python", "-m", "llama_stack_provider_trustyai_garak.evalhub"]

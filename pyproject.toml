@@ -17,6 +17,8 @@ dependencies = [
     "kfp-kubernetes>=2.14.6",
     "kfp-server-api>=2.14.6",
     "boto3>=1.35.88",
+    # eval-hub integration
+    "eval-hub-sdk[adapter] @ git+https://github.com/eval-hub/eval-hub-sdk.git@main",
 ]
 
 [project.urls]
