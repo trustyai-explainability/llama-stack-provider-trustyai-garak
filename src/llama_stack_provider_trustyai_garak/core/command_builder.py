@@ -61,7 +61,7 @@ def build_garak_command(
     seed: int | None = None,
     deprefix: str | None = None,
     eval_threshold: float | None = None,
-    probe_tags: list[str] | str | None = None,
+    probe_tags: str | None = None,
     probe_options: dict[str, Any] | None = None,
     detectors: list[str] | str | None = None,
     extended_detectors: bool | None = None,
@@ -133,7 +133,7 @@ def build_garak_command(
         cmd.extend(["--eval_threshold", str(eval_threshold)])
     
     if probe_tags is not None:
-        cmd.extend(["--probe_tags", _normalize_list_arg(probe_tags)])
+        cmd.extend(["--probe_tags", probe_tags])
     
     if probe_options is not None:
         cmd.extend(["--probe_options", json.dumps(probe_options)])
