@@ -18,6 +18,7 @@ dependencies = [
     "kfp-kubernetes>=2.14.6",
     "kfp-server-api>=2.14.6",
     "boto3>=1.35.88",
+    "pandas>=2.3.3"
 ]
 
 [project.urls]
@@ -39,6 +40,12 @@ inline = [
 ]
 dev = ["pytest", "pytest-cov",  "pytest-asyncio", "black", "isort"]
 server = ["llama-stack>=0.5.0"]
+
+[tool.uv]
+# Added this because:
+# - llama-stack[client] requires openai>=2.5.0
+# - garak requires openai>=1.45.0,<2
+override-dependencies = ["openai>=1.45.0,<2"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
