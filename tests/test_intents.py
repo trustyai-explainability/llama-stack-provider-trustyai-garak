@@ -2,11 +2,10 @@ import json
 import os
 import tempfile
 import pandas as pd
-import pytest
 from pathlib import Path
 import shutil
 
-from src.llama_stack_provider_trustyai_garak.intents import generate_intents_from_dataset
+from llama_stack_provider_trustyai_garak.intents import generate_intents_from_dataset
 
 
 class TestGenerateIntentsFromDataset:
