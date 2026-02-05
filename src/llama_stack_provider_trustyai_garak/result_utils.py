@@ -430,12 +430,18 @@ def derive_template_vars(raw_report: List[Dict[str, Any]]) -> Dict[str, Any]:
         #       this way we were able to show attacks that weren't even run because everything complied earlier
         #       we should grab this info from somewhere, possibly the run configuration?...
     
+    with importlib.resources.files('llama_stack_provider_trustyai_garak.resources').joinpath(
+        'vega_chart_strategy_vs_scenario.json').open('r') as f:
+        vega_chart_strategy_vs_scenario = json.load(f)
+        # TODO: same as above, pass the list of strategies in input
+    
     attacks_by_scenario_data = vega_data(raw_report)
     
     return dict(
         raw_report=raw_report,
         report_name=report_names[0] if report_names else "unknown",
         vega_chart_attacks_by_scenario=vega_chart_attacks_by_scenario,
+        vega_chart_strategy_vs_scenario=vega_chart_strategy_vs_scenario,
         attacks_by_scenario_data=attacks_by_scenario_data
     )
 

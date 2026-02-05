@@ -22,17 +22,24 @@
 <body>
 <h1>Garak report: {{ report_name }}</h1>
 <!-- -->
-<h2>Attacks by scenario</h2>
-<div id="vis"></div>
+<div id="vega_chart_attacks_by_scenario"></div>
 <script type="text/javascript">
-    const spec = {{ vega_chart_attacks_by_scenario | tojson }};
-    const data = {{ attacks_by_scenario_data | tojson }};
-    spec.data = {"values": data};
-    vegaEmbed('#vis', spec)
+    const spec_a = {{ vega_chart_attacks_by_scenario | tojson }};
+    spec_a.data = {"values": {{ attacks_by_scenario_data | tojson }}};
+    vegaEmbed('#vega_chart_attacks_by_scenario', spec_a)
         .then(function (result) {
         })
         .catch(console.error);
 </script>
 <!-- -->
+<div id="vega_chart_strategy_vs_scenario"></div>
+<script type="text/javascript">
+    const spec_b = {{ vega_chart_strategy_vs_scenario | tojson }};
+    spec_b.data = {"values": {{ attacks_by_scenario_data | tojson }}};
+    vegaEmbed('#vega_chart_strategy_vs_scenario', spec_b)
+        .then(function (result) {
+        })
+        .catch(console.error);
+</script>
 </body>
 </html>
