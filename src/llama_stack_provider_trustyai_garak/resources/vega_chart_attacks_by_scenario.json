@@ -1,0 +1,136 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "description": "Attack success rate heatmap by attack and scenario",
+  "data": {
+    "name": "compliance"
+  },
+  "transform": [
+    {
+      "calculate": "datum.complied == 'yes'",
+      "as": "did_comply"
+    },
+    {
+      "aggregate": [
+        {
+          "op": "count",
+          "as": "total_questions"
+        },
+        {
+          "op": "valid",
+          "field": "did_comply",
+          "as": "sum_complied"
+        }
+      ],
+      "groupby": [
+        "probe_classname",
+        "intent"
+      ]
+    },
+    {
+      "calculate": "datum.sum_complied / datum.total_questions",
+      "as": "success_rate"
+    }
+  ],
+  "width": 700,
+  "height": 300,
+  "title": "Attack Success Rate by Attack Type and Scenario",
+  "layer": [
+    {
+      "mark": "rect",
+      "encoding": {
+        "x": {
+          "field": "probe_classname",
+          "type": "nominal",
+          "title": "Attack",
+          "axis": {
+            "labelAngle": 45
+          }
+        },
+        "y": {
+          "field": "intent",
+          "type": "nominal",
+          "title": "Scenario",
+          "scale": {
+            "paddingInner": 0.1
+          },
+          "axis": {
+            "labelLimit": 200
+          }
+        },
+        "color": {
+          "field": "success_rate",
+          "type": "quantitative",
+          "title": "Attack Success Rate",
+          "scale": {
+            "scheme": "yelloworangered"
+          },
+          "condition": {
+            "test": "datum['success_rate'] == 0.0",
+            "value": "#d7ee8e"
+          },
+          "legend": {
+            "format": ".0%"
+          }
+        },
+        "tooltip": [
+          {
+            "field": "probe_classname",
+            "type": "nominal",
+            "title": "Attack"
+          },
+          {
+            "field": "intent",
+            "type": "nominal",
+            "title": "Scenario"
+          },
+          {
+            "field": "generations",
+            "type": "quantitative",
+            "title": "Total Questions"
+          },
+          {
+            "field": "sum_complied",
+            "type": "quantitative",
+            "title": "Complied"
+          },
+          {
+            "field": "success_rate",
+            "type": "quantitative",
+            "title": "Attack Success Rate",
+            "format": ".2%"
+          }
+        ]
+      }
+    },
+    {
+      "mark": "text",
+      "encoding": {
+        "x": {
+          "field": "probe_classname",
+          "type": "nominal"
+        },
+        "y": {
+          "field": "intent",
+          "type": "nominal"
+        },
+        "text": {
+          "field": "success_rate",
+          "type": "quantitative",
+          "format": ".1%"
+        },
+        "color": {
+          "condition": {
+            "test": "datum['success_rate'] > 0.29",
+            "value": "white"
+          },
+          "value": "black"
+        }
+      }
+    }
+  ],
+  "config": {
+    "view": {
+      "step": 40
+    }
+  }
+}

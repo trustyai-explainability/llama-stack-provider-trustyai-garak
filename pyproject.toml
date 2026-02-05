@@ -18,7 +18,9 @@ dependencies = [
     "kfp-kubernetes>=2.14.6",
     "kfp-server-api>=2.14.6",
     "boto3>=1.35.88",
-    "pandas>=2.3.3"
+    "pandas>=2.3.3",
+    "Jinja2>=3.1.6",
+    "pytest>=9.0.2",
 ]
 
 [project.urls]

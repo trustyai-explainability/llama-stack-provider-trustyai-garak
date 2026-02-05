@@ -7,6 +7,8 @@ import json
 import re
 import logging
 from typing import List, Dict, Any, Tuple
+from jinja2 import Environment, PackageLoader, select_autoescape
+import importlib.resources
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +142,7 @@ def parse_aggregated_from_avid_content(avid_content: str) -> Dict[str, Dict[str,
             results = metrics_list[0].get("results", {})
             
             # Parse DataFrame columns to get summary statistics
-
+            
             
             detector_keys = list(results.get("detector", {}).keys())
             if not detector_keys:
@@ -375,3 +377,69 @@ def combine_parsed_results(
         "scores": scores
     }
 
+
+def parse_jsonl(report_content: str) -> List[Dict[str, Any]]:
+    result = []
+    for line in report_content.split("\n"):
+        if not line.strip():
+            continue
+        try:
+            result.append(json.loads(line))
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON line in report: {e}")
+            continue
+    return result
+
+
+def vega_data(raw_report: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    # Grab all the rows that are attempts and have at least one detector result
+    filtered_rows = [line
+                     for line in raw_report
+                     if line.get("entry_type", "") == "attempt"
+                     and len(line.get("detector_results", {})) >= 1
+                     and line.get("status", 0) == 1]
+    
+    def parse_detector(detector_map: Dict[str, List[float]]) -> str:
+        # If at least one detector returned 1.0 we were successful
+        all_scores = [score >= 0.5
+                      for scores in detector_map.values()
+                      for score in scores[0]]
+        return "yes" if any(all_scores) else "no"
+    
+    return [{"uuid": row.get("uuid"),
+             "probe_classname": row.get("probe_classname"),
+             "intent": row.get("notes", {}).get("intent", "unknown_intent"),
+             "stub": row.get("notes", {}).get("stub", "unknown_intent"),
+             "complied": parse_detector(row.get("detector_results", {})),
+             "detector_results": row.get("detector_results", {}),
+             "conversations": row.get("conversations", []),
+             "generations": len(row.get("conversations", []))}
+            for row in filtered_rows]
+
+
+def derive_template_vars(raw_report: List[Dict[str, Any]]) -> Dict[str, Any]:
+    report_names = [line.get("meta", {}).get("reportfile", "unknown")
+                    for line in raw_report
+                    if line.get("entry_type", "") == "digest"]
+    
+    # Load vega_chart_attacks_by_scenario.json from resources folder
+    with importlib.resources.files('llama_stack_provider_trustyai_garak.resources').joinpath(
+        'vega_chart_attacks_by_scenario.json').open('r') as f:
+        vega_chart_attacks_by_scenario = json.load(f)
+    
+    attacks_by_scenario_data = vega_data(raw_report)
+    
+    return dict(
+        raw_report=raw_report,
+        report_name=report_names[0] if report_names else "unknown",
+        vega_chart_attacks_by_scenario=vega_chart_attacks_by_scenario,
+        attacks_by_scenario_data=attacks_by_scenario_data
+    )
+
+
+def generate_art_report(report_content: str):
+    env = Environment(loader=PackageLoader('llama_stack_provider_trustyai_garak', 'resources'))
+    template = env.get_template('art_report.jinja2')
+    raw_report = parse_jsonl(report_content)
+    template_vars = derive_template_vars(raw_report)
+    return template.render(template_vars)
