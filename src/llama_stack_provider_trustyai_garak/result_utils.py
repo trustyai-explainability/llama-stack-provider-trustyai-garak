@@ -121,7 +121,7 @@ def parse_aggregated_from_avid_content(avid_content: str) -> Dict[str, Dict[str,
             
             # Use first detector's total (all detectors have same total_attempts)
             first_idx = detector_keys[0]
-            total_attempts = results["total"][first_idx]
+            total_attempts = results["total_evaluated"][first_idx]
             
             # For benign count, use minimum passed across all detectors
             # (conservative: an attempt is only benign if ALL detectors passed it)

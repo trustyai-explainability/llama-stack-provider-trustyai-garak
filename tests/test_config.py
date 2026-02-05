@@ -113,7 +113,7 @@ class TestGarakRemoteConfig:
         kubeflow_config = KubeflowConfig(
             pipelines_endpoint="https://kfp.example.com",
             namespace="garak-namespace",
-            base_image="garak:latest"
+            garak_base_image="garak:latest"
         )
         
         config = GarakRemoteConfig(
@@ -122,7 +122,7 @@ class TestGarakRemoteConfig:
         
         assert config.kubeflow_config.pipelines_endpoint == "https://kfp.example.com"
         assert config.kubeflow_config.namespace == "garak-namespace"
-        assert config.kubeflow_config.base_image == "garak:latest"
+        assert config.kubeflow_config.garak_base_image == "garak:latest"
         
         # Should inherit base config defaults
         assert config.llama_stack_url == "http://localhost:8321"
@@ -134,7 +134,7 @@ class TestGarakRemoteConfig:
         kubeflow_config = KubeflowConfig(
             pipelines_endpoint="https://kfp.test.com",
             namespace="test",
-            base_image="test:latest"
+            garak_base_image="test:latest"
         )
         
         config = GarakRemoteConfig(
@@ -161,7 +161,7 @@ class TestGarakRemoteConfig:
         kubeflow_config = KubeflowConfig(
             pipelines_endpoint="https://kfp.test.com",
             namespace="test",
-            base_image="test:latest"
+            garak_base_image="test:latest"
         )
         
         config = GarakRemoteConfig(
@@ -185,11 +185,11 @@ class TestKubeflowConfig:
         config = KubeflowConfig(
             pipelines_endpoint="https://kfp.example.com",
             namespace="default",
-            base_image="python:3.9"
+            garak_base_image="python:3.9"
         )
         assert config.pipelines_endpoint == "https://kfp.example.com"
         assert config.namespace == "default"
-        assert config.base_image == "python:3.9"
+        assert config.garak_base_image == "python:3.9"
         assert config.pipelines_api_token is None  # Optional field
 
     def test_kubeflow_config_missing_required_fields(self):
@@ -198,7 +198,7 @@ class TestKubeflowConfig:
         with pytest.raises(ValidationError) as exc_info:
             KubeflowConfig(
                 namespace="default",
-                base_image="python:3.9"
+                garak_base_image="python:3.9"
             )
         assert "pipelines_endpoint" in str(exc_info.value)
 
@@ -206,7 +206,7 @@ class TestKubeflowConfig:
         with pytest.raises(ValidationError) as exc_info:
             KubeflowConfig(
             pipelines_endpoint="https://kfp.example.com",
-                base_image="python:3.9"
+                garak_base_image="python:3.9"
         )
         assert "namespace" in str(exc_info.value)
 
@@ -215,7 +215,7 @@ class TestKubeflowConfig:
         config = KubeflowConfig(
             pipelines_endpoint="https://kfp.example.com",
             namespace="default",
-            base_image="test:latest",
+            garak_base_image="test:latest",
             pipelines_api_token="test-token-12345"
         )
         assert config.pipelines_api_token.get_secret_value() == "test-token-12345"
@@ -225,7 +225,7 @@ class TestKubeflowConfig:
         config = KubeflowConfig(
             pipelines_endpoint="https://kfp.example.com",
             namespace="default",
-            base_image="test:latest"
+            garak_base_image="test:latest"
         )
         assert config.pipelines_api_token is None
 

@@ -11,7 +11,8 @@ authors = [
 ]
 keywords = ["llama-stack", "garak", "red-teaming", "security", "ai-safety"]
 dependencies = [
-    "llama-stack[client]>=0.4.0",
+    "llama-stack-client>=0.4.4",
+    "llama-stack-api>=0.4.4",
     # Remote execution dependencies
     "kfp>=2.14.6",
     "kfp-kubernetes>=2.14.6",
@@ -32,10 +33,10 @@ where = ["src"]
 
 [project.optional-dependencies]
 inline = [
-    "langchain==0.3.27",  # latest langchain breaks garak, so must be '>=0.3.25,<1.0.0'
-    "garak==0.12.0",
+    "garak==0.14.0",
 ]
 dev = ["pytest", "pytest-cov",  "pytest-asyncio", "black", "isort"]
+server = ["llama-stack>=0.4.4"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

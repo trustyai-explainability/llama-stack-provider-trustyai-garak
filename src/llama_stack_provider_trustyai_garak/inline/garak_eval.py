@@ -161,7 +161,7 @@ class GarakInlineEvalAdapter(GarakEvalBase):
                 # convert report to avid report
                 report_file = scan_report_prefix.with_suffix(".report.jsonl")
                 try:
-                    from ..avid_report import Report
+                    from garak.report import Report
                     
                     if not report_file.exists():
                         logger.error(f"Report file not found: {report_file}")

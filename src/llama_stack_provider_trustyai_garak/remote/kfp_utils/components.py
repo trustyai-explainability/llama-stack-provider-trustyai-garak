@@ -25,7 +25,7 @@ def get_base_image() -> str:
     kubernetes config is not available (e.g., in tests or non-k8s environments).
     """
     # Check environment variable first (highest priority)
-    if (base_image := os.environ.get("KUBEFLOW_BASE_IMAGE")) is not None:
+    if (base_image := os.environ.get("KUBEFLOW_GARAK_BASE_IMAGE")) is not None:
         return base_image
 
     # Try to load from kubernetes ConfigMap
@@ -169,6 +169,7 @@ def garak_scan(
     env["GARAK_LOG_FILE"] = str(scan_log_file)
     
     file_id_mapping = {}
+    client = None
     
     ## TODO: why not use dsl.PipelineTask.set_retry()..?
     for attempt in range(max_retries):
@@ -206,7 +207,7 @@ def garak_scan(
             # create avid report file
             report_file = scan_report_prefix.with_suffix(".report.jsonl")
             try:
-                from llama_stack_provider_trustyai_garak.avid_report import Report
+                from garak.report import Report
                 
                 if not report_file.exists():
                     logger.error(f"Report file not found: {report_file}")
@@ -245,6 +246,7 @@ def garak_scan(
         except Exception as e:
             if attempt < max_retries - 1:
                 wait_time = min(5 * (2 ** attempt), 60)  # Exponential backoff
+                logger.error(f"Error: {e}", exc_info=True)
                 logger.error(f"Attempt {attempt + 1} failed, retrying in {wait_time}s...")
                 time.sleep(wait_time)
             else:

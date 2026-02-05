@@ -224,21 +224,25 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
 
             cmd: List[str] = await self._build_command(benchmark_config, benchmark_id, scan_profile_config)
 
-            from .kfp_utils.pipeline import garak_scan_pipeline
-            
-            self._ensure_kfp_client()
-            
             # Validate config before creating pipeline
             if not self._config.kubeflow_config.namespace:
                 raise GarakConfigError("kubeflow_config.namespace is not configured")
             if not self._config.llama_stack_url:
                 raise GarakConfigError("llama_stack_url is not configured")
+            garak_base_image = self._config.kubeflow_config.garak_base_image
+            if garak_base_image and garak_base_image.strip() and not os.environ.get("KUBEFLOW_GARAK_BASE_IMAGE"):
+                os.environ["KUBEFLOW_GARAK_BASE_IMAGE"] = garak_base_image
+                logger.info(f"KUBEFLOW_GARAK_BASE_IMAGE set to {garak_base_image}")
             
-            experiment_name = f"trustyai-garak-{self._config.kubeflow_config.namespace}"
+            experiment_name = os.environ.get("GARAK_EXPERIMENT_NAME") or f"trustyai-garak-{self._config.kubeflow_config.namespace}"
             
             llama_stack_url = self._config.llama_stack_url.strip().rstrip("/")
             if not llama_stack_url:
                 raise GarakConfigError("llama_stack_url cannot be empty after normalization")
+
+            from .kfp_utils.pipeline import garak_scan_pipeline
+            
+            self._ensure_kfp_client()
             
             run = self.kfp_client.create_run_from_pipeline_func(
                 garak_scan_pipeline,

@@ -5,14 +5,14 @@ apis:
   - eval
   - files
   - benchmarks
-  - safety
-  - shields
+  # - safety
+  # - shields
 providers:
   inference:
     - provider_id: vllm
       provider_type: remote::vllm
       config:
-        url: ${env.VLLM_URL}
+        base_url: ${env.VLLM_URL}
         max_tokens: ${env.VLLM_MAX_TOKENS:=4096}
         api_token: ${env.VLLM_API_TOKEN:=fake}
   eval:
@@ -31,11 +31,11 @@ providers:
         metadata_store:
           table_name: files_metadata
           backend: sql_default
-  safety:
-    - provider_id: prompt-guard
-      provider_type: inline::prompt-guard
-      config:
-        excluded_categories: []
+  # safety:
+  #   - provider_id: prompt-guard
+  #     provider_type: inline::prompt-guard
+  #     config:
+  #       excluded_categories: []
   files:
     - provider_id: meta-reference-files
       provider_type: inline::localfs
@@ -44,11 +44,11 @@ providers:
         metadata_store:
           table_name: files_metadata
           backend: sql_default
-  safety:
-    - provider_id: prompt-guard
-      provider_type: inline::prompt-guard
-      config:
-        excluded_categories: []
+  # safety:
+  #   - provider_id: prompt-guard
+  #     provider_type: inline::prompt-guard
+  #     config:
+  #       excluded_categories: []
 storage:
   backends:
     kv_default:
@@ -107,6 +107,6 @@ registered_resources:
         - garak_scoring
       provider_id: trustyai_garak_inline
       provider_benchmark_id: avid_performance
-  shields:
-  - shield_id: Prompt-Guard-86M
-    provider_id: prompt-guard
+  # shields:
+  # - shield_id: Prompt-Guard-86M
+  #   provider_id: prompt-guard

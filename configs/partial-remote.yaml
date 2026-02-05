@@ -12,7 +12,7 @@ providers:
     - provider_id: vllm
       provider_type: remote::vllm
       config:
-        url: ${env.VLLM_URL}
+        base_url: ${env.VLLM_URL}
         max_tokens: ${env.VLLM_MAX_TOKENS:=4096}
         api_token: ${env.VLLM_API_TOKEN:=fake}
         tls_verify: ${env.VLLM_TLS_VERIFY:=true}
@@ -26,7 +26,7 @@ providers:
         kubeflow_config:
           pipelines_endpoint: ${env.KUBEFLOW_PIPELINES_ENDPOINT}
           namespace: ${env.KUBEFLOW_NAMESPACE}
-          base_image: ${env.KUBEFLOW_BASE_IMAGE}
+          garak_base_image: ${env.KUBEFLOW_GARAK_BASE_IMAGE}
           pipelines_api_token: ${env.KUBEFLOW_PIPELINES_TOKEN:=}
   files:
     - provider_id: meta-reference-files
@@ -102,5 +102,6 @@ registered_resources:
   shields:
   - shield_id: Prompt-Guard-86M
     provider_id: prompt-guard
+    provider_shield_id: Prompt-Guard-86M
 server:
   port: 8321
