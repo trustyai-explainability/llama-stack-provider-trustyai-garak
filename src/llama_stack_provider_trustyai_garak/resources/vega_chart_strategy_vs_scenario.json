@@ -1,0 +1,96 @@
+{
+  "description": "Refined two-bubble-per-cell plot: outcome vs count per strategy/scenario.",
+  "encoding": {
+    "x": {
+      "field": "probe_classname",
+      "type": "ordinal",
+      "sort": {
+        "field": "run-iter",
+        "op": "min"
+      },
+      "axis": {
+        "grid": true,
+        "gridColor": "#e0e0e02e",
+        "gridWidth": {
+          "expr": "bandwidth('x')"
+        },
+        "labelAngle": 45,
+        "title": "Attack Strategy"
+      }
+    },
+    "y": {
+      "field": "intent",
+      "type": "ordinal",
+      "axis": {
+        "grid": false,
+        "title": "intent"
+      }
+    },
+    "xOffset": {
+      "field": "outcome",
+      "type": "nominal",
+      "scale": {
+        "paddingOuter": 1
+      }
+    },
+    "size": {
+      "field": "generations",
+      "aggregate": "sum",
+      "type": "quantitative",
+      "legend": {
+        "title": "Test Count",
+        "format": "d"
+      }
+    },
+    "color": {
+      "field": "outcome",
+      "type": "nominal",
+      "scale": {
+        "domain": [
+          "complied",
+          "refused"
+        ],
+        "range": [
+          "#B22222",
+          "gray"
+        ]
+      },
+      "legend": {
+        "title": "Model Behavior"
+      }
+    },
+    "tooltip": [
+      {
+        "field": "intent"
+      },
+      {
+        "field": "probe_classname"
+      },
+      {
+        "field": "outcome"
+      },
+      {
+        "field": "count",
+        "type": "quantitative"
+      }
+    ]
+  },
+  "config": {
+    "axis": {
+      "grid": false
+    }
+  },
+  "mark": {
+    "type": "circle"
+  },
+  "width": 700,
+  "title": {
+    "text": "Model Behavior by Scenario",
+    "dy": -20
+  },
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "height": 300,
+  "data": {
+    "name": "data"
+  }
+}
