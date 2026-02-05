@@ -20,7 +20,9 @@ dependencies = [
     "boto3>=1.35.88",
     # eval-hub integration
     "eval-hub-sdk[adapter] @ git+https://github.com/eval-hub/eval-hub-sdk.git@main",
-    "pandas>=2.3.3"
+    "pandas>=2.3.3",
+    "Jinja2>=3.1.6",
+    "pytest>=9.0.2",
 ]
 
 [project.urls]

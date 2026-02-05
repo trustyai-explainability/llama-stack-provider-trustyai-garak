@@ -1,7 +1,8 @@
-"""Tests for utility functions in utils.py"""
+"""Tests for utility functions in utils.py and result_utils.py"""
 
 import pytest
 import os
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -173,3 +174,97 @@ class TestHTTPClientWithTLS:
             get_http_client_with_tls(None)
             mock_client.assert_called_once_with(verify=True)
 
+
+class TestResultUtils:
+    """Test cases for result_utils functions"""
+
+    def test_parse_jsonl_empty_lines(self):
+        """Test parse_jsonl function handles empty lines correctly"""
+        from llama_stack_provider_trustyai_garak.result_utils import parse_jsonl
+
+        test_content = '{"entry_type": "init"}\n\n{"entry_type": "completion"}\n  \n'
+
+        parsed = parse_jsonl(test_content)
+
+        # Should parse valid JSON and skip empty lines
+        assert len(parsed) == 2
+        assert parsed[0]["entry_type"] == "init"
+        assert parsed[1]["entry_type"] == "completion"
+
+    def test_derive_template_vars_with_digest_entry(self):
+        """Test derive_template_vars function with a digest entry present"""
+        # Load test data
+        test_data_path = Path(__file__).parent / "_resources/garak_earlystop_run.jsonl"
+        with open(test_data_path, 'r') as f:
+            test_content = f.read()
+
+        from llama_stack_provider_trustyai_garak.result_utils import parse_jsonl, derive_template_vars
+
+        # Parse the JSONL content
+        raw_report = parse_jsonl(test_content)
+
+        # Get template variables
+        template_vars = derive_template_vars(raw_report)
+
+        # Verify the returned dictionary has expected keys and values
+        assert "raw_report" in template_vars
+        assert "report_name" in template_vars
+        assert template_vars["raw_report"] == raw_report
+        assert template_vars["report_name"] == "garak.5b90c1fc-f48f-47f6-a216-05e610dedc71.report.jsonl"
+
+    def test_derive_template_vars_without_digest_entry(self):
+        """Test derive_template_vars function when no digest entry is present"""
+        from llama_stack_provider_trustyai_garak.result_utils import derive_template_vars
+
+        # Test data without digest entry
+        test_report = [
+            {"entry_type": "start_run setup", "some_key": "value"},
+            {"entry_type": "init", "garak_version": "0.14.0.pre1"}
+        ]
+
+        template_vars = derive_template_vars(test_report)
+
+        # Should return unknown report name when no digest entry
+        assert template_vars["raw_report"] == test_report
+        assert template_vars["report_name"] == "unknown"
+
+    def test_generate_art_report(self):
+        """Test generate_art_report function renders template correctly"""
+        # Load test data
+        test_data_path = Path(__file__).parent / "_resources/garak_earlystop_run.jsonl"
+        with open(test_data_path, 'r') as f:
+            test_content = f.read()
+
+        from llama_stack_provider_trustyai_garak.result_utils import generate_art_report
+
+        # Generate the report
+        rendered_html = generate_art_report(test_content)
+
+        # Verify the HTML contains expected content
+        assert "<!DOCTYPE html>" in rendered_html
+        assert '<html lang="en">' in rendered_html
+        assert "<title>Garak - Automated Red Teaming report</title>" in rendered_html
+        assert "<h1>Garak report: garak.5b90c1fc-f48f-47f6-a216-05e610dedc71.report.jsonl</h1>" in rendered_html
+
+        # Verify the expected JavaScript libraries are included
+        assert "vega.min.js" in rendered_html
+        assert "vega-lite.min.js" in rendered_html
+        assert "vega-embed.min.js" in rendered_html
+
+        # Open in browser for manual inspection
+        try:
+            import os
+            import tempfile
+            import webbrowser
+
+            # Create a temporary HTML file
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as temp_file:
+                temp_file.write(rendered_html)
+                temp_file.flush()
+
+                # Open in browser
+                webbrowser.open(f'file://{temp_file.name}')
+                print(f"Report opened in browser: {temp_file.name}")
+        except Exception as e:
+            # If anything goes wrong with opening the browser, just continue the test
+            print(f"Could not open browser for manual inspection: {e}")
