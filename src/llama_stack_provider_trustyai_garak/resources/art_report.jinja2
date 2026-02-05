@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta http-equiv="x-ua-compatible" content="ie=edge"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+
+    <title>Garak - Automated Red Teaming report</title>
+
+    <!-- Vega and vega lite for our charts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vega/6.2.0/vega.min.js"
+            integrity="sha512-a0MvScZu4OlG2uIQtDYugg4GWVyk2YDEKoWt9kAHlW3hiNuwYoZmVz6D7ksouUKBIUiLYfdMc8f/taYk9hbCbA=="
+            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vega-lite/6.4.1/vega-lite.min.js"
+            integrity="sha512-YR+HhmTzn3uI6txUYLROIPAr1yuQVjJ2djyDfq+ZWMwe4LgEXyiPPYn9LlQE9P2DwZSlwkO2NBOigBQBr7mk7g=="
+            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vega-embed/7.0.2/vega-embed.min.js"
+            integrity="sha512-sN01iN/FB7CxcwWiE+BZUadk7T04QGhOJit1KBWJChZkdjvyxsS5tntVrMikgSYBIgvH+WH2ssKswk2e+aSQnQ=="
+            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+</head>
+
+<body>
+<h1>Garak report: {{ report_name }}</h1>
+<!-- -->
+<h2>Attacks by scenario</h2>
+<div id="vis"></div>
+<script type="text/javascript">
+    const spec = {{ vega_chart_attacks_by_scenario | tojson }};
+    const data = {{ attacks_by_scenario_data | tojson }};
+    spec.data = {"values": data};
+    vegaEmbed('#vis', spec)
+        .then(function (result) {
+        })
+        .catch(console.error);
+</script>
+<!-- -->
+</body>
+</html>
