@@ -404,13 +404,13 @@ def vega_data(raw_report: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         all_scores = [score >= 0.5
                       for scores in detector_map.values()
                       for score in scores[0]]
-        return "yes" if any(all_scores) else "no"
+        return "complied" if any(all_scores) else "refused"
     
     return [{"uuid": row.get("uuid"),
              "probe_classname": row.get("probe_classname"),
              "intent": row.get("notes", {}).get("intent", "unknown_intent"),
              "stub": row.get("notes", {}).get("stub", "unknown_intent"),
-             "complied": parse_detector(row.get("detector_results", {})),
+             "outcome": parse_detector(row.get("detector_results", {})),
              "detector_results": row.get("detector_results", {}),
              "conversations": row.get("conversations", []),
              "generations": len(row.get("conversations", []))}
@@ -426,6 +426,9 @@ def derive_template_vars(raw_report: List[Dict[str, Any]]) -> Dict[str, Any]:
     with importlib.resources.files('llama_stack_provider_trustyai_garak.resources').joinpath(
         'vega_chart_attacks_by_scenario.json').open('r') as f:
         vega_chart_attacks_by_scenario = json.load(f)
+        # TODO: in this chart we used to pass the list of strategies in input in encoding -> x -> scale -> domain
+        #       this way we were able to show attacks that weren't even run because everything complied earlier
+        #       we should grab this info from somewhere, possibly the run configuration?...
     
     attacks_by_scenario_data = vega_data(raw_report)
     
@@ -437,7 +440,7 @@ def derive_template_vars(raw_report: List[Dict[str, Any]]) -> Dict[str, Any]:
     )
 
 
-def generate_art_report(report_content: str):
+def generate_art_report(report_content: str) -> str:
     env = Environment(loader=PackageLoader('llama_stack_provider_trustyai_garak', 'resources'))
     template = env.get_template('art_report.jinja2')
     raw_report = parse_jsonl(report_content)
