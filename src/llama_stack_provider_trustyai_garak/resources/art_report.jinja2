@@ -1,11 +1,31 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="pf-v6-theme-dark">
 <head>
     <meta charset="utf-8"/>
     <meta http-equiv="x-ua-compatible" content="ie=edge"/>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
 
     <title>Garak - Automated Red Teaming report</title>
+
+    <!-- PatternFly 6 CSS from CDN -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@patternfly/patternfly@6/patternfly.min.css">
+    <style>
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            line-height: 1;
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 0.6875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--pf-t--global--text--color--subtle, #6a6e73);
+            margin-top: var(--pf-t--global--spacer--sm, 8px);
+            text-align: center;
+        }
+    </style>
 
     <!-- Vega and vega lite for our charts -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/vega/6.2.0/vega.min.js"
@@ -20,26 +40,92 @@
 </head>
 
 <body>
-<h1>Garak report: {{ report_name }}</h1>
-<!-- -->
-<div id="vega_chart_attacks_by_scenario"></div>
+<div class="pf-v6-c-page" id="masthead-basic-example">
+    <header class="pf-v6-c-masthead" id="masthead-basic-example-masthead">
+        <div class="pf-v6-c-masthead__main">
+            <div class="pf-v6-c-masthead__brand">
+                <div class="pf-v6-c-masthead__content">
+                    Automated Red Teaming report
+                </div>
+            </div>
+        </div>
+    </header>
+    <div class="pf-v6-c-page__sidebar">
+        <div class="pf-v6-c-page__sidebar-body">
+            <nav class="pf-v6-c-nav" aria-label="Global">
+                <ul class="pf-v6-c-nav__list" role="list">
+                    <li class="pf-v6-c-nav__item">
+                        <a href="#overview" class="pf-v6-c-nav__link pf-m-current">
+                            <span class="pf-v6-c-nav__link-text">Overview</span>
+                        </a>
+                    </li>
+                    <li class="pf-v6-c-nav__item">
+                        <a href="#vega_chart_attacks_by_scenario" class="pf-v6-c-nav__link" aria-current="page">
+                            <span class="pf-v6-c-nav__link-text">Attacks by scenario</span>
+                        </a>
+                    </li>
+                    <li class="pf-v6-c-nav__item">
+                        <a href="#vega_chart_strategy_vs_scenario" class="pf-v6-c-nav__link">
+                            <span class="pf-v6-c-nav__link-text">Strategy by scenario</span>
+                        </a>
+                    </li>
+                </ul>
+            </nav>
+        </div>
+    </div>
+    <div class="pf-v6-c-page__main-container" tabindex="-1">
+        <main class="pf-v6-c-page__main" tabindex="-1">
+            <section class="pf-v6-c-page__main-section pf-m-limit-width">
+                <div class="pf-v6-c-page__main-body">
+                    <p class="pf-v6-c-content--p">Report ID: <code>{{ report_name }}</code></p>
+                </div>
+            </section>
+            <section id="overview" class="pf-v6-c-page__main-section pf-m-limit-width">
+                <div class="pf-v6-l-grid pf-m-all-3-col pf-m-gutter">
+                    {% for stat in high_level_stats %}
+                        <div class="pf-v6-l-grid__item">
+                            <div class="pf-v6-c-card">
+                                <div class="pf-v6-c-card__body">
+                                    <p class="stat-label">{{ stat.label }}</p>
+                                    <p class="stat-value">{{ stat.value }}</p>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            </section>
+            <section class="pf-v6-c-page__main-section pf-m-limit-width">
+                <div class="pf-v6-c-page__main-body">
+                    <div class="pf-v6-c-card">
+                        <div id="vega_chart_attacks_by_scenario" class="pf-v6-c-card__body"></div>
+                    </div>
+                </div>
+            </section>
+            <section class="pf-v6-c-page__main-section pf-m-limit-width">
+                <div class="pf-v6-c-page__main-body">
+                    <div class="pf-v6-c-card">
+                        <div id="vega_chart_strategy_vs_scenario" class="pf-v6-c-card__body"></div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+</div>
+</body>
 <script type="text/javascript">
+    const attack_by_scenario_data = {{ attacks_by_scenario_data | tojson }};
     const spec_a = {{ vega_chart_attacks_by_scenario | tojson }};
-    spec_a.data = {"values": {{ attacks_by_scenario_data | tojson }}};
+    spec_a.data = {"values": attack_by_scenario_data};
     vegaEmbed('#vega_chart_attacks_by_scenario', spec_a)
         .then(function (result) {
         })
         .catch(console.error);
-</script>
-<!-- -->
-<div id="vega_chart_strategy_vs_scenario"></div>
-<script type="text/javascript">
+
     const spec_b = {{ vega_chart_strategy_vs_scenario | tojson }};
-    spec_b.data = {"values": {{ attacks_by_scenario_data | tojson }}};
+    spec_b.data = {"values": attack_by_scenario_data};
     vegaEmbed('#vega_chart_strategy_vs_scenario', spec_b)
         .then(function (result) {
         })
         .catch(console.error);
 </script>
-</body>
 </html>
