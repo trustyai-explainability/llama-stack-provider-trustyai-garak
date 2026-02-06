@@ -83,7 +83,7 @@
   "mark": {
     "type": "circle"
   },
-  "width": 700,
+  "width": "container",
   "title": {
     "text": "Model Behavior by Scenario",
     "dy": -20
