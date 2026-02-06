@@ -11,7 +11,19 @@ from llama_stack_provider_trustyai_garak.remote.garak_remote_eval import GarakRe
 from llama_stack_provider_trustyai_garak.remote.provider import get_provider_spec
 from llama_stack_provider_trustyai_garak.config import GarakRemoteConfig, KubeflowConfig, GarakScanConfig
 from llama_stack_provider_trustyai_garak.errors import GarakConfigError, GarakValidationError
-from llama_stack_provider_trustyai_garak.compat import Api, JobStatus, EvaluateResponse, Benchmark, RetrieveFileContentRequest
+from llama_stack_provider_trustyai_garak.compat import (
+    Api, 
+    Job,
+    JobStatus, 
+    EvaluateResponse, 
+    Benchmark, 
+    RetrieveFileContentRequest,
+    RunEvalRequest,
+    JobStatusRequest,
+    JobCancelRequest,
+    JobResultRequest,
+    EvaluateRowsRequest,
+)
 
 class TestRemoteProvider:
     """Test cases for remote provider specification"""
@@ -382,33 +394,32 @@ class TestGarakRemoteEvalAdapter:
                 adapter.kfp_client = Mock()
                 adapter.kfp_client.create_run_from_pipeline_func.return_value = mock_run
                 
-                result = await adapter.run_eval("test-benchmark", mock_benchmark_config)
+                request = RunEvalRequest(benchmark_id="test-benchmark", benchmark_config=mock_benchmark_config)
+                result = await adapter.run_eval(request)
                 
-                assert "job_id" in result
-                assert result["status"] == JobStatus.scheduled
-                assert "metadata" in result
+                assert hasattr(result, 'job_id')
+                assert result.status == JobStatus.scheduled
+                assert hasattr(result, 'metadata')
                 # Verify the job_id is properly stored
-                job_id = result["job_id"]
+                job_id = result.job_id
                 assert job_id in adapter._jobs
                 assert adapter._jobs[job_id].status == JobStatus.scheduled
                 assert adapter._job_metadata[job_id]["kfp_run_id"] == "test-run-id"
 
     @pytest.mark.asyncio
-    async def test_run_eval_invalid_candidate_type(self, adapter, mock_benchmark):
+    async def test_run_eval_invalid_candidate_type(self, adapter, mock_benchmark, mock_benchmark_config):
         """Test run_eval with invalid candidate type"""
-        # Create a mock config that will fail the type check
-        invalid_config = Mock()
-        invalid_config.eval_candidate = Mock()
-        invalid_config.eval_candidate.type = "invalid"  # This should be "model"
-        invalid_config.eval_candidate.model = "test-model"
+        # Modify the mock_benchmark_config to have an invalid candidate type
+        mock_benchmark_config.eval_candidate.type = "invalid"  # This should be "model"
         
-        # Make it not an instance of BenchmarkConfig so it fails isinstance check
         adapter._initialized = True
         
-        with pytest.raises(GarakValidationError) as exc_info:
-            await adapter.run_eval("test-benchmark", invalid_config)
+        with patch.object(adapter, 'get_benchmark', return_value=mock_benchmark):
+            request = RunEvalRequest(benchmark_id="test-benchmark", benchmark_config=mock_benchmark_config)
+            with pytest.raises(GarakValidationError) as exc_info:
+                await adapter.run_eval(request)
         
-        assert "Required benchmark_config to be of type BenchmarkConfig" in str(exc_info.value)
+            assert "Eval candidate type must be 'model'" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_job_status_in_progress(self, adapter):
@@ -425,10 +436,11 @@ class TestGarakRemoteEvalAdapter:
         
         # Mock the mapping function
         with patch.object(adapter, '_map_kfp_run_state_to_job_status', return_value=JobStatus.in_progress):
-            result = await adapter.job_status("test-benchmark", job_id)
+            request = JobStatusRequest(benchmark_id="test-benchmark", job_id=job_id)
+            result = await adapter.job_status(request)
             
-            assert result["job_id"] == job_id
-            assert result["status"] == JobStatus.in_progress
+            assert result.job_id == job_id
+            assert result.status == JobStatus.in_progress
 
     @pytest.mark.asyncio
     async def test_job_status_completed(self, adapter):
@@ -462,9 +474,10 @@ class TestGarakRemoteEvalAdapter:
         adapter.file_api.openai_retrieve_file_content = AsyncMock(return_value=mock_mapping_content)
         
         with patch.object(adapter, '_map_kfp_run_state_to_job_status', return_value=JobStatus.completed):
-            result = await adapter.job_status("test-benchmark", job_id)
+            request = JobStatusRequest(benchmark_id="test-benchmark", job_id=job_id)
+            result = await adapter.job_status(request)
             
-            assert result["status"] == JobStatus.completed
+            assert result.status == JobStatus.completed
             assert adapter._job_metadata[job_id].get(f"{job_id}_scan_result.json") == "file-id-123"
             # Verify mapping_file_id was cached
             assert adapter._job_metadata[job_id].get("mapping_file_id") == "mapping-file-id-123"
@@ -495,10 +508,11 @@ class TestGarakRemoteEvalAdapter:
         
         with caplog.at_level(logging.WARNING):
             with patch.object(adapter, '_map_kfp_run_state_to_job_status', return_value=JobStatus.completed):
-                result = await adapter.job_status("test-benchmark", job_id)
+                request = JobStatusRequest(benchmark_id="test-benchmark", job_id=job_id)
+                result = await adapter.job_status(request)
         
         # Should complete successfully despite missing mapping file
-        assert result["status"] == JobStatus.completed
+        assert result.status == JobStatus.completed
         # Should warn about missing mapping file
         assert "Could not find mapping file" in caplog.text or "mapping" in caplog.text.lower()
 
@@ -534,10 +548,11 @@ class TestGarakRemoteEvalAdapter:
         
         with caplog.at_level(logging.WARNING):
             with patch.object(adapter, '_map_kfp_run_state_to_job_status', return_value=JobStatus.completed):
-                result = await adapter.job_status("test-benchmark", job_id)
+                request = JobStatusRequest(benchmark_id="test-benchmark", job_id=job_id)
+                result = await adapter.job_status(request)
         
         # Should complete successfully despite empty content
-        assert result["status"] == JobStatus.completed
+        assert result.status == JobStatus.completed
         # Should log error about JSON parsing
         assert "JSON" in caplog.text or "parse" in caplog.text.lower()
 
@@ -573,10 +588,11 @@ class TestGarakRemoteEvalAdapter:
         
         with caplog.at_level(logging.ERROR):
             with patch.object(adapter, '_map_kfp_run_state_to_job_status', return_value=JobStatus.completed):
-                result = await adapter.job_status("test-benchmark", job_id)
+                request = JobStatusRequest(benchmark_id="test-benchmark", job_id=job_id)
+                result = await adapter.job_status(request)
         
         # Should complete successfully despite invalid JSON
-        assert result["status"] == JobStatus.completed
+        assert result.status == JobStatus.completed
         # Should log error about JSON parsing failure
         assert "Failed to parse JSON" in caplog.text or "JSON" in caplog.text
 
@@ -608,9 +624,10 @@ class TestGarakRemoteEvalAdapter:
         adapter.file_api.openai_retrieve_file_content = AsyncMock(return_value=mock_mapping_content)
         
         with patch.object(adapter, '_map_kfp_run_state_to_job_status', return_value=JobStatus.completed):
-            result = await adapter.job_status("test-benchmark", job_id)
+            request = JobStatusRequest(benchmark_id="test-benchmark", job_id=job_id)
+            result = await adapter.job_status(request)
             
-            assert result["status"] == JobStatus.completed
+            assert result.status == JobStatus.completed
             assert adapter._job_metadata[job_id].get(f"{job_id}_scan_result.json") == "file-id-789"
             
             # Verify we used cached ID and didn't call list_files
@@ -639,8 +656,9 @@ class TestGarakRemoteEvalAdapter:
         mock_get_benchmark = AsyncMock(return_value=mock_benchmark)
         
         with patch.object(adapter, 'get_benchmark', mock_get_benchmark):
-            with patch.object(adapter, 'job_status', new_callable=AsyncMock, return_value={"status": JobStatus.completed}):
-                result = await adapter.job_result("test-benchmark", job_id)
+            with patch.object(adapter, 'job_status', new_callable=AsyncMock, return_value=Job(job_id=job_id, status=JobStatus.completed)):
+                request = JobResultRequest(benchmark_id="test-benchmark", job_id=job_id)
+                result = await adapter.job_result(request)
                 
                 # Check it's an EvaluateResponse
                 assert isinstance(result, EvaluateResponse)
@@ -655,8 +673,9 @@ class TestGarakRemoteEvalAdapter:
         
         adapter.kfp_client = Mock()
         
-        with patch.object(adapter, 'job_status', new_callable=AsyncMock, return_value={"status": JobStatus.in_progress}):
-            await adapter.job_cancel("test-benchmark", job_id)
+        with patch.object(adapter, 'job_status', new_callable=AsyncMock, return_value=Job(job_id=job_id, status=JobStatus.in_progress)):
+            request = JobCancelRequest(benchmark_id="test-benchmark", job_id=job_id)
+            await adapter.job_cancel(request)
             
             adapter.kfp_client.terminate_run.assert_called_once_with("test-run-id")
 
@@ -791,12 +810,13 @@ class TestGarakRemoteEvalAdapter:
         assert options["function"]["Single"]["kwargs"]["llm_io_shield_mapping"]["input"] == ["shield1", "shield2"]
 
     @pytest.mark.asyncio
-    async def test_evaluate_rows_not_implemented(self, adapter):
+    async def test_evaluate_rows_not_implemented(self, adapter, mock_benchmark_config):
         """Test evaluate_rows raises NotImplementedError"""
+        request = EvaluateRowsRequest(
+            benchmark_id="benchmark-id",
+            input_rows=[{"input": "test"}],
+            scoring_functions=["score1"],
+            benchmark_config=mock_benchmark_config
+        )
         with pytest.raises(NotImplementedError):
-            await adapter.evaluate_rows(
-                "benchmark-id",
-                [{"input": "test"}],
-                ["score1"],
-                Mock()
-            )
+            await adapter.evaluate_rows(request)
