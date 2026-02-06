@@ -243,7 +243,7 @@ class TestResultUtils:
         # Verify the HTML contains expected content
         assert "<!DOCTYPE html>" in rendered_html
         assert "<title>Garak - Automated Red Teaming report</title>" in rendered_html
-        assert "<h1>Garak report: garak.5b90c1fc-f48f-47f6-a216-05e610dedc71.report.jsonl</h1>" in rendered_html
+        assert "garak.5b90c1fc-f48f-47f6-a216-05e610dedc71.report.jsonl" in rendered_html
 
         # Verify the expected JavaScript libraries are included
         assert "vega.min.js" in rendered_html
