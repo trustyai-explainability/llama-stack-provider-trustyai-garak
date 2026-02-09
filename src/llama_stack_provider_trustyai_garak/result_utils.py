@@ -464,18 +464,23 @@ def derive_template_vars(raw_report: List[Dict[str, Any]]) -> Dict[str, Any]:
                     for line in raw_report
                     if line.get("entry_type", "") == "digest"]
     
+    run_setup = list(filter(lambda line: line.get("entry_type", "") == "start_run setup", raw_report))
+    if not run_setup:
+        logger.warning("No run_setup found in report - using empty dict instead")
+        run_setup = [{}]
+    probes = (["base.IntentProbe"] +  # Baseline run
+              run_setup[0].get("plugins.probe_spec", "").split(","))
+    
     # Load vega_chart_attacks_by_scenario.json from resources folder
     with importlib.resources.files('llama_stack_provider_trustyai_garak.resources').joinpath(
         'vega_chart_attacks_by_scenario.json').open('r') as f:
         vega_chart_attacks_by_scenario = json.load(f)
-        # TODO: in this chart we used to pass the list of strategies in input in encoding -> x -> scale -> domain
-        #       this way we were able to show attacks that weren't even run because everything complied earlier
-        #       we should grab this info from somewhere, possibly the run configuration?...
+        vega_chart_attacks_by_scenario["layer"][0]["encoding"]["x"]["scale"] = {"domain": probes}
     
     with importlib.resources.files('llama_stack_provider_trustyai_garak.resources').joinpath(
         'vega_chart_strategy_vs_scenario.json').open('r') as f:
         vega_chart_strategy_vs_scenario = json.load(f)
-        # TODO: same as above, pass the list of strategies in input
+        vega_chart_strategy_vs_scenario["encoding"]["x"]["scale"] = {"domain": probes}
     
     attacks_by_scenario_data = vega_data(raw_report)
     high_level_stats_data = high_level_stats(attacks_by_scenario_data)
