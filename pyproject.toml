@@ -10,6 +10,7 @@ authors = [
     {name = "TrustyAI Team"}
 ]
 keywords = ["llama-stack", "garak", "red-teaming", "security", "ai-safety"]
+# pinned LLS libs to 0.4.4 for testing (to be removed in next PR (for lls-0.5.0))
 dependencies = [
     "llama-stack-client>=0.5.0",
     "llama-stack-api>=0.5.0",

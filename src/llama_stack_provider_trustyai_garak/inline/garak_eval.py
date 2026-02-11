@@ -130,6 +130,7 @@ class GarakInlineEvalAdapter(GarakEvalBase):
         """
         stored_benchmark = await self.get_benchmark(benchmark_id)
         benchmark_metadata: dict = getattr(stored_benchmark, "metadata", {})
+        garak_config, provider_params = self._parse_benchmark_metadata(benchmark_metadata)
 
         async with self._jobs_lock:
             job.status = JobStatus.in_progress
@@ -143,12 +144,20 @@ class GarakInlineEvalAdapter(GarakEvalBase):
         scan_report_prefix: Path = job_scan_dir / "scan"
         
         try:
-            scan_profile_config: dict = {
-                "probes": benchmark_metadata["probes"],
-                "timeout": benchmark_metadata.get("timeout", self._config.timeout)
-            }
-
-            cmd: List[str] = await self._build_command(benchmark_config, benchmark_id, scan_profile_config, scan_report_prefix=str(scan_report_prefix))
+            cmd_config: dict = await self._build_command(
+                benchmark_config,
+                garak_config,
+                provider_params,
+                scan_report_prefix=str(scan_report_prefix)
+            )
+            scan_cmd_config_file: Path = job_scan_dir / "config.json"
+            with open(scan_cmd_config_file, "w") as f:
+                json.dump(cmd_config, f)
+            
+            cmd: List[str] = [
+                "garak",
+                "--config", str(scan_cmd_config_file)
+            ]
             logger.info(f"Running scan with command: {' '.join(cmd)}")
 
             env = os.environ.copy()
@@ -162,7 +171,7 @@ class GarakInlineEvalAdapter(GarakEvalBase):
             
             async with self._jobs_lock:
                 self._job_metadata[job.job_id]["process_id"] = str(process.pid)
-            timeout: int = scan_profile_config.get("timeout", self._config.timeout)
+            timeout: int = provider_params.get("timeout", self._config.timeout)
             
             _, stderr = await asyncio.wait_for(process.communicate(), 
                                                     timeout=timeout)
