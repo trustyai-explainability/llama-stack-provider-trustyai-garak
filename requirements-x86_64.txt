@@ -1219,13 +1219,13 @@ litellm==1.80.0 \
     --hash=sha256:eeac733eb6b226f9e5fb020f72fe13a32b3354b001dc62bcf1bc4d9b526d6231 \
     --hash=sha256:fd0009758f4772257048d74bf79bb64318859adb4ea49a8b66fdbc718cd80b6e
     # via garak
-llama-stack-api==0.4.4 \
-    --hash=sha256:3973ca3bacf86916e04e521f77e7909533eec7364d32c3eabc35dc2976dbfe7d \
-    --hash=sha256:7bbc63330ed186502dcd48f65cae014dbeb788ba5690be738c98693cfcd2f599
+llama-stack-api==0.5.0 \
+    --hash=sha256:51074ec06ab87ece7e9461bf47d878b25eb232b2a009749314e2b8a5a5d83ca0 \
+    --hash=sha256:dfd4ffff70207c49c8e734b503b42bc41860d271e7fe8745a26a41a4d4419ff8
     # via llama-stack-provider-trustyai-garak (pyproject.toml)
-llama-stack-client==0.4.4 \
-    --hash=sha256:04bbd16f1547534f52314169f5613d423b38bdad5bde86f32c3efd4a8710e4db \
-    --hash=sha256:0d2633ce93f49764f91c3068ee74edda44b1a16aa828140941645f8d882e87e3
+llama-stack-client==0.5.0 \
+    --hash=sha256:5e7272c7fb58cd169985191c42af78dc6c4d212b7050949b063788bfb9e7ed36 \
+    --hash=sha256:e005ae9d975cda30b3b86261057f228d700107e263e12b796b920cd1fb9ba968
     # via llama-stack-provider-trustyai-garak (pyproject.toml)
 lorem==0.1.1 \
     --hash=sha256:785f4109a241fc2891e59705e85d065f6e6d3ed6ad91750a8cb54d4f3e59d934 \

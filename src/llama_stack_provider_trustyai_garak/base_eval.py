@@ -4,6 +4,8 @@ from .compat import (
     Eval,
     BenchmarkConfig,
     EvaluateResponse,
+    EvaluateRowsRequest,
+    JobResultRequest,
     ProviderSpec,
     BenchmarksProtocolPrivate,
     Api,
@@ -14,10 +16,10 @@ from .compat import (
     JobStatus,
     Safety,
     Shields,
-    GetBenchmarkRequest,
     RetrieveFileContentRequest,
 )
 from typing import Dict, Optional, Set, List, Any, Union, Tuple
+import asyncio
 import logging
 import uuid
 from .config import GarakScanConfig, GarakInlineConfig, GarakRemoteConfig
@@ -39,6 +41,7 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         self.shields_api: Optional[Shields] = deps.get(Api.shields)
         self.scan_config = GarakScanConfig()
         self.benchmarks: Dict[str, Benchmark] = {}  # benchmark_id -> benchmark
+        self._benchmarks_lock = asyncio.Lock()
         self.all_probes: Set[str] = set()
         self._verify_ssl = None
         self._initialized: bool = False
@@ -117,7 +120,8 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         Returns:
             Benchmark object if found, None otherwise
         """
-        return await self.benchmarks_api.get_benchmark(GetBenchmarkRequest(benchmark_id=benchmark_id))
+        async with self._benchmarks_lock:
+            return self.benchmarks.get(benchmark_id)
 
     async def register_benchmark(self, benchmark: Benchmark) -> None:
         """Register a benchmark by checking if it's a pre-defined scan profile or compliance framework.
@@ -141,7 +145,24 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
             ) or self.scan_config.FRAMEWORK_PROFILES.get(benchmark.identifier, {})
 
 
-        self.benchmarks[benchmark.identifier] = benchmark
+        async with self._benchmarks_lock:
+            self.benchmarks[benchmark.identifier] = benchmark
+    
+    async def unregister_benchmark(
+        self,
+        benchmark_id: str,
+    ) -> None:
+        """Unregister a benchmark.
+        
+        Args:
+            benchmark_id: The benchmark identifier
+        """
+        async with self._benchmarks_lock:
+            if benchmark_id in self.benchmarks:
+                del self.benchmarks[benchmark_id]
+                logger.info(f"Unregistered benchmark: {benchmark_id}")
+            else:
+                logger.warning(f"Benchmark {benchmark_id} not found in provider's internal state")
 
     def _get_job_id(self, prefix: str = "garak-job-") -> str:
         """Generate a unique job ID.
@@ -543,12 +564,11 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
 
         return garak_config, provider_params
 
-    async def job_result(self, benchmark_id: str, job_id: str, prefix: str = "") -> EvaluateResponse:
+    async def job_result(self, request: JobResultRequest, prefix: str = "") -> EvaluateResponse:
         """Get the result of a job (common implementation).
         
         Args:
-            benchmark_id: The benchmark id
-            job_id: The job id
+            request: Job result request containing benchmark_id and job_id
             prefix: Optional prefix for scan reports
         Returns:
             EvaluateResponse with results or empty response
@@ -557,6 +577,9 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
             BenchmarkNotFoundError: If benchmark not found
         """
         import json
+        
+        benchmark_id = request.benchmark_id
+        job_id = request.job_id
         
         stored_benchmark = await self.get_benchmark(benchmark_id)
         if not stored_benchmark:
@@ -594,18 +617,12 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
 
     async def evaluate_rows(
         self,
-        benchmark_id: str,
-        input_rows: list[dict[str, Any]],
-        scoring_functions: list[str],
-        benchmark_config: BenchmarkConfig,
+        request: EvaluateRowsRequest,
     ) -> EvaluateResponse:
         """Evaluate rows (not implemented for Garak).
         
         Args:
-            benchmark_id: The benchmark id
-            input_rows: Input rows to evaluate
-            scoring_functions: Scoring functions to use
-            benchmark_config: Configuration for evaluation
+            request: Evaluate rows request containing benchmark_id, input_rows, scoring_functions, and benchmark_config
             
         Raises:
             NotImplementedError: This method is not implemented for Garak

@@ -1,6 +1,9 @@
 from ..compat import (
     EvaluateResponse, 
-    BenchmarkConfig, 
+    BenchmarkConfig,
+    RunEvalRequest,
+    JobStatusRequest,
+    JobCancelRequest,
     ProviderSpec, 
     Api, 
     OpenAIFilePurpose, 
@@ -73,15 +76,17 @@ class GarakInlineEvalAdapter(GarakEvalBase):
         self._initialized = True
         logger.info("Initialized Garak inline provider.")
     
-    async def run_eval(self, benchmark_id: str, benchmark_config: BenchmarkConfig) -> Dict[str, Union[str, Dict[str, str]]]:
+    async def run_eval(self, request: RunEvalRequest) -> Job:
         """Run an evaluation for a specific benchmark and configuration.
 
         Args:
-            benchmark_id: The benchmark id
-            benchmark_config: Configuration for the evaluation task
+            request: Run eval request containing benchmark_id and benchmark_config
         """
         if not self._initialized:
             await self.initialize()
+        
+        benchmark_id = request.benchmark_id
+        benchmark_config: BenchmarkConfig = request.benchmark_config
         
         await self._validate_run_eval_request(benchmark_id, benchmark_config)
         
@@ -99,7 +104,12 @@ class GarakInlineEvalAdapter(GarakEvalBase):
                 name=job_id
             )
         
-        return {"job_id": job_id, "status": job.status, "metadata": self._job_metadata.get(job_id, {})}
+        # Return Job object with metadata (Job model patched in compat.py to allow extra fields)
+        return Job(
+            job_id=job_id,
+            status=job.status,
+            metadata=self._job_metadata.get(job_id, {})
+        )
     
     async def _run_scan_with_semaphore(self, job: Job, benchmark_id: str, benchmark_config: BenchmarkConfig):
         """Wrapper to run the scan with semaphore"""
@@ -355,18 +365,20 @@ class GarakInlineEvalAdapter(GarakEvalBase):
         
         return EvaluateResponse(generations=result_dict["generations"], scores=scores)
 
-    async def job_status(self, benchmark_id: str, job_id: str) -> Dict[str, Union[str, Dict[str, str]]]:
+    async def job_status(self, request: JobStatusRequest) -> Job:
         """Get the status of a job.
 
         Args:
-            benchmark_id: The benchmark id
-            job_id: The job id
+            request: Job status request containing benchmark_id and job_id
         """
+        benchmark_id = request.benchmark_id
+        job_id = request.job_id
+        
         async with self._jobs_lock:
             job = self._jobs.get(job_id)
             if not job:
                 logger.warning(f"Job {job_id} not found")
-                return {"status": "not_found", "job_id": job_id}
+                return Job(job_id=job_id, status=JobStatus.failed, metadata={"error": "Job not found"})
             
             metadata: dict = self._job_metadata.get(job_id, {}).copy()
 
@@ -376,15 +388,18 @@ class GarakInlineEvalAdapter(GarakEvalBase):
                 metadata["running_jobs"] = str(active_jobs)
                 metadata["max_concurrent_jobs"] = str(self._config.max_concurrent_jobs)
 
-        return {"job_id": job_id, "status": job.status, "metadata": metadata}
+        # Return Job object with metadata (Job model patched in compat.py to allow extra fields)
+        return Job(job_id=job_id, status=job.status, metadata=metadata)
     
-    async def job_cancel(self, benchmark_id: str, job_id: str) -> None:
+    async def job_cancel(self, request: JobCancelRequest) -> None:
         """Cancel a job and kill the process.
 
         Args:
-            benchmark_id: The benchmark id
-            job_id: The job id
+            request: Job cancel request containing benchmark_id and job_id
         """
+        benchmark_id = request.benchmark_id
+        job_id = request.job_id
+        
         async with self._jobs_lock:
             job = self._jobs.get(job_id)
             if not job:

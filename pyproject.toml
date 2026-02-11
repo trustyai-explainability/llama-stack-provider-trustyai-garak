@@ -12,8 +12,8 @@ authors = [
 keywords = ["llama-stack", "garak", "red-teaming", "security", "ai-safety"]
 # pinned LLS libs to 0.4.4 for testing (to be removed in next PR (for lls-0.5.0))
 dependencies = [
-    "llama-stack-client==0.4.4",
-    "llama-stack-api==0.4.4",
+    "llama-stack-client>=0.5.0",
+    "llama-stack-api>=0.5.0",
     # Remote execution dependencies
     "kfp>=2.14.6",
     "kfp-kubernetes>=2.14.6",
@@ -26,7 +26,7 @@ homepage = "https://github.com/trustyai-explainability/llama-stack-provider-trus
 repository = "https://github.com/trustyai-explainability/llama-stack-provider-trustyai-garak"
 
 [build-system]
-requires = ["setuptools==80.9.0"]
+requires = ["setuptools>=80.9.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
@@ -37,7 +37,7 @@ inline = [
     "garak==0.14.0",
 ]
 dev = ["pytest", "pytest-cov",  "pytest-asyncio", "black", "isort"]
-server = ["llama-stack==0.4.4"]
+server = ["llama-stack>=0.5.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
