@@ -236,16 +236,19 @@ class TestGarakScanConfig:
     def test_default_scan_config(self):
         """Test default scan configuration"""
         config = GarakScanConfig()
-        
+    
         # Check framework profiles
         assert "trustyai_garak::owasp_llm_top10" in config.FRAMEWORK_PROFILES
         assert "trustyai_garak::avid_security" in config.FRAMEWORK_PROFILES
         assert "trustyai_garak::avid_ethics" in config.FRAMEWORK_PROFILES
         assert "trustyai_garak::avid_performance" in config.FRAMEWORK_PROFILES
-        
+        assert "trustyai_garak::avid" in config.FRAMEWORK_PROFILES
+        assert "trustyai_garak::quality" in config.FRAMEWORK_PROFILES
+        assert "trustyai_garak::cwe" in config.FRAMEWORK_PROFILES
+    
         # Check scan profiles
         assert "trustyai_garak::quick" in config.SCAN_PROFILES
-        assert "trustyai_garak::standard" in config.SCAN_PROFILES
+        # Note: "standard" profile removed - only "quick" for fast testing
         
         # Check other defaults
         assert config.VULNERABLE_SCORE == 0.5
@@ -254,30 +257,39 @@ class TestGarakScanConfig:
         assert config.scan_dir.name == "llama_stack_garak_scans"
 
     def test_framework_profile_structure(self):
-        """Test framework profile structure"""
+        """Test framework profile structure with new garak_config format"""
         config = GarakScanConfig()
         owasp_profile = config.FRAMEWORK_PROFILES["trustyai_garak::owasp_llm_top10"]
         
         assert "name" in owasp_profile
         assert "description" in owasp_profile
-        assert "taxonomy_filters" in owasp_profile
+        assert "garak_config" in owasp_profile  # NEW: garak_config instead of individual keys
         assert "timeout" in owasp_profile
         assert "documentation" in owasp_profile
-        assert "taxonomy" in owasp_profile
-        assert isinstance(owasp_profile["taxonomy_filters"], list)
-        assert owasp_profile["taxonomy"] == "owasp"
+        
+        # Check garak_config structure
+        garak_config = owasp_profile["garak_config"]
+        assert "run" in garak_config
+        assert "reporting" in garak_config
+        assert garak_config["run"]["probe_tags"] == "owasp:llm"  # NEW: probe_tags instead of taxonomy_filters
+        assert garak_config["reporting"]["taxonomy"] == "owasp"
 
     def test_scan_profile_structure(self):
-        """Test scan profile structure"""
+        """Test scan profile structure with new garak_config format"""
         config = GarakScanConfig()
         quick_profile = config.SCAN_PROFILES["trustyai_garak::quick"]
         
         assert "name" in quick_profile
         assert "description" in quick_profile
-        assert "probes" in quick_profile
+        assert "garak_config" in quick_profile  # NEW: garak_config instead of top-level keys
         assert "timeout" in quick_profile
-        assert isinstance(quick_profile["probes"], list)
-        assert len(quick_profile["probes"]) > 0
+        
+        # Check garak_config structure
+        garak_config = quick_profile["garak_config"]
+        assert "plugins" in garak_config
+        assert "probe_spec" in garak_config["plugins"]  # NEW: probe_spec instead of probes
+        assert garak_config["plugins"]["probe_spec"] is not None
+        assert len(garak_config["plugins"]["probe_spec"]) > 0
 
     def test_scan_dir_path(self):
         """Test scan directory path construction"""
@@ -374,3 +386,39 @@ class TestGarakScanConfig:
         """Test that cleanup_scan_dir_on_exit defaults to True for production"""
         config = GarakScanConfig()
         assert config.cleanup_scan_dir_on_exit is True
+    
+    @pytest.mark.parametrize(
+        "profile_key, expected_probe_tag, expected_taxonomy",
+        [
+            ("trustyai_garak::owasp_llm_top10", "owasp:llm", "owasp"),
+            ("trustyai_garak::avid", "avid-effect", "avid-effect"),
+            ("trustyai_garak::avid_security", "avid-effect:security", "avid-effect"),
+            ("trustyai_garak::avid_ethics", "avid-effect:ethics", "avid-effect"),
+            ("trustyai_garak::avid_performance", "avid-effect:performance", "avid-effect"),
+            ("trustyai_garak::quality", "quality", "quality"),
+            ("trustyai_garak::cwe", "cwe", "cwe"),
+        ],
+    )
+    def test_framework_profile_structure(self, profile_key, expected_probe_tag, expected_taxonomy):
+        """Test framework profile structure with new garak_config format"""
+        config = GarakScanConfig()
+        profile = config.FRAMEWORK_PROFILES[profile_key]
+
+        # Basic structure checks shared across all framework profiles
+        assert "name" in profile
+        assert "description" in profile
+        assert "garak_config" in profile  # NEW: garak_config instead of individual keys
+        assert "timeout" in profile
+
+        garak_config = profile["garak_config"]
+
+        # Ensure expected garak_config sections exist
+        assert "run" in garak_config
+        assert "reporting" in garak_config
+        assert "probe_tags" in garak_config["run"]
+
+        # (1) Validate that the expected probe tag matches exactly
+        assert garak_config["run"]["probe_tags"] == expected_probe_tag
+
+        # (2) Validate taxonomy wiring
+        assert garak_config["reporting"]["taxonomy"] == expected_taxonomy

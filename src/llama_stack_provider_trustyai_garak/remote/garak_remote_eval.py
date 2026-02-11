@@ -1,7 +1,6 @@
 from ..compat import (
     EvaluateResponse, 
     BenchmarkConfig,
-    Benchmark,
     ProviderSpec, 
     Api, 
     Job, 
@@ -10,7 +9,7 @@ from ..compat import (
     ListFilesRequest,
     RetrieveFileContentRequest,
 )
-from typing import List, Dict, Union
+from typing import Dict, Union
 import os
 import logging
 import json
@@ -50,64 +49,6 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
         """
         logger.debug("Skipping probe enumeration for remote provider (validated in container)")
         return set()  # Allow any probes; validation happens in the pod
-
-    def _resolve_framework_to_probes(self, framework_id: str) -> List[str]:
-        """Override: Skip resolution for remote provider - use probe_tags instead.
-        
-        For remote execution, we can't resolve frameworks on the server (no garak installed).
-        Instead, we return ['all'] and set probe_tags in the metadata, letting garak
-        resolve the taxonomy filters at runtime in the KFP pod.
-        
-        Args:
-            framework_id: The framework identifier (e.g., 'trustyai_garak::owasp_llm_top10')
-            
-        Returns:
-            List containing 'all' - actual filtering happens via probe_tags
-            
-        Raises:
-            GarakValidationError: If framework is unknown
-        """
-        from ..errors import GarakValidationError
-        
-        framework_info = self.scan_config.FRAMEWORK_PROFILES.get(framework_id)
-        if not framework_info:
-            raise GarakValidationError(f"Unknown framework: {framework_id}")
-        
-        taxonomy_filters = framework_info.get('taxonomy_filters', [])
-        
-        logger.debug(
-            f"Remote mode: Framework '{framework_id}' will use probe_tags for filtering. "
-            f"Taxonomy filters: {taxonomy_filters}"
-        )
-        
-        # Return 'all' - the actual filtering will happen via --probe_tags in the command
-        # The benchmark registration will store taxonomy_filters as probe_tags in metadata
-        return ['all']
-
-    async def register_benchmark(self, benchmark: "Benchmark") -> None:
-        """Override: Handle frameworks specially for remote execution.
-        
-        For framework-based benchmarks, store taxonomy_filters as probe_tags
-        so garak can resolve them at runtime in the KFP pod.
-        """
-        # Call parent to handle basic registration
-        await super().register_benchmark(benchmark)
-        
-        # For frameworks, add probe_tags to metadata for runtime resolution
-        if benchmark.identifier in self.scan_config.FRAMEWORK_PROFILES:
-            framework_info = self.scan_config.FRAMEWORK_PROFILES[benchmark.identifier]
-            taxonomy_filters = framework_info.get('taxonomy_filters', [])
-            
-            if taxonomy_filters and not benchmark.metadata.get('probe_tags'):
-                # Store taxonomy filters as probe_tags for garak's --probe_tags flag
-                benchmark.metadata['probe_tags'] = taxonomy_filters
-                logger.info(
-                    f"Framework '{benchmark.identifier}': Set probe_tags={taxonomy_filters} "
-                    f"for runtime resolution in KFP pod"
-                )
-        
-        # Update the stored benchmark
-        self.benchmarks[benchmark.identifier] = benchmark
 
     async def initialize(self) -> None:
         """Initialize the remote Garak provider."""
@@ -204,7 +145,7 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
         if not benchmark_config:
             raise GarakValidationError("benchmark_config cannot be None")
         
-        _, benchmark_metadata = await self._validate_run_eval_request(benchmark_id, benchmark_config)
+        garak_config, provider_params = await self._validate_run_eval_request(benchmark_id, benchmark_config)
         
         job_id = self._get_job_id(prefix=JOB_ID_PREFIX)
         job = Job(
@@ -217,12 +158,9 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
             self._job_metadata[job_id] = {}  # Initialize metadata dict
 
         try:
-            scan_profile_config: dict = {
-                "probes": benchmark_metadata["probes"],
-                "timeout": benchmark_metadata.get("timeout", self._config.timeout)
-            }
+            timeout = provider_params.get("timeout", self._config.timeout)
 
-            cmd: List[str] = await self._build_command(benchmark_config, benchmark_id, scan_profile_config)
+            cmd_config: dict = await self._build_command(benchmark_config, garak_config, provider_params)
 
             # Validate config before creating pipeline
             if not self._config.kubeflow_config.namespace:
@@ -234,7 +172,7 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
                 os.environ["KUBEFLOW_GARAK_BASE_IMAGE"] = garak_base_image
                 logger.info(f"KUBEFLOW_GARAK_BASE_IMAGE set to {garak_base_image}")
             
-            experiment_name = os.environ.get("GARAK_EXPERIMENT_NAME") or f"trustyai-garak-{self._config.kubeflow_config.namespace}"
+            experiment_name = self._config.kubeflow_config.experiment_name or "trustyai-garak"
             
             llama_stack_url = self._config.llama_stack_url.strip().rstrip("/")
             if not llama_stack_url:
@@ -247,13 +185,13 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
             run = self.kfp_client.create_run_from_pipeline_func(
                 garak_scan_pipeline,
                 arguments={
-                    "command": cmd,
+                    "command": json.dumps(cmd_config),
                     "llama_stack_url": llama_stack_url,
                     "job_id": job_id,
-                    "eval_threshold": float(benchmark_metadata.get("eval_threshold", self.scan_config.VULNERABLE_SCORE)),
-                    "timeout_seconds": int(scan_profile_config.get("timeout", self._config.timeout)),
-                    "max_retries": int(benchmark_metadata.get("max_retries", 3)),
-                    "use_gpu": benchmark_metadata.get("use_gpu", False),
+                    "eval_threshold": float(garak_config.run.eval_threshold),
+                    "timeout_seconds": int(timeout),
+                    "max_retries": int(provider_params.get("max_retries", 3)),
+                    "use_gpu": provider_params.get("use_gpu", False),
                     "verify_ssl": str(self._verify_ssl),
                 },
                 run_name=f"garak-{benchmark_id.split('::')[-1]}-{job_id.removeprefix(JOB_ID_PREFIX)}",

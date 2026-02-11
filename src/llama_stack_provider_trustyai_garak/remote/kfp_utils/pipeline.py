@@ -12,7 +12,7 @@ logger.setLevel(logging.INFO)
 
 @dsl.pipeline()
 def garak_scan_pipeline(
-    command: List[str],
+    command: str,
     llama_stack_url: str,
     job_id: str,
     eval_threshold: float,

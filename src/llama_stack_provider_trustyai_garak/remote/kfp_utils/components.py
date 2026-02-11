@@ -70,7 +70,7 @@ def get_base_image() -> str:
     packages_to_install=[]  # No additional packages needed
 )
 def validate_inputs(
-    command: List[str],
+    command: str,
     llama_stack_url: str,
     verify_ssl: str
 ) -> NamedTuple('outputs', [
@@ -82,7 +82,8 @@ def validate_inputs(
     from llama_stack_client import LlamaStackClient
     from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
     from llama_stack_provider_trustyai_garak.errors import GarakValidationError
-    
+    import json
+
     validation_errors = []
     
     # Validate Llama Stack connectivity
@@ -107,9 +108,12 @@ def validate_inputs(
         validation_errors.append(f"Garak is not installed. Please install it using 'pip install garak': {e}")
         raise e
 
-    # Validate command structure
-    if not command or command[0] != 'garak':
-        validation_errors.append("Invalid command: must start with 'garak'")
+    # Validate command
+    try:
+        _ = json.loads(command)
+    except json.JSONDecodeError as e:
+        validation_errors.append(f"Invalid command: {e}")
+        raise e
     
     # Check for dangerous flags
     dangerous_flags = ['--rm', '--force', '--no-limit']
@@ -132,7 +136,7 @@ def validate_inputs(
     packages_to_install=[]  # No additional packages needed
 )
 def garak_scan(
-    command: List[str],
+    command: str,
     llama_stack_url: str,
     job_id: str,
     max_retries: int,
@@ -163,8 +167,14 @@ def garak_scan(
     
     scan_log_file = scan_dir / f"{job_id}_scan.log"
     scan_report_prefix = scan_dir / f"{job_id}_scan"
+
+    scan_cmd_config_file = scan_dir / f"config.json"
+    scan_cmd_config = json.loads(command)
+    scan_cmd_config['reporting']['report_prefix'] = str(scan_report_prefix)
+    with open(scan_cmd_config_file, 'w') as f:
+        json.dump(scan_cmd_config, f)
     
-    command = command + ['--report_prefix', str(scan_report_prefix)]
+    command = ['garak', '--config', str(scan_cmd_config_file)]
     env = os.environ.copy()
     env["GARAK_LOG_FILE"] = str(scan_log_file)
     
@@ -175,34 +185,41 @@ def garak_scan(
     for attempt in range(max_retries):
         
         try:
+            logger.info(f"Starting Garak scan (attempt {attempt + 1}/{max_retries})")
+
             process = subprocess.Popen(
                 command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
+                stdout=None,  # (show progress in KFP pod logs)
+                stderr=None,  # (show progress in KFP pod logs)
                 env=env,
                 preexec_fn=os.setsid  # Create new process group
             )
             
             try:
-                stdout, stderr = process.communicate(timeout=timeout_seconds)
+                # Wait for completion
+                process.wait(timeout=timeout_seconds)
                 
             except subprocess.TimeoutExpired:
+                logger.error(f"Garak scan timed out after {timeout_seconds} seconds")
                 # Kill the entire process group
                 os.killpg(os.getpgid(process.pid), signal.SIGTERM)
                 try:
                     process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     # process is still running, kill it with SIGKILL
+                    logger.warning("Process did not terminate gracefully, forcing kill")
                     os.killpg(os.getpgid(process.pid), signal.SIGKILL)
                     process.wait()
                 raise
             
             
             if process.returncode != 0:
+                logger.error(f"Garak scan failed with exit code {process.returncode}")
                 raise subprocess.CalledProcessError(
-                    process.returncode, command, stdout, stderr
+                    process.returncode, command
                 )
+            
+            logger.info("Garak scan completed successfully")
             
             # create avid report file
             report_file = scan_report_prefix.with_suffix(".report.jsonl")
