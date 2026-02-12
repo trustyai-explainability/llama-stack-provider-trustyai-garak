@@ -17,6 +17,7 @@ from .compat import (
     Safety,
     Shields,
     RetrieveFileContentRequest,
+    GetShieldRequest,
 )
 from typing import Dict, Optional, Set, List, Any, Union, Tuple
 import asyncio
@@ -27,6 +28,34 @@ from .garak_command_config import GarakCommandConfig, GarakRunConfig
 from .errors import GarakError, GarakConfigError, GarakValidationError, BenchmarkNotFoundError
 
 logger = logging.getLogger(__name__)
+
+
+def deep_merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Deep merge two dictionaries, with override taking precedence.
+    
+    Args:
+        base: Base dictionary with default values
+        override: Override dictionary with custom values
+        
+    Returns:
+        Merged dictionary where override values take precedence at all levels
+        
+    Example:
+        base = {"a": {"b": 1, "c": 2}, "d": 3}
+        override = {"a": {"c": 99}, "e": 4}
+        result = {"a": {"b": 1, "c": 99}, "d": 3, "e": 4}
+    """
+    result = base.copy()
+    
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            # Both are dicts - recursively merge
+            result[key] = deep_merge_dicts(result[key], value)
+        else:
+            # Override takes precedence
+            result[key] = value
+    
+    return result
 
 
 class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
@@ -129,20 +158,32 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         Args:
             benchmark: The benchmark to register
         """
-        if benchmark.identifier in (
-            self.scan_config.SCAN_PROFILES | self.scan_config.FRAMEWORK_PROFILES
-        ):
-            logger.info(
-                f"Benchmark '{benchmark.identifier}' is a pre-defined scan profile or compliance framework."
-            )
+        pre_defined_profiles = {
+            **self.scan_config.SCAN_PROFILES,
+            **self.scan_config.FRAMEWORK_PROFILES
+        }
+        # override pre-defined profiles or exising benchmarks
+        if benchmark.provider_benchmark_id:
+            if benchmark.provider_benchmark_id in pre_defined_profiles:
+                logger.info(
+                    f"Deep merging the provider benchmark id '{benchmark.provider_benchmark_id}' with the benchmark metadata."
+                )
+                base_metadata = pre_defined_profiles.get(benchmark.provider_benchmark_id, {})
+                benchmark.metadata = deep_merge_dicts(base_metadata, benchmark.metadata or {})
+            elif benchmark.provider_benchmark_id in self.benchmarks:
+                existing_benchmark = self.benchmarks.get(benchmark.provider_benchmark_id)
+                if existing_benchmark:
+                    logger.info(
+                        f"Deep merging the existing benchmark '{existing_benchmark.identifier}' with the benchmark metadata."
+                    )
+                    base_metadata = existing_benchmark.metadata or {}
+                    benchmark.metadata = deep_merge_dicts(base_metadata, benchmark.metadata or {})
 
         if not benchmark.metadata:
             logger.info(
                 f"Benchmark '{benchmark.identifier}' has no metadata. Using defaults from profile."
             )
-            benchmark.metadata = self.scan_config.SCAN_PROFILES.get(
-                benchmark.identifier, {}
-            ) or self.scan_config.FRAMEWORK_PROFILES.get(benchmark.identifier, {})
+            benchmark.metadata = pre_defined_profiles.get(benchmark.identifier, {})
 
 
         async with self._benchmarks_lock:
@@ -463,11 +504,11 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         error_msg: str = "{type} shield '{shield_id}' is not available. Please provide a valid shield_id in the benchmark metadata."
         
         for shield_id in llm_io_shield_mapping["input"]:
-            if not await self.shields_api.get_shield(shield_id):
+            if not await self.shields_api.get_shield(GetShieldRequest(identifier=shield_id)):
                 raise GarakValidationError(error_msg.format(type="Input", shield_id=shield_id))
             
         for shield_id in llm_io_shield_mapping["output"]:
-            if not await self.shields_api.get_shield(shield_id):
+            if not await self.shields_api.get_shield(GetShieldRequest(identifier=shield_id)):
                 raise GarakValidationError(error_msg.format(type="Output", shield_id=shield_id))
 
     async def _build_command(

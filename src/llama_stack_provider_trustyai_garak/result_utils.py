@@ -79,6 +79,33 @@ def parse_generations_from_report_content(
     return generations, score_rows_by_probe
 
 
+def parse_digest_from_report_content(report_content: str) -> Dict[str, Any]:
+    """Parse digest entry from report.jsonl content.
+    
+    Args:
+        report_content: String content of report.jsonl file
+        
+    Returns:
+        Dict with digest data including group and probe summaries, or empty dict if not found
+    """
+    for line in report_content.split("\n"):
+        if not line.strip():
+            continue
+        
+        try:
+            entry = json.loads(line)
+            
+            if entry.get("entry_type") == "digest":
+                return entry
+        
+        except json.JSONDecodeError:
+            continue
+        except Exception:
+            continue
+    
+    return {}
+
+
 def parse_aggregated_from_avid_content(avid_content: str) -> Dict[str, Dict[str, Any]]:
     """Parse probe-level aggregated info from AVID report content.
     
@@ -173,32 +200,35 @@ def parse_aggregated_from_avid_content(avid_content: str) -> Dict[str, Dict[str,
     return aggregated_by_probe
 
 
-def calculate_detector_means(score_rows: List[Dict[str, Any]]) -> Dict[str, float]:
-    """Calculate per-detector mean scores from score rows.
+def detector_scores_from_digest(
+    digest_probe_data: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Get detector scores from digest.
     
     Args:
-        score_rows: List of detector results per attempt
+        digest_probe_data: Probe-level data from digest
         
     Returns:
-        Dict mapping detector_name_mean → average score (0-100 scale)
+        Dict with detector information including scores, defcon levels, etc.
     """
-    detector_sums = {}
+    detectors = {}
     
-    for row in score_rows:
-        for detector, scores in row.items():
-            scores_list = scores if isinstance(scores, list) else [scores]
-            
-            if detector not in detector_sums:
-                detector_sums[detector] = []
-            
-            # For mean calculation, use max score from list if multiple outputs
-            max_score = max(scores_list) if scores_list else 0
-            detector_sums[detector].append(max_score)
+    # Iterate through all detectors found in the digest probe data
+    for detector_name, detector_info in digest_probe_data.items():
+        # Skip the _summary key
+        if detector_name == "_summary":
+            continue
+        
+        detectors[detector_name] = {
+            "detector_descr": detector_info.get("detector_descr", ""),
+            "absolute_score": detector_info.get("absolute_score"),
+            "absolute_defcon": detector_info.get("absolute_defcon"),
+            "absolute_comment": detector_info.get("absolute_comment", ""),
+            "total_evaluated": detector_info.get("total_evaluated"),
+            "passed": detector_info.get("passed"),
+        }
     
-    return {
-        f"{detector}_mean": round((sum(scores) / len(scores)) * 100, 2)
-        for detector, scores in detector_sums.items()
-    }
+    return detectors
 
 
 def calculate_basic_aggregates(
@@ -225,7 +255,6 @@ def calculate_basic_aggregates(
                 vulnerable_count += 1
                 break  # Count attempt once if any detector flagged it
     
-    detector_means = calculate_detector_means(score_rows)
     
     attack_success_rate = round((vulnerable_count / total_attempts * 100), 2) if total_attempts > 0 else 0
     
@@ -236,11 +265,40 @@ def calculate_basic_aggregates(
         "vulnerable_responses": vulnerable_count,
         "attack_success_rate": attack_success_rate,
         
-        # Detector scores (grouped)
-        "detector_scores": detector_means,
-        
         # Metadata (minimal when AVID not available)
         "metadata": {}
+    }
+
+
+def calculate_overall_metrics(scores: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """Calculate overall metrics across all probes.
+    
+    Args:
+        scores: Dict mapping probe_name → score data with aggregated_results
+        
+    Returns:
+        Dict with overall metrics across all probes
+    """
+    total_attempts = 0
+    total_vulnerable = 0
+    total_benign = 0
+    probe_count = 0
+    
+    for probe_name, score_data in scores.items():
+        aggregated = score_data.get("aggregated_results", {})
+        total_attempts += aggregated.get("total_attempts", 0)
+        total_vulnerable += aggregated.get("vulnerable_responses", 0)
+        total_benign += aggregated.get("benign_responses", 0)
+        probe_count += 1
+    
+    overall_attack_success_rate = round((total_vulnerable / total_attempts * 100), 2) if total_attempts > 0 else 0
+    
+    return {
+        "total_attempts": total_attempts,
+        "benign_responses": total_benign,
+        "vulnerable_responses": total_vulnerable,
+        "attack_success_rate": overall_attack_success_rate,
+        "probe_count": probe_count,
     }
 
 
@@ -248,7 +306,8 @@ def combine_parsed_results(
     generations: List[Dict[str, Any]],
     score_rows_by_probe: Dict[str, List[Dict[str, Any]]],
     aggregated_by_probe: Dict[str, Dict[str, Any]],
-    eval_threshold: float
+    eval_threshold: float,
+    digest: Dict[str, Any] = None
 ) -> Dict[str, Any]:
     """Combine parsed data into EvaluateResponse-compatible structure.
     
@@ -257,11 +316,15 @@ def combine_parsed_results(
         score_rows_by_probe: Dict mapping probe_name → score rows
         aggregated_by_probe: Dict mapping probe_name → aggregated stats (from AVID)
         eval_threshold: Threshold for vulnerability
+        digest: Optional digest data from report.jsonl with detailed probe/detector info
         
     Returns:
         Dict with 'generations' and 'scores' keys (ready for EvaluateResponse)
     """
     scores = {}
+    
+    # Extract digest eval data if available
+    digest_eval = digest.get("eval", {}) if digest else {}
     
     for probe_name, score_rows in score_rows_by_probe.items():
         aggregated = aggregated_by_probe.get(probe_name, {})
@@ -269,15 +332,43 @@ def combine_parsed_results(
         # If no AVID data, calculate basic stats from score_rows
         if not aggregated:
             aggregated = calculate_basic_aggregates(score_rows, eval_threshold)
-        else:
-            # AVID data exists - calculate detector_means from score_rows and add as nested dict
-            detector_means = calculate_detector_means(score_rows)
-            aggregated["detector_scores"] = detector_means
+        
+        # Get digest data for this probe (navigate through group structure)
+        digest_probe_data = None
+        if digest_eval:
+            # Find the group this probe belongs to (usually first part of probe name)
+            probe_group = probe_name.split('.')[0]
+            group_data = digest_eval.get(probe_group, {})
+            digest_probe_data = group_data.get(probe_name, {})
+        
+        # Enrich detector scores with digest information if available
+        if digest_probe_data:
+            detector_scores = detector_scores_from_digest(digest_probe_data)
+            aggregated["detector_scores"] = detector_scores
         
         scores[probe_name] = {
             "score_rows": score_rows,
             "aggregated_results": aggregated
         }
+    
+    # Calculate overall metrics across all probes
+    overall_metrics = calculate_overall_metrics(scores)
+
+    # calculate Tier-based Security Aggregate (TBSA) (available from garak>=0.14.0)
+    try:
+        from garak.analyze import tbsa as tbsa_mod
+        tbsa_score, pd_ver_hash, pd_count = tbsa_mod.digest_to_tbsa(digest)
+        overall_metrics["tbsa"] = tbsa_score
+        overall_metrics["version_probe_hash"] = pd_ver_hash
+        overall_metrics["probe_detector_pairs_contributing"] = pd_count
+    except Exception as e:
+        logger.warning(f"Error calculating tbsa: {e}")
+    
+    # Add overall metrics as a special entry (using "_overall" to distinguish from probe names)
+    scores["_overall"] = {
+        "score_rows": [],  # No individual score rows for overall
+        "aggregated_results": overall_metrics
+    }
     
     return {
         "generations": generations,

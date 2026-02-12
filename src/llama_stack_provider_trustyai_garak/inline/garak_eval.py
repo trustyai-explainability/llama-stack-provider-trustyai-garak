@@ -27,7 +27,8 @@ from llama_stack_provider_trustyai_garak import shield_scan
 from ..result_utils import (
     parse_generations_from_report_content, 
     parse_aggregated_from_avid_content, 
-    combine_parsed_results
+    combine_parsed_results,
+    parse_digest_from_report_content
 )
 
 logger = logging.getLogger(__name__)
@@ -319,6 +320,21 @@ class GarakInlineEvalAdapter(GarakEvalBase):
         # Use shared parsing utility
         return parse_generations_from_report_content(report_str, eval_threshold)
 
+    async def _parse_digest_from_report(self, report_file_id: str) -> Dict[str, Any]:
+        """Parse digest entry from report.jsonl.
+        
+        Returns:
+            Dict with digest data or empty dict if not found
+        """
+        report_content = await self.file_api.openai_retrieve_file_content(RetrieveFileContentRequest(file_id=report_file_id))
+        if not report_content:
+            return {}
+        
+        report_str = report_content.body.decode("utf-8")
+        
+        # Use shared parsing utility
+        return parse_digest_from_report_content(report_str)
+
     async def _parse_aggregated_from_avid(self, avid_file_id: str) -> Dict[str, Dict[str, Any]]:
         """Parse probe-level aggregated info from AVID report.
         
@@ -346,13 +362,15 @@ class GarakInlineEvalAdapter(GarakEvalBase):
         # Fetch and parse both reports using shared utilities
         generations, score_rows_by_probe = await self._parse_generations_from_report(report_file_id, eval_threshold)
         aggregated_by_probe = await self._parse_aggregated_from_avid(avid_file_id)
+        digest = await self._parse_digest_from_report(report_file_id)
         
         # Combine using shared utility
         result_dict = combine_parsed_results(
             generations,
             score_rows_by_probe,
             aggregated_by_probe,
-            eval_threshold
+            eval_threshold,
+            digest
         )
         
         scores = {

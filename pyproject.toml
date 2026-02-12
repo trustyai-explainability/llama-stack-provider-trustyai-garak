@@ -1,6 +1,6 @@
 [project]
 name = "llama-stack-provider-trustyai-garak"
-version = "0.1.8"
+version = "0.2.0"
 description = "Out-Of-Tree Llama Stack provider for Garak Red-teaming"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -10,7 +10,6 @@ authors = [
     {name = "TrustyAI Team"}
 ]
 keywords = ["llama-stack", "garak", "red-teaming", "security", "ai-safety"]
-# pinned LLS libs to 0.4.4 for testing (to be removed in next PR (for lls-0.5.0))
 dependencies = [
     "llama-stack-client>=0.5.0",
     "llama-stack-api>=0.5.0",
@@ -34,6 +33,8 @@ where = ["src"]
 
 [project.optional-dependencies]
 inline = [
+    "pyasn1==0.6.2", # trivy high vul fix
+    "protobuf==6.33.5", # trivy high vul fix
     "garak==0.14.0",
 ]
 dev = ["pytest", "pytest-cov",  "pytest-asyncio", "black", "isort"]
