@@ -350,12 +350,17 @@ def parse_results(
     aggregated_by_probe = result_utils.parse_aggregated_from_avid_content(avid_content)
     logger.info(f"Parsed {len(aggregated_by_probe)} probe summaries")
     
+    logger.debug("Parsing digest from report.jsonl...")
+    digest = result_utils.parse_digest_from_report_content(report_content)
+    logger.info(f"Digest parsed: {bool(digest)}")
+    
     logger.debug("Combining results...")
     result_dict = result_utils.combine_parsed_results(
         generations,
         score_rows_by_probe,
         aggregated_by_probe,
-        eval_threshold
+        eval_threshold,
+        digest
     )
     
     # Convert to EvaluateResponse
@@ -405,19 +410,21 @@ def parse_results(
         logger.info(f"File mapping uploaded: {mapping_file.filename} (ID: {mapping_file.id})")
     
     # combine scores of all probes into a single metric to log
-    aggregated_scores = {k: v.aggregated_results for k, v in scores_with_scoring_result.items()}
-    combined_metrics = {
-        "total_attempts": 0,
-        "vulnerable_responses": 0,
-        "attack_success_rate": 0,
+    scoring_result_overall = scores_with_scoring_result.get("_overall")
+    if scoring_result_overall:
+        overall_metrics = scoring_result_overall.aggregated_results
+    else:
+        overall_metrics = {}
+    log_metrics = {
+        "total_attempts": overall_metrics.get("total_attempts", 0),
+        "vulnerable_responses": overall_metrics.get("vulnerable_responses", 0),
+        "attack_success_rate": overall_metrics.get("attack_success_rate", 0),
     }
-    for aggregated_results in aggregated_scores.values():
-        combined_metrics["total_attempts"] += aggregated_results["total_attempts"]
-        combined_metrics["vulnerable_responses"] += aggregated_results["vulnerable_responses"]
-    
-    combined_metrics["attack_success_rate"] = round((combined_metrics["vulnerable_responses"] / combined_metrics["total_attempts"] * 100), 2) if combined_metrics["total_attempts"] > 0 else 0
-    for key, value in combined_metrics.items():
-        summary_metrics.log_metric(key, value)
+    if overall_metrics.get("tbsa"):
+        log_metrics["tbsa"] = overall_metrics["tbsa"]
+    if log_metrics["total_attempts"] > 0:
+        for key, value in log_metrics.items():
+            summary_metrics.log_metric(key, value)
 
     html_report_id = file_id_mapping.get(f"{job_id}_scan.report.html")
     if html_report_id:

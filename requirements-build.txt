@@ -411,9 +411,9 @@ pycparser==3.0 \
     --hash=sha256:600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29 \
     --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
     # via cffi
-pyproject-metadata==0.10.0 \
-    --hash=sha256:7f5bd0ef398b60169556cb17ea261d715caf7f8561238151f51b2305084ba8d4 \
-    --hash=sha256:b1e439a9f7560f9792ee5975dcf5e89d2510b1fc84a922d7e5d665aa9102d966
+pyproject-metadata==0.11.0 \
+    --hash=sha256:85bbecca8694e2c00f63b492c96921d6c228454057c88e7c352b2077fcaa4096 \
+    --hash=sha256:c72fa49418bb7c5a10f25e050c418009898d1c051721d19f98a6fb6da59a66cf
     # via meson-python
 scikit-build-core==0.11.6 \
     --hash=sha256:5982ccd839735be99cfd3b92a8847c6c196692f476c215da84b79d2ad12f9f1b \
@@ -494,12 +494,6 @@ wheel==0.46.3 \
     #   zope-interface
 
 # The following packages are considered to be unsafe in a requirements file:
-setuptools==80.10.2 \
-    --hash=sha256:8b0e9d10c784bf7d262c4e5ec5d4ec94127ce206e8738f29a437945fbc219b70 \
-    --hash=sha256:95b30ddfb717250edb492926c92b5221f7ef3fbcc2b07579bcd4a27da21d0173
-    # via
-    #   python-dateutil
-    #   setuptools-scm
 setuptools==80.9.0 \
     --hash=sha256:062d34222ad13e0cc312a4c02d73f059e86a4acbfbdea8f8f76b28c99f306922 \
     --hash=sha256:f36b47402ecde768dbfafc46e8e4207b4360c654f1f3bb84475f0a28628fb19c
@@ -572,3 +566,9 @@ setuptools==80.9.0 \
     #   zipp
     #   zope-interface
     #   zstandard
+setuptools==82.0.0 \
+    --hash=sha256:22e0a2d69474c6ae4feb01951cb69d515ed23728cf96d05513d36e42b62b37cb \
+    --hash=sha256:70b18734b607bd1da571d097d236cfcfacaf01de45717d59e6e04b96877532e0
+    # via
+    #   python-dateutil
+    #   setuptools-scm

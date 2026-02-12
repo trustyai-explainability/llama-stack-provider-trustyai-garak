@@ -36,6 +36,7 @@ try:
         UploadFileRequest,
         Safety,
         RunShieldResponse,
+        GetShieldRequest,
         ViolationLevel,
         Shields,
         OpenAIChatCompletion,
@@ -90,7 +91,8 @@ except ModuleNotFoundError:  # fallback to legacy llama_stack layout
     from llama_stack.apis.safety import (
         Safety,
         RunShieldResponse, 
-        ViolationLevel
+        ViolationLevel,
+        GetShieldRequest,
     )
 
     # shields
@@ -150,6 +152,7 @@ __all__ = [
     "Safety",
     "RunShieldResponse",
     "ViolationLevel",
+    "GetShieldRequest",
     # shields
     "Shields",
     # inference
