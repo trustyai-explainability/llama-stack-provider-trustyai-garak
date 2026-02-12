@@ -356,9 +356,9 @@ def combine_parsed_results(
 
     # calculate Tier-based Security Aggregate (TBSA) (available from garak>=0.14.0)
     try:
-        from garak.analyze import tbsa
-        tbsa, pd_ver_hash, pd_count = tbsa.digest_to_tbsa(digest)
-        overall_metrics["tbsa"] = tbsa
+        from garak.analyze import tbsa as tbsa_mod
+        tbsa_score, pd_ver_hash, pd_count = tbsa_mod.digest_to_tbsa(digest)
+        overall_metrics["tbsa"] = tbsa_score
         overall_metrics["version_probe_hash"] = pd_ver_hash
         overall_metrics["probe_detector_pairs_contributing"] = pd_count
     except Exception as e:
