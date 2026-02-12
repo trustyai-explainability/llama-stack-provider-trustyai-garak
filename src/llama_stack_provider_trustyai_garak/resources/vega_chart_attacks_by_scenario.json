@@ -1,0 +1,114 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "title": {
+    "text": "Model Behavior By Attack Strategy",
+    "dy": -20
+  },
+  "width": "container",
+  "height": 300,
+  "data": {
+    "name": "data"
+  },
+  "layer": [
+    {
+      "mark": {
+        "type": "bar",
+        "stroke": "#A4A4A4",
+        "strokeWidth": 1,
+        "strokeDash": [
+          2,
+          2
+        ],
+        "fill": "transparent"
+      },
+      "encoding": {
+        "x": {
+          "field": "probe_classname",
+          "sort": {
+            "field": "run-iter",
+            "op": "min"
+          },
+          "title": "Attack Strategy",
+          "legend": null
+        },
+        "y": {
+          "field": "baseline-count",
+          "aggregate": "max",
+          "title": null,
+          "legend": null
+        },
+        "order": {
+          "field": "order",
+          "type": "ordinal"
+        }
+      }
+    },
+    {
+      "transform": [
+        {
+          "calculate": "indexof(['refused', 'complied'], datum.outcome)",
+          "as": "order"
+        }
+      ],
+      "mark": {
+        "type": "bar",
+        "strokeWidth": 1
+      },
+      "encoding": {
+        "x": {
+          "field": "probe_classname",
+          "title": "Attack Strategy",
+          "axis": {
+            "labelAngle": 45,
+            "labelAlign": "left"
+          },
+          "scale": {
+            "paddingOuter": 1,
+            "paddingInner": 0.5
+          }
+        },
+        "y": {
+          "aggregate": "count",
+          "title": "Count"
+        },
+        "color": {
+          "field": "outcome",
+          "scale": {
+            "domain": [
+              "complied",
+              "refused"
+            ],
+            "range": [
+              "#CA5050",
+              "#A4A4A4"
+            ]
+          },
+          "sort": [
+            "complied",
+            "refused"
+          ],
+          "title": "Model Behavior"
+        },
+        "order": {
+          "field": "order",
+          "type": "ordinal"
+        },
+        "tooltip": [
+          {
+            "field": "probe_classname",
+            "title": "Attack Strategy"
+          },
+          {
+            "field": "outcome",
+            "title": "Model Behavior"
+          },
+          {
+            "field": "data",
+            "aggregate": "count",
+            "title": "Count"
+          }
+        ]
+      }
+    }
+  ]
+}
