@@ -88,9 +88,9 @@ class GarakRunConfig(BaseModel):
         default=None,
         description="A single language (as BCP47) that the target application for LLM accepts as prompt and output"
     )
-    langproviders: Optional[List[str]] = Field(
+    langproviders: Optional[List[Dict[str, Any]]] = Field(
         default=None,
-        description="A list of configurations representing providers for converting from probe language to lang_spec target languages (BCP47)"
+        description="A list of configurations representing providers for converting from probe language to lang_spec target languages (BCP47). Each dict can contain 'language', 'model_type', 'model_name', and 'api_key' keys."
     )
     system_prompt: Optional[str] = Field(
         default=None,
