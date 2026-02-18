@@ -23,7 +23,7 @@ from typing import Dict, Optional, Set, List, Any, Union, Tuple
 import asyncio
 import logging
 import uuid
-from .config import GarakScanConfig, GarakInlineConfig, GarakRemoteConfig
+from .config import GarakScanConfig, GarakInlineConfig, GarakRemoteConfig, TapIntentConfig
 from .garak_command_config import GarakCommandConfig, GarakRunConfig
 from .errors import GarakError, GarakConfigError, GarakValidationError, BenchmarkNotFoundError
 
@@ -184,11 +184,76 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
                 f"Benchmark '{benchmark.identifier}' has no metadata. Using defaults from profile."
             )
             benchmark.metadata = pre_defined_profiles.get(benchmark.identifier, {})
+        
+        if benchmark.metadata.get("art_intents", False):
+            benchmark.metadata["garak_config"] = self._override_intents_benchmark_config(benchmark.metadata["garak_config"]).to_dict()
 
 
         async with self._benchmarks_lock:
             self.benchmarks[benchmark.identifier] = benchmark
     
+    def _override_intents_benchmark_config(self, garak_config: GarakCommandConfig | dict) -> GarakCommandConfig:
+        if isinstance(garak_config, dict):
+            garak_config = GarakCommandConfig.from_dict(garak_config)
+        elif not isinstance(garak_config, GarakCommandConfig):
+            raise GarakValidationError("garak_config must be a GarakCommandConfig or a dictionary")
+
+        ## FIXME: Set attack_model_name and evaluator_model_name to detector model by default if not provided by user
+        ## and override the llama stack url if not provided by user in garak_config
+
+        # detector stuff
+        if not garak_config.plugins.detectors or not garak_config.plugins.detectors.get("judge"):
+            garak_config.plugins.detectors = {
+                "judge": {
+                    "detector_model_type": "openai.OpenAICompatible",
+                    "detector_model_name": "",
+                    "detector_model_config": {
+                        "uri": "",
+                        "api_key": "dummy",
+                    }
+                }
+            }
+        if not garak_config.plugins.detectors.get("judge").get("detector_model_config"):
+            garak_config.plugins.detectors["judge"]["detector_model_config"] = {
+                "uri": self._get_llama_stack_url(),
+                "api_key": "dummy",
+            }
+        if not garak_config.plugins.detectors.get("judge").get("detector_model_config").get("uri"):
+            garak_config.plugins.detectors["judge"]["detector_model_config"]["uri"] = self._get_llama_stack_url()
+        
+
+        # TAPIntent attack stuff
+        if garak_config.plugins.probes and garak_config.plugins.probes.get("tap"):
+            tap_intent_config = garak_config.plugins.probes.get("tap").get("TAPIntent", TapIntentConfig())
+            if isinstance(tap_intent_config, dict):
+                tap_intent_config: TapIntentConfig = TapIntentConfig(**tap_intent_config)
+            
+            # attack model name
+            if not tap_intent_config.attack_model_name:
+                tap_intent_config.attack_model_name = garak_config.plugins.detectors.get("judge").get("detector_model_name")
+            # attack model config
+            if not tap_intent_config.attack_model_config or not tap_intent_config.attack_model_config.get("uri"):
+                tap_intent_config.attack_model_config = {
+                    "uri": self._get_llama_stack_url(),
+                    "api_key": "dummy",
+                    "max_tokens": 500,
+                }
+            # evaluator model name
+            if not tap_intent_config.evaluator_model_name:
+                tap_intent_config.evaluator_model_name = garak_config.plugins.detectors.get("judge").get("detector_model_name")
+            # evaluator model config
+            if not tap_intent_config.evaluator_model_config or not tap_intent_config.evaluator_model_config.get("uri"):
+                tap_intent_config.evaluator_model_config = {
+                    "uri": self._get_llama_stack_url(),
+                    "api_key": "dummy",
+                    "max_tokens": 10,
+                    "temperature": 0.0,
+                }
+            garak_config.plugins.probes["tap"]["TAPIntent"] = tap_intent_config.model_dump()
+        
+        return garak_config
+
+
     async def unregister_benchmark(
         self,
         benchmark_id: str,
@@ -551,6 +616,13 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         garak_config.plugins.probe_spec = self._normalize_list_arg(garak_config.plugins.probe_spec)
         garak_config.plugins.detector_spec = self._normalize_list_arg(garak_config.plugins.detector_spec)
         garak_config.plugins.buff_spec = self._normalize_list_arg(garak_config.plugins.buff_spec)
+
+        if provider_params.get("art_intents", False):
+            if not garak_config.plugins.detectors or not garak_config.plugins.detectors.get("judge"):
+                raise GarakValidationError("judge detector must be configured for ART intents")
+            
+            if not garak_config.plugins.detectors.get("judge").get("detector_model_name"):
+                raise GarakValidationError("detector_model_name must be configured for ART intents")
         
         cmd_config: dict = garak_config.to_dict()
         
