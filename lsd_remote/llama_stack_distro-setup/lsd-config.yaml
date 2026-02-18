@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llamastack-garak-config
+  namespace: tai-garak-lls # change this to the namespace you want to deploy to
+data:
+  # PostgreSQL connection details
+  POSTGRES_HOST: "postgres.tai-garak-lls.svc.cluster.local" # {postgres-service-name}.{namespace}.svc.cluster.local
+  POSTGRES_PORT: "5432"
+  
+  # Inference model configuration
+  VLLM_URL: "<inference-model-url>"
+  INFERENCE_MODEL: "<inference-model-name>"
+  VLLM_TLS_VERIFY: "false"
+  
+  # Kubeflow/Garak configuration
+  ENABLE_KUBEFLOW_GARAK: "true"
+  KUBEFLOW_PIPELINES_ENDPOINT: "<kubeflow-pipelines-endpoint>" # https://$(oc get routes ds-pipeline-dspa -o jsonpath='{.spec.host}')
+  KUBEFLOW_NAMESPACE: "tai-garak-lls" # change this to the namespace KFP is deployed to
+  KUBEFLOW_GARAK_BASE_IMAGE: "quay.io/opendatahub/odh-trustyai-garak-lls-provider-dsp:dev" # or "quay.io/rhoai/odh-trustyai-garak-lls-provider-dsp-rhel9:rhoai-3.4" (if you have access)
+  KUBEFLOW_LLAMA_STACK_URL: "http://llamastack-garak-distribution-service.tai-garak-lls.svc.cluster.local:8321" # http://{lsd-name}-service.{namespace}.svc.cluster.local:{port}
+  KUBEFLOW_EXPERIMENT_NAME: "trustyai-garak" # optional: group runs under a specific KFP experiment name (defaults to "trustyai-garak" if not provided)
