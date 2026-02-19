@@ -14,15 +14,27 @@
       "transform": [
         {
           "aggregate": [
-            {"op": "count", "as": "scenario_count"}
+            {
+              "op": "count",
+              "as": "scenario_count"
+            }
           ],
-          "groupby": ["probe_classname", "intent", "stub"]
+          "groupby": [
+            "probe_classname",
+            "intent",
+            "stub"
+          ]
         },
         {
           "aggregate": [
-            {"op": "count", "as": "unique_scenarios"}
+            {
+              "op": "count",
+              "as": "unique_scenarios"
+            }
           ],
-          "groupby": ["probe_classname"]
+          "groupby": [
+            "probe_classname"
+          ]
         }
       ],
       "mark": {
@@ -47,6 +59,9 @@
         },
         "y": {
           "field": "unique_scenarios",
+          "scale": {
+            "type": "point"
+          },
           "aggregate": "max",
           "title": null,
           "legend": null
@@ -61,10 +76,21 @@
         },
         {
           "aggregate": [
-            {"op": "max", "field": "outcome_score", "as": "max_outcome_score"},
-            {"op": "count", "as": "attempt_count"}
+            {
+              "op": "max",
+              "field": "outcome_score",
+              "as": "max_outcome_score"
+            },
+            {
+              "op": "count",
+              "as": "attempt_count"
+            }
           ],
-          "groupby": ["probe_classname", "intent", "stub"]
+          "groupby": [
+            "probe_classname",
+            "intent",
+            "stub"
+          ]
         },
         {
           "calculate": "datum.max_outcome_score == 1 ? 'complied' : 'refused'",
