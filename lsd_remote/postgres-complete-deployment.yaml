@@ -1,0 +1,84 @@
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  namespace: tai-garak-lls # change this to the namespace you want to deploy to
+type: Opaque
+stringData:
+  POSTGRES_DB: llamastack
+  POSTGRES_USER: llamastack
+  POSTGRES_PASSWORD: llamastack  # Change this for production deployments
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: tai-garak-lls # change this to the namespace you want to deploy to
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: tai-garak-lls # change this to the namespace you want to deploy to
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: registry.redhat.io/rhel9/postgresql-15@sha256:90ec347a35ab8a5d530c8d09f5347b13cc71df04f3b994bfa8b1a409b1171d59
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRESQL_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_DB
+        - name: POSTGRESQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_USER
+        - name: POSTGRESQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_PASSWORD
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/pgsql/data
+      volumes:
+      - name: postgres-storage
+        emptyDir: {}  # For testing - data lost on restart
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: tai-garak-lls # change this to the namespace you want to deploy to
+spec:
+  selector:
+    app: postgres
+  ports:
+  - protocol: TCP
+    port: 5432
+    targetPort: 5432
+  type: ClusterIP
+

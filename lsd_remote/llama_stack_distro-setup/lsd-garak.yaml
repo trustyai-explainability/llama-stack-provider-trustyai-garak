@@ -1,0 +1,102 @@
+apiVersion: llamastack.io/v1alpha1
+kind: LlamaStackDistribution
+metadata:
+  name: llamastack-garak-distribution
+  namespace: tai-garak-lls # change this to the namespace you want to deploy to
+spec:
+  replicas: 1
+  server:
+    containerSpec:
+      env:
+        # PostgreSQL
+        - name: POSTGRES_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: llamastack-garak-config
+              key: POSTGRES_HOST
+        - name: POSTGRES_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: llamastack-garak-config
+              key: POSTGRES_PORT
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_DB
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_PASSWORD
+        # Inference model
+        - name: VLLM_URL
+          valueFrom:
+            configMapKeyRef:
+              name: llamastack-garak-config
+              key: VLLM_URL
+        - name: INFERENCE_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: llamastack-garak-config
+              key: INFERENCE_MODEL
+        - name: VLLM_TLS_VERIFY
+          valueFrom:
+            configMapKeyRef:
+              name: llamastack-garak-config
+              key: VLLM_TLS_VERIFY
+        - name: VLLM_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: llama-stack-inference-model-secret
+              key: VLLM_API_TOKEN
+              optional: true
+        # LLS Garak
+        - name: ENABLE_KUBEFLOW_GARAK
+          valueFrom:
+            configMapKeyRef:
+              name: llamastack-garak-config
+              key: ENABLE_KUBEFLOW_GARAK
+        - name: KUBEFLOW_PIPELINES_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: llamastack-garak-config
+              key: KUBEFLOW_PIPELINES_ENDPOINT
+        - name: KUBEFLOW_NAMESPACE
+          valueFrom:
+            configMapKeyRef:
+              name: llamastack-garak-config
+              key: KUBEFLOW_NAMESPACE
+        - name: KUBEFLOW_GARAK_BASE_IMAGE
+          valueFrom:
+            configMapKeyRef:
+              name: llamastack-garak-config
+              key: KUBEFLOW_GARAK_BASE_IMAGE
+        - name: KUBEFLOW_LLAMA_STACK_URL
+          valueFrom:
+            configMapKeyRef:
+              name: llamastack-garak-config
+              key: KUBEFLOW_LLAMA_STACK_URL
+        - name: KUBEFLOW_EXPERIMENT_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: llamastack-garak-config
+              key: KUBEFLOW_EXPERIMENT_NAME
+        # Kubeflow credentials (no need if you apply rolebinding lsd-role.yaml)
+        # - name: KUBEFLOW_PIPELINES_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: kubeflow-credentials
+        #       key: KUBEFLOW_PIPELINES_TOKEN
+      name: llama-stack
+      port: 8321
+    distribution:
+      image: quay.io/opendatahub/llama-stack@sha256:cf21d3919d265f8796ed600bfe3d2eb3ce797b35ab8e60ca9b6867e0516675e5 # (or quay.io/rhoai/odh-llama-stack-core-rhel9:rhoai-3.4)
+    # storage:
+    #   size: 20Gi
+    #   mountPath: <custom-mount-path> ## Defaults to /opt/app-root/src/.llama/distributions/rh/

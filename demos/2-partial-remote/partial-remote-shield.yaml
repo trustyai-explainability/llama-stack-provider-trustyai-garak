@@ -1,0 +1,126 @@
+version: "1"
+image_name: trustyai-garak-partial-remote
+apis:
+  - inference
+  - eval
+  - files
+  - benchmarks
+  - safety
+  - shields
+providers:
+  inference:
+    - provider_id: vllm
+      provider_type: remote::vllm
+      config:
+        base_url: ${env.VLLM_URL:=https://litellm-litemaas.apps.prod.rhoai.rh-aiservices-bu.com/v1}
+        max_tokens: ${env.VLLM_MAX_TOKENS:=4096}
+        api_token: ${env.VLLM_API_TOKEN:=sk-9ce-HFJ_acauxeOPNLP1zw}
+    - provider_id: ollama
+      provider_type: remote::ollama
+      config:
+        url: http://localhost:11434  # Ollama's default port
+  eval:
+    - provider_id: trustyai_garak
+      provider_type: remote::trustyai_garak
+      module: llama_stack_provider_trustyai_garak
+      config:
+        llama_stack_url: ${env.KUBEFLOW_LLAMA_STACK_URL:=https://e722-2600-382-b68-4828-903c-d747-c28f-ca3.ngrok-free.app}
+        tls_verify: ${env.GARAK_TLS_VERIFY:=true}
+        kubeflow_config:
+          pipelines_endpoint: ${env.KUBEFLOW_PIPELINES_ENDPOINT:=https://ds-pipeline-dspa-model-namespace.apps.rosa.y1m4j9o2e1n6b9l.r6mx.p3.openshiftapps.com}
+          namespace: ${env.KUBEFLOW_NAMESPACE:=model-namespace}
+          garak_base_image: ${env.KUBEFLOW_GARAK_BASE_IMAGE:=quay.io/opendatahub/odh-trustyai-garak-lls-provider-dsp:dev}
+          pipelines_api_token: ${env.KUBEFLOW_PIPELINES_TOKEN:=}
+          experiment_name: ${env.KUBEFLOW_EXPERIMENT_NAME:=}
+  files:
+    - provider_id: meta-reference-files
+      provider_type: inline::localfs
+      config:
+        storage_dir: ${env.FILES_STORAGE_DIR:=~/.llama/distributions/trustyai-garak-remote/files}
+        metadata_store:
+          table_name: files_metadata
+          backend: sql_default
+  safety:
+    - provider_id: llama-guard
+      provider_type: inline::llama-guard
+      config: {}
+storage:
+  backends:
+    kv_default:
+      type: kv_sqlite
+      db_path: ${env.SQLITE_STORE_DIR:=~/.llama/distributions/trustyai-garak-remote}/kvstore.db
+    sql_default:
+      type: sql_sqlite
+      db_path: ${env.SQLITE_STORE_DIR:=~/.llama/distributions/trustyai-garak-remote}/sql_store.db
+  stores:
+    metadata:
+      namespace: registry
+      backend: kv_default
+    inference:
+      table_name: inference_store
+      backend: sql_default
+      max_write_queue_size: 10000
+      num_writers: 4
+    conversations:
+      table_name: openai_conversations
+      backend: sql_default
+registered_resources:
+  benchmarks:
+    - benchmark_id: trustyai_garak::owasp_llm_top10
+      dataset_id: garak
+      scoring_functions:
+        - garak_scoring
+      provider_id: trustyai_garak
+      provider_benchmark_id: trustyai_garak::owasp_llm_top10
+    - benchmark_id: trustyai_garak::avid
+      dataset_id: garak
+      scoring_functions:
+        - garak_scoring
+      provider_id: trustyai_garak
+      provider_benchmark_id: trustyai_garak::avid
+    - benchmark_id: trustyai_garak::avid_security
+      dataset_id: garak
+      scoring_functions:
+        - garak_scoring
+      provider_id: trustyai_garak
+      provider_benchmark_id: trustyai_garak::avid_security
+    - benchmark_id: trustyai_garak::avid_ethics
+      dataset_id: garak
+      scoring_functions:
+        - garak_scoring
+      provider_id: trustyai_garak
+      provider_benchmark_id: trustyai_garak::avid_ethics
+    - benchmark_id: trustyai_garak::avid_performance
+      dataset_id: garak
+      scoring_functions:
+        - garak_scoring
+      provider_id: trustyai_garak
+      provider_benchmark_id: trustyai_garak::avid_performance
+    - benchmark_id: trustyai_garak::quality
+      dataset_id: garak
+      scoring_functions:
+        - garak_scoring
+      provider_id: trustyai_garak
+      provider_benchmark_id: trustyai_garak::quality
+    - benchmark_id: trustyai_garak::cwe
+      dataset_id: garak
+      scoring_functions:
+        - garak_scoring
+      provider_id: trustyai_garak
+      provider_benchmark_id: trustyai_garak::cwe
+    - benchmark_id: trustyai_garak::quick
+      dataset_id: garak
+      scoring_functions:
+        - garak_scoring
+      provider_id: trustyai_garak
+      provider_benchmark_id: trustyai_garak::quick
+  models:
+    - model_id: llama-guard3:1b
+      provider_id: ollama
+      provider_model_id: llama-guard3:1b
+  shields:
+    - shield_id: llama-guard
+      provider_id: llama-guard
+      provider_shield_id: ollama/llama-guard3:1b
+server:
+  port: 8321
