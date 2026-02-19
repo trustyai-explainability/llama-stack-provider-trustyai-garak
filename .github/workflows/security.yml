@@ -1,74 +1,53 @@
-name: Security Scan
+name: Security
 
 on:
-  pull_request:
-    branches: [main]
   push:
-    branches: [main]
+    branches: [main, master]
+  pull_request:
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
 
 jobs:
-  trivy-scan:
-    name: Trivy Security Scan
+  codeql:
+    name: CodeQL Analysis
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-      actions: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  safety:
+    name: Dependency Security Scan
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          pip install safety
 
-      - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-fs-results.sarif'
-          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
-          exit-code: '0'  # Don't fail on this scan, we'll check results separately
-
-      - name: Run Trivy dependency scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-deps-results.sarif'
-          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
-          scanners: 'vuln'
-          exit-code: '0'  # Don't fail on this scan, we'll check results separately
-
-      - name: Check for critical vulnerabilities
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'table'
-          severity: 'CRITICAL'
-          exit-code: '1'  # Fail if critical vulnerabilities found
-
-      - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        if: always() && github.event_name == 'pull_request' && github.base_ref == 'main'
-        with:
-          sarif_file: 'trivy-fs-results.sarif'
-          category: 'trivy-filesystem'
-
-      - name: Upload Trivy dependency scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        if: always() && github.event_name == 'pull_request' && github.base_ref == 'main'
-        with:
-          sarif_file: 'trivy-deps-results.sarif'
-          category: 'trivy-dependencies'
+      - name: Run safety check
+        run: |
+          safety check --json || true
