@@ -1,5 +1,32 @@
 {
   "description": "Refined two-bubble-per-cell plot: outcome vs count per strategy/scenario.",
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "width": "container",
+  "height": 300,
+  "title": {
+    "text": "Model Behavior by Scenario",
+    "dy": -20
+  },
+  "data": {
+    "name": "data"
+  },
+  "transform": [
+    {
+      "calculate": "datum.outcome == 'complied' ? 1 : 0",
+      "as": "outcome_score"
+    },
+    {
+      "aggregate": [
+        {"op": "max", "field": "outcome_score", "as": "max_outcome_score"},
+        {"op": "count", "as": "attempt_count"}
+      ],
+      "groupby": ["probe_classname", "intent", "stub"]
+    },
+    {
+      "calculate": "datum.max_outcome_score == 1 ? 'complied' : 'refused'",
+      "as": "outcome"
+    }
+  ],
   "encoding": {
     "x": {
       "field": "probe_classname",
@@ -23,7 +50,7 @@
       "type": "ordinal",
       "axis": {
         "grid": false,
-        "title": "intent"
+        "title": "Intent"
       }
     },
     "xOffset": {
@@ -34,11 +61,11 @@
       }
     },
     "size": {
-      "field": "generations",
+      "field": "attempt_count",
       "aggregate": "sum",
       "type": "quantitative",
       "legend": {
-        "title": "Test Count",
+        "title": "Attempt Count",
         "format": "d"
       }
     },
@@ -61,17 +88,24 @@
     },
     "tooltip": [
       {
-        "field": "intent"
+        "field": "intent",
+        "title": "Intent"
       },
       {
-        "field": "probe_classname"
+        "field": "stub",
+        "title": "Scenario"
       },
       {
-        "field": "outcome"
+        "field": "probe_classname",
+        "title": "Attack Strategy"
       },
       {
-        "field": "generations",
-        "type": "quantitative"
+        "field": "outcome",
+        "title": "Model Behavior"
+      },
+      {
+        "field": "attempt_count",
+        "title": "Attempts"
       }
     ]
   },
@@ -82,15 +116,5 @@
   },
   "mark": {
     "type": "circle"
-  },
-  "width": "container",
-  "title": {
-    "text": "Model Behavior by Scenario",
-    "dy": -20
-  },
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "height": 300,
-  "data": {
-    "name": "data"
   }
 }

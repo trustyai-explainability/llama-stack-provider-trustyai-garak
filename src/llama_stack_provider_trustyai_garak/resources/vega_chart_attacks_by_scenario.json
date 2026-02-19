@@ -11,6 +11,20 @@
   },
   "layer": [
     {
+      "transform": [
+        {
+          "aggregate": [
+            {"op": "count", "as": "scenario_count"}
+          ],
+          "groupby": ["probe_classname", "intent", "stub"]
+        },
+        {
+          "aggregate": [
+            {"op": "count", "as": "unique_scenarios"}
+          ],
+          "groupby": ["probe_classname"]
+        }
+      ],
       "mark": {
         "type": "bar",
         "stroke": "#A4A4A4",
@@ -32,19 +46,30 @@
           "legend": null
         },
         "y": {
-          "field": "baseline-count",
+          "field": "unique_scenarios",
           "aggregate": "max",
           "title": null,
           "legend": null
-        },
-        "order": {
-          "field": "order",
-          "type": "ordinal"
         }
       }
     },
     {
       "transform": [
+        {
+          "calculate": "datum.outcome == 'complied' ? 1 : 0",
+          "as": "outcome_score"
+        },
+        {
+          "aggregate": [
+            {"op": "max", "field": "outcome_score", "as": "max_outcome_score"},
+            {"op": "count", "as": "attempt_count"}
+          ],
+          "groupby": ["probe_classname", "intent", "stub"]
+        },
+        {
+          "calculate": "datum.max_outcome_score == 1 ? 'complied' : 'refused'",
+          "as": "outcome"
+        },
         {
           "calculate": "indexof(['refused', 'complied'], datum.outcome)",
           "as": "order"
@@ -69,7 +94,7 @@
         },
         "y": {
           "aggregate": "count",
-          "title": "Count"
+          "title": "Unique Scenarios"
         },
         "color": {
           "field": "outcome",
@@ -99,13 +124,20 @@
             "title": "Attack Strategy"
           },
           {
+            "field": "intent",
+            "title": "Intent"
+          },
+          {
+            "field": "stub",
+            "title": "Scenario"
+          },
+          {
             "field": "outcome",
             "title": "Model Behavior"
           },
           {
-            "field": "data",
-            "aggregate": "count",
-            "title": "Count"
+            "field": "attempt_count",
+            "title": "Attempts"
           }
         ]
       }
