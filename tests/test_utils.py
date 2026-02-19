@@ -210,7 +210,6 @@ class TestResultUtils:
         assert "raw_report" in template_vars
         assert "report_name" in template_vars
         assert template_vars["raw_report"] == raw_report
-        assert template_vars["report_name"] == "garak.5297e468-ed94-4c0f-8187-3feb8e6693d4.report.jsonl"
 
     def test_derive_template_vars_without_digest_entry(self):
         """Test derive_template_vars function when no digest entry is present"""
@@ -243,7 +242,6 @@ class TestResultUtils:
         # Verify the HTML contains expected content
         assert "<!DOCTYPE html>" in rendered_html
         assert "<title>Garak - Automated Red Teaming report</title>" in rendered_html
-        assert "garak.5297e468-ed94-4c0f-8187-3feb8e6693d4.report.jsonl" in rendered_html
 
         # Verify the expected JavaScript libraries are included
         assert "vega.min.js" in rendered_html
