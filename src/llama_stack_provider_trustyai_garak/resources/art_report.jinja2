@@ -43,10 +43,9 @@
 <div class="pf-v6-c-page" id="masthead-basic-example">
     <header class="pf-v6-c-masthead" id="masthead-basic-example-masthead">
         <div class="pf-v6-c-masthead__main">
-            <div class="pf-v6-c-masthead__brand">
-                <div class="pf-v6-c-masthead__content">
-                    Automated Red Teaming report
-                </div>
+            <div class="pf-v6-c-masthead__brand"></div>
+            <div class="pf-v6-c-masthead__content">
+                <h1 class="pf-v6-c-title pf-m-xl">Automated Red Teaming Report</h1>
             </div>
         </div>
     </header>
@@ -55,12 +54,12 @@
             <nav class="pf-v6-c-nav" aria-label="Global">
                 <ul class="pf-v6-c-nav__list" role="list">
                     <li class="pf-v6-c-nav__item">
-                        <a href="#overview" class="pf-v6-c-nav__link pf-m-current">
+                        <a href="#overview" class="pf-v6-c-nav__link pf-m-current" aria-current="page">
                             <span class="pf-v6-c-nav__link-text">Overview</span>
                         </a>
                     </li>
                     <li class="pf-v6-c-nav__item">
-                        <a href="#vega_chart_attacks_by_scenario" class="pf-v6-c-nav__link" aria-current="page">
+                        <a href="#vega_chart_attacks_by_scenario" class="pf-v6-c-nav__link">
                             <span class="pf-v6-c-nav__link-text">Attacks by scenario</span>
                         </a>
                     </li>
@@ -113,6 +112,18 @@
 </div>
 </body>
 <script type="text/javascript">
+    // Navigation active state
+    function updateActiveNav() {
+        const hash = location.hash || '#overview';
+        document.querySelectorAll('.pf-v6-c-nav__link').forEach(link => {
+            const isActive = link.getAttribute('href') === hash;
+            link.classList.toggle('pf-m-current', isActive);
+            link.setAttribute('aria-current', isActive ? 'page' : 'false');
+        });
+    }
+    window.addEventListener('hashchange', updateActiveNav);
+    document.addEventListener('DOMContentLoaded', updateActiveNav);
+
     const attack_by_scenario_data = {{ attacks_by_scenario_data | tojson }};
     const spec_a = {{ vega_chart_attacks_by_scenario | tojson }};
     spec_a.data = {"values": attack_by_scenario_data};
