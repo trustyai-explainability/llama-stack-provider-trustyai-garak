@@ -50,7 +50,8 @@ def parse_generations_from_report_content(
                 for detector, scores in detector_results.items():
                     # Note: scores can be a list (multiple outputs per prompt)
                     scores_list = scores if isinstance(scores, list) else [scores]
-                    if any(score >= eval_threshold for score in scores_list):
+                    if any(score[0] >= eval_threshold if isinstance(score, list) else score >= eval_threshold
+                           for score in scores_list):
                         is_vulnerable = True
                         break
                 
