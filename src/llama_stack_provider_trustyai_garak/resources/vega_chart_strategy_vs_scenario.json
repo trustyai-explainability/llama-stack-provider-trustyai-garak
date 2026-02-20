@@ -1,0 +1,120 @@
+{
+  "description": "Refined two-bubble-per-cell plot: outcome vs count per strategy/scenario.",
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "width": "container",
+  "height": 300,
+  "title": {
+    "text": "Model Behavior by Scenario",
+    "dy": -20
+  },
+  "data": {
+    "name": "data"
+  },
+  "transform": [
+    {
+      "calculate": "datum.outcome == 'complied' ? 1 : 0",
+      "as": "outcome_score"
+    },
+    {
+      "aggregate": [
+        {"op": "max", "field": "outcome_score", "as": "max_outcome_score"},
+        {"op": "count", "as": "attempt_count"}
+      ],
+      "groupby": ["probe_classname", "intent", "stub"]
+    },
+    {
+      "calculate": "datum.max_outcome_score == 1 ? 'complied' : 'refused'",
+      "as": "outcome"
+    }
+  ],
+  "encoding": {
+    "x": {
+      "field": "probe_classname",
+      "type": "ordinal",
+      "sort": {
+        "field": "run-iter",
+        "op": "min"
+      },
+      "axis": {
+        "grid": true,
+        "gridColor": "#e0e0e02e",
+        "gridWidth": {
+          "expr": "bandwidth('x')"
+        },
+        "labelAngle": 45,
+        "title": "Attack Strategy"
+      }
+    },
+    "y": {
+      "field": "intent",
+      "type": "ordinal",
+      "axis": {
+        "grid": false,
+        "title": "Intent"
+      }
+    },
+    "xOffset": {
+      "field": "outcome",
+      "type": "nominal",
+      "scale": {
+        "paddingOuter": 1
+      }
+    },
+    "size": {
+      "field": "attempt_count",
+      "aggregate": "sum",
+      "type": "quantitative",
+      "legend": {
+        "title": "Attempt Count",
+        "format": "d"
+      }
+    },
+    "color": {
+      "field": "outcome",
+      "type": "nominal",
+      "scale": {
+        "domain": [
+          "complied",
+          "refused"
+        ],
+        "range": [
+          "#B22222",
+          "gray"
+        ]
+      },
+      "legend": {
+        "title": "Model Behavior"
+      }
+    },
+    "tooltip": [
+      {
+        "field": "intent",
+        "title": "Intent"
+      },
+      {
+        "field": "stub",
+        "title": "Scenario"
+      },
+      {
+        "field": "probe_classname",
+        "title": "Attack Strategy"
+      },
+      {
+        "field": "outcome",
+        "title": "Model Behavior"
+      },
+      {
+        "field": "attempt_count",
+        "title": "Attempts"
+      }
+    ]
+  },
+  "config": {
+    "axis": {
+      "grid": false
+    }
+  },
+  "mark": {
+    "type": "circle"
+  }
+}
