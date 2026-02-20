@@ -265,3 +265,18 @@ class TestResultUtils:
         except Exception as e:
             # If anything goes wrong with opening the browser, just continue the test
             print(f"Could not open browser for manual inspection: {e}")
+            
+    def test_result_parsing_with_art_result(self):
+        # Load test data
+        test_data_path = Path(__file__).parent / "_resources/garak_earlystop_run.jsonl"
+        with open(test_data_path, 'r') as f:
+            test_content = f.read()
+        
+        from llama_stack_provider_trustyai_garak.result_utils import parse_generations_from_report_content
+        
+        generations, score_rows_by_probe = parse_generations_from_report_content(test_content, eval_threshold=0.5)
+        assert len(generations) == 81
+        assert set(score_rows_by_probe.keys()) == {'base.IntentProbe', 'spo.SPOIntent', 'spo.SPOIntentUserAugmented',
+                                                   'spo.SPOIntentSystemAugmented', 'spo.SPOIntentBothAugmented',
+                                                   'garak.harnesses.earlystop.EarlyStopHarness'}
+        
