@@ -224,9 +224,10 @@ class GarakAdapter(FrameworkAdapter):
         the 'trustyai_garak::' prefix, so that bare IDs like 'owasp_llm_top10'
         and fully-qualified IDs like 'trustyai_garak::owasp_llm_top10' both work.
         """
+        _cfg = GarakScanConfig()
         all_profiles = {
-            **GarakScanConfig.FRAMEWORK_PROFILES,
-            **GarakScanConfig.SCAN_PROFILES,
+            **_cfg.FRAMEWORK_PROFILES,
+            **_cfg.SCAN_PROFILES,
         }
         return (
             all_profiles.get(benchmark_id)
