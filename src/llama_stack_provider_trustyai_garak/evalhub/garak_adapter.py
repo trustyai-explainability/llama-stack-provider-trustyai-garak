@@ -499,10 +499,10 @@ def main() -> None:
             benchmark_id=adapter.job_spec.benchmark_id,
             provider_id=adapter.job_spec.provider_id,
             sidecar_url=adapter.job_spec.callback_url,
-            registry_url=adapter.settings.registry_url,
-            registry_username=adapter.settings.registry_username,
-            registry_password=adapter.settings.registry_password,
-            insecure=adapter.settings.registry_insecure,
+            registry_url=os.getenv("REGISTRY_URL"),
+            registry_username=os.getenv("REGISTRY_USERNAME"),
+            registry_password=os.getenv("REGISTRY_PASSWORD"),
+            insecure=os.getenv("REGISTRY_INSECURE", "false").lower() == "true",
         )
 
         results = adapter.run_benchmark_job(adapter.job_spec, callbacks)
