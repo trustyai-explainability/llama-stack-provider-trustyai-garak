@@ -12,7 +12,6 @@ The adapter:
 5. Reports results back to eval-hub via sidecar callbacks
 """
 
-import json
 import logging
 import os
 import time
@@ -21,7 +20,6 @@ from pathlib import Path
 
 from evalhub.adapter import (
     DefaultCallbacks,
-    EvaluationResult,
     FrameworkAdapter,
     JobCallbacks,
     JobPhase,
@@ -31,6 +29,8 @@ from evalhub.adapter import (
     JobStatusUpdate,
     OCIArtifactSpec,
 )
+from evalhub.adapter.models.job import ErrorInfo, MessageInfo
+from evalhub.models.api import EvaluationResult
 
 from ..core.command_builder import build_garak_command, build_generator_options
 from ..core.garak_runner import convert_to_avid_report, GarakScanResult, run_garak_scan
@@ -87,122 +87,135 @@ class GarakAdapter(FrameworkAdapter):
             RuntimeError: If scan execution fails
         """
         start_time = time.time()
-        logger.info(f"Starting Garak job {config.job_id} for benchmark {config.benchmark_id}")
-        
+        logger.info(f"Starting Garak job {config.id} for benchmark {config.benchmark_id}")
+
         try:
             # Phase 1: Initialize
             callbacks.report_status(JobStatusUpdate(
                 status=JobStatus.RUNNING,
                 phase=JobPhase.INITIALIZING,
                 progress=0.0,
-                message="Validating configuration and building scan command",
+                message=MessageInfo(
+                    message="Validating configuration and building scan command",
+                    message_code="initializing",
+                ),
             ))
-            
+
             self._validate_config(config)
-            
+
             # Setup scan directories
-            scan_dir = get_scan_base_dir() / config.job_id
+            scan_dir = get_scan_base_dir() / config.id
             scan_dir.mkdir(parents=True, exist_ok=True)
-            
+
             log_file = scan_dir / "scan.log"
             report_prefix = scan_dir / "scan"
-            
+
             # Build command from config
             cmd = self._build_command_from_spec(config, report_prefix)
             logger.info(f"Built Garak command: {' '.join(cmd)}")
-            
+
             # Phase 2: Run scan
             callbacks.report_status(JobStatusUpdate(
                 status=JobStatus.RUNNING,
                 phase=JobPhase.RUNNING_EVALUATION,
                 progress=0.1,
-                message=f"Running Garak scan for {config.benchmark_id}",
+                message=MessageInfo(
+                    message=f"Running Garak scan for {config.benchmark_id}",
+                    message_code="running_scan",
+                ),
                 current_step="Executing probes",
             ))
-            
-            timeout = config.timeout_seconds or 600
-            # env = self._build_environment(config)
-            
+
+            timeout = config.benchmark_config.get("timeout_seconds", 600)
+
             result = run_garak_scan(
                 cmd=cmd,
                 timeout_seconds=timeout,
-                # env=env,
                 log_file=log_file,
                 report_prefix=report_prefix,
             )
-            
+
             if not result.success:
                 error_msg = f"Garak scan failed: {result.stderr}" if result.stderr else "Unknown error"
                 if result.timed_out:
                     error_msg = f"Scan timed out after {timeout} seconds"
-                    
+
                 callbacks.report_status(JobStatusUpdate(
                     status=JobStatus.FAILED,
-                    error_message=error_msg,
+                    error=ErrorInfo(message=error_msg, message_code="scan_failed"),
                 ))
                 raise RuntimeError(error_msg)
-            
+
             # Phase 3: Convert to AVID format
             callbacks.report_status(JobStatusUpdate(
                 status=JobStatus.RUNNING,
                 phase=JobPhase.POST_PROCESSING,
                 progress=0.7,
-                message="Converting results to AVID format",
+                message=MessageInfo(
+                    message="Converting results to AVID format",
+                    message_code="post_processing",
+                ),
             ))
-            
+
             convert_to_avid_report(result.report_jsonl)
-            
+
             # Phase 4: Parse results
             callbacks.report_status(JobStatusUpdate(
                 status=JobStatus.RUNNING,
                 phase=JobPhase.POST_PROCESSING,
                 progress=0.8,
-                message="Parsing scan results",
+                message=MessageInfo(
+                    message="Parsing scan results",
+                    message_code="parsing_results",
+                ),
             ))
-            
+
             eval_threshold = config.benchmark_config.get("eval_threshold", DEFAULT_EVAL_THRESHOLD)
             metrics, overall_score, num_examples = self._parse_results(
                 result, eval_threshold
             )
-            
+
             logger.info(f"Parsed {len(metrics)} probe metrics, overall score: {overall_score}")
-            
+
             # Phase 5: Persist artifacts
             callbacks.report_status(JobStatusUpdate(
                 status=JobStatus.RUNNING,
                 phase=JobPhase.PERSISTING_ARTIFACTS,
                 progress=0.9,
-                message="Uploading artifacts to OCI registry",
+                message=MessageInfo(
+                    message="Uploading artifacts to OCI registry",
+                    message_code="persisting_artifacts",
+                ),
             ))
-            
+
             # Collect all output files
             output_files = self._collect_output_files(log_file, result)
-            
+
             oci_artifact = None
             if output_files:
                 oci_artifact = callbacks.create_oci_artifact(OCIArtifactSpec(
                     files=output_files,
                     base_path=scan_dir,
                     title=f"Garak scan results for {config.benchmark_id}",
-                    description=f"Red-teaming results from job {config.job_id}",
+                    description=f"Red-teaming results from job {config.id}",
                     annotations={
-                        "job_id": config.job_id,
+                        "job_id": config.id,
                         "benchmark_id": config.benchmark_id,
                         "model_name": config.model.name,
                         "overall_score": str(overall_score) if overall_score else "N/A",
                         "framework": "garak",
                     },
-                    job_id=config.job_id,
+                    id=config.id,
                     benchmark_id=config.benchmark_id,
                     model_name=config.model.name,
                 ))
                 logger.info(f"Persisted {len(output_files)} artifacts")
-            
+
             # Compute duration
             duration = time.time() - start_time
-            
+
             return JobResults(
-                job_id=config.job_id,
+                id=config.id,
                 benchmark_id=config.benchmark_id,
                 model_name=config.model.name,
                 results=metrics,
@@ -218,12 +231,12 @@ class GarakAdapter(FrameworkAdapter):
                 },
                 oci_artifact=oci_artifact,
             )
-            
+
         except Exception as e:
-            logger.exception(f"Garak job {config.job_id} failed")
+            logger.exception(f"Garak job {config.id} failed")
             callbacks.report_status(JobStatusUpdate(
                 status=JobStatus.FAILED,
-                error_message=str(e),
+                error=ErrorInfo(message=str(e), message_code="job_failed"),
                 error_details={"exception_type": type(e).__name__},
             ))
             raise
@@ -252,7 +265,7 @@ class GarakAdapter(FrameworkAdapter):
     ) -> list[str]:
         """Build Garak CLI command from JobSpec."""
         # Build generator options for the model
-        model_params = config.model.parameters or {}
+        model_params = config.benchmark_config.get("model_parameters") or {}
         generator_options = build_generator_options(
             model_endpoint=self._normalize_url(config.model.url),
             model_name=config.model.name,
@@ -273,7 +286,7 @@ class GarakAdapter(FrameworkAdapter):
             generations=bc.get("generations", 1),
             parallel_requests=bc.get("parallel_requests"),
             skip_unknown=bc.get("skip_unknown"),
-            seed=bc.get("seed") or config.random_seed,
+            seed=bc.get("seed"),
             deprefix=bc.get("deprefix"),
             eval_threshold=bc.get("eval_threshold"),
             probe_tags=bc.get("probe_tags"),
@@ -413,64 +426,54 @@ class GarakAdapter(FrameworkAdapter):
 
 def main() -> None:
     """Entry point for running the adapter as a K8s Job.
-    
+
     Reads JobSpec from mounted ConfigMap and executes the Garak scan.
+    The callback URL comes from job_spec.callback_url (set by the service).
+    Registry credentials come from AdapterSettings (environment variables).
     """
     import sys
-    
+
     # Configure logging
+    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, log_level, logging.INFO),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
-    
-    logger.info("Starting Garak eval-hub adapter")
-    
-    # Load job spec from mounted ConfigMap
-    config_path = Path(os.getenv("EVALHUB_JOB_SPEC_PATH", "/meta/job.json"))
-    
-    if not config_path.exists():
-        logger.error(f"Job spec not found at {config_path}. Set EVALHUB_JOB_SPEC_PATH to override.")
-        sys.exit(1)
-    
+
     try:
-        with open(config_path) as f:
-            spec_data = json.load(f)
-        
-        job_spec = JobSpec(**spec_data)
-        logger.info(f"Loaded job spec: {job_spec.job_id}")
-        
-    except Exception as e:
-        logger.error(f"Failed to load job spec: {e}")
-        sys.exit(1)
-    
-    # Create callbacks for sidecar communication
-    # In K8s, the sidecar runs on localhost:8080
-    sidecar_url = os.getenv("EVALHUB_SIDECAR_URL", "http://localhost:8080")
-    
-    callbacks = DefaultCallbacks(
-        sidecar_url=sidecar_url,
-        registry_url=os.getenv("OCI_REGISTRY_URL"),
-        registry_username=os.getenv("OCI_REGISTRY_USERNAME"),
-        registry_password=os.getenv("OCI_REGISTRY_PASSWORD"),
-        insecure=os.getenv("OCI_REGISTRY_INSECURE", "false").lower() == "true",
-    )
-    
-    # Run adapter
-    adapter = GarakAdapter()
-    
-    try:
-        results = adapter.run_benchmark_job(job_spec, callbacks)
-        
-        # Report results to sidecar
-        callbacks.report_results(results)
-        
-        logger.info(f"Job {results.job_id} completed successfully")
+        job_spec_path = os.getenv("EVALHUB_JOB_SPEC_PATH", "/meta/job.json")
+        adapter = GarakAdapter(job_spec_path=job_spec_path)
+        logger.info(f"Loaded job {adapter.job_spec.id}")
+        logger.info(f"Benchmark: {adapter.job_spec.benchmark_id}")
+        logger.info(f"Model: {adapter.job_spec.model.name}")
+
+        callbacks = DefaultCallbacks(
+            job_id=adapter.job_spec.id,
+            benchmark_id=adapter.job_spec.benchmark_id,
+            provider_id=adapter.job_spec.provider_id,
+            sidecar_url=adapter.job_spec.callback_url,
+            registry_url=adapter.settings.registry_url,
+            registry_username=adapter.settings.registry_username,
+            registry_password=adapter.settings.registry_password,
+            insecure=adapter.settings.registry_insecure,
+        )
+
+        results = adapter.run_benchmark_job(adapter.job_spec, callbacks)
+        logger.info(f"Job completed successfully: {results.id}")
         logger.info(f"Overall attack success rate: {results.overall_score}%")
+
+        callbacks.report_results(results)
         sys.exit(0)
-        
-    except Exception as e:
-        logger.exception(f"Job failed: {e}")
+
+    except FileNotFoundError as e:
+        logger.error(f"Job spec not found: {e}")
+        logger.error("Set EVALHUB_JOB_SPEC_PATH or ensure job spec exists at default location")
+        sys.exit(1)
+    except ValueError as e:
+        logger.error(f"Configuration error: {e}")
+        sys.exit(1)
+    except Exception:
+        logger.exception("Job failed")
         sys.exit(1)
 
 
