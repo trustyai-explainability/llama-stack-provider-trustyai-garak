@@ -27,6 +27,9 @@ RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "x86_64" ]; then \
         exit 1; \
     fi
 
+# Install eval-hub SDK (separate step — git source can't be hash-pinned in requirements)
+RUN pip install --no-cache-dir "eval-hub-sdk[adapter] @ git+https://github.com/eval-hub/eval-hub-sdk.git@main"
+
 # Install the package itself (--no-deps since dependencies already installed)
 # Use [inline] to get garak dependency
 RUN pip install --no-cache-dir --no-deps -e ".[inline]"
