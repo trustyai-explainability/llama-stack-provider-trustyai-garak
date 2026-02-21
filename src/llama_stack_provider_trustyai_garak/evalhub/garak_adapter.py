@@ -178,39 +178,14 @@ class GarakAdapter(FrameworkAdapter):
 
             logger.info(f"Parsed {len(metrics)} probe metrics, overall score: {overall_score}")
 
-            # Phase 5: Persist artifacts
-            callbacks.report_status(JobStatusUpdate(
-                status=JobStatus.RUNNING,
-                phase=JobPhase.PERSISTING_ARTIFACTS,
-                progress=0.9,
-                message=MessageInfo(
-                    message="Uploading artifacts to OCI registry",
-                    message_code="persisting_artifacts",
-                ),
-            ))
-
-            # Collect all output files
-            output_files = self._collect_output_files(log_file, result)
-
+            # Phase 5: Persist artifacts (only if OCI export coordinates are provided)
             oci_artifact = None
-            if output_files:
+            if config.exports and config.exports.oci:
                 oci_artifact = callbacks.create_oci_artifact(OCIArtifactSpec(
-                    files=output_files,
-                    base_path=scan_dir,
-                    title=f"Garak scan results for {config.benchmark_id}",
-                    description=f"Red-teaming results from job {config.id}",
-                    annotations={
-                        "job_id": config.id,
-                        "benchmark_id": config.benchmark_id,
-                        "model_name": config.model.name,
-                        "overall_score": str(overall_score) if overall_score else "N/A",
-                        "framework": "garak",
-                    },
-                    id=config.id,
-                    benchmark_id=config.benchmark_id,
-                    model_name=config.model.name,
+                    files_path=scan_dir,
+                    coordinates=config.exports.oci.coordinates,
                 ))
-                logger.info(f"Persisted {len(output_files)} artifacts")
+                logger.info(f"Persisted scan artifacts: {oci_artifact.reference}")
 
             # Compute duration
             duration = time.time() - start_time
@@ -437,30 +412,6 @@ class GarakAdapter(FrameworkAdapter):
         
         return metrics, overall_score, total_attempts
 
-    def _collect_output_files(
-        self, log_file: Path, result: GarakScanResult
-    ) -> list[Path]:
-        """Collect all output files for artifact persistence."""
-        files = []
-        
-        # Main report files
-        if result.report_jsonl.exists():
-            files.append(result.report_jsonl)
-        
-        if result.avid_jsonl.exists():
-            files.append(result.avid_jsonl)
-        
-        if result.hitlog_jsonl.exists():
-            files.append(result.hitlog_jsonl)
-        
-        if result.report_html.exists():
-            files.append(result.report_html)
-        
-        # Log file
-        if log_file.exists():
-            files.append(log_file)
-        
-        return files
 
     def _get_garak_version(self) -> str:
         """Get Garak version string."""
@@ -494,15 +445,14 @@ def main() -> None:
         logger.info(f"Benchmark: {adapter.job_spec.benchmark_id}")
         logger.info(f"Model: {adapter.job_spec.model.name}")
 
+        oci_auth_config = os.getenv("OCI_AUTH_CONFIG_PATH")
         callbacks = DefaultCallbacks(
             job_id=adapter.job_spec.id,
             benchmark_id=adapter.job_spec.benchmark_id,
             provider_id=adapter.job_spec.provider_id,
             sidecar_url=adapter.job_spec.callback_url,
-            registry_url=os.getenv("REGISTRY_URL"),
-            registry_username=os.getenv("REGISTRY_USERNAME"),
-            registry_password=os.getenv("REGISTRY_PASSWORD"),
-            insecure=os.getenv("REGISTRY_INSECURE", "false").lower() == "true",
+            oci_auth_config_path=Path(oci_auth_config) if oci_auth_config else None,
+            oci_insecure=os.getenv("OCI_REGISTRY_INSECURE", "false").lower() == "true",
         )
 
         results = adapter.run_benchmark_job(adapter.job_spec, callbacks)
