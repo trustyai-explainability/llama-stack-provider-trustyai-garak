@@ -427,10 +427,10 @@ def main() -> None:
     logger.info("Starting Garak eval-hub adapter")
     
     # Load job spec from mounted ConfigMap
-    config_path = Path("/etc/eval-job/spec.json")
+    config_path = Path(os.getenv("EVALHUB_JOB_SPEC_PATH", "/meta/job.json"))
     
     if not config_path.exists():
-        logger.error(f"Job spec not found at {config_path}")
+        logger.error(f"Job spec not found at {config_path}. Set EVALHUB_JOB_SPEC_PATH to override.")
         sys.exit(1)
     
     try:
