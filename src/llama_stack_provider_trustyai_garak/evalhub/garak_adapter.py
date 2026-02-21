@@ -32,6 +32,7 @@ from evalhub.adapter import (
 from evalhub.adapter.models.job import ErrorInfo, MessageInfo
 from evalhub.models.api import EvaluationResult
 
+from ..config import GarakScanConfig
 from ..core.command_builder import build_garak_command, build_generator_options
 from ..core.garak_runner import convert_to_avid_report, GarakScanResult, run_garak_scan
 from ..result_utils import (
@@ -241,46 +242,92 @@ class GarakAdapter(FrameworkAdapter):
             ))
             raise
 
+    def _resolve_profile(self, benchmark_id: str) -> dict:
+        """Resolve a benchmark_id to a GarakScanConfig profile dict.
+
+        Checks both FRAMEWORK_PROFILES and SCAN_PROFILES, with and without
+        the 'trustyai_garak::' prefix, so that bare IDs like 'owasp_llm_top10'
+        and fully-qualified IDs like 'trustyai_garak::owasp_llm_top10' both work.
+        """
+        all_profiles = {
+            **GarakScanConfig.FRAMEWORK_PROFILES,
+            **GarakScanConfig.SCAN_PROFILES,
+        }
+        return (
+            all_profiles.get(benchmark_id)
+            or all_profiles.get(f"trustyai_garak::{benchmark_id}")
+            or {}
+        )
+
     def _validate_config(self, config: JobSpec) -> None:
         """Validate job configuration."""
         if not config.benchmark_id:
             raise ValueError("benchmark_id is required")
-        
+
         if not config.model.url:
             raise ValueError("model.url is required")
-        
+
         if not config.model.name:
             raise ValueError("model.name is required")
-        
-        probes = config.benchmark_config.get("probes", [])
-        probe_tags = config.benchmark_config.get("probe_tags", [])
-        
-        if not probes and not probe_tags:
-            logger.warning("No probes or probe_tags provided, using all probes")
-            
+
+        profile = self._resolve_profile(config.benchmark_id)
+        explicit_probes = config.benchmark_config.get("probes")
+        explicit_tags = config.benchmark_config.get("probe_tags")
+
+        if not explicit_probes and not explicit_tags and not profile:
+            logger.warning(
+                "benchmark_id '%s' does not match a known profile and no probes or "
+                "probe_tags provided in parameters — all probes will run",
+                config.benchmark_id,
+            )
+
         logger.debug("Configuration validated successfully")
 
     def _build_command_from_spec(
         self, config: JobSpec, report_prefix: Path
     ) -> list[str]:
-        """Build Garak CLI command from JobSpec."""
+        """Build Garak CLI command from JobSpec.
+
+        Profile defaults (probe_tags, probe_spec, taxonomy) are resolved from
+        the benchmark_id and can be overridden by explicit values in benchmark_config.
+        """
+        # Resolve profile defaults from benchmark_id
+        profile = self._resolve_profile(config.benchmark_id)
+        profile_cfg = profile.get("garak_config", {})
+        profile_run = profile_cfg.get("run", {})
+        profile_plugins = profile_cfg.get("plugins", {})
+        profile_reporting = profile_cfg.get("reporting", {})
+
+        # benchmark_config values take precedence over profile defaults
+        bc = config.benchmark_config
+
+        probe_tags = bc.get("probe_tags") or profile_run.get("probe_tags")
+        probe_spec = bc.get("probes") or profile_plugins.get("probe_spec", "all")
+        taxonomy = bc.get("taxonomy") or profile_reporting.get("taxonomy")
+
+        if isinstance(probe_spec, str):
+            probe_spec = [probe_spec]
+
+        if profile:
+            logger.info(
+                "Resolved benchmark_id '%s' to profile '%s' (probe_tags=%s, probe_spec=%s)",
+                config.benchmark_id, profile.get("name"), probe_tags, probe_spec,
+            )
+
         # Build generator options for the model
-        model_params = config.benchmark_config.get("model_parameters") or {}
+        model_params = bc.get("model_parameters") or {}
         generator_options = build_generator_options(
             model_endpoint=self._normalize_url(config.model.url),
             model_name=config.model.name,
             api_key=getattr(config.model, "api_key", None) or os.getenv("OPENAICOMPATIBLE_API_KEY", "DUMMY"),
             extra_params=model_params,
         )
-        
-        # Extract benchmark config options
-        bc = config.benchmark_config
-        
+
         return build_garak_command(
             model_type=bc.get("model_type", DEFAULT_MODEL_TYPE),
             model_name=config.model.name,
             generator_options=generator_options,
-            probes=bc.get("probes", ["all"]),
+            probes=probe_spec,
             report_prefix=str(report_prefix),
             parallel_attempts=bc.get("parallel_attempts", 8),
             generations=bc.get("generations", 1),
@@ -289,7 +336,7 @@ class GarakAdapter(FrameworkAdapter):
             seed=bc.get("seed"),
             deprefix=bc.get("deprefix"),
             eval_threshold=bc.get("eval_threshold"),
-            probe_tags=bc.get("probe_tags"),
+            probe_tags=probe_tags,
             probe_options=bc.get("probe_options"),
             detectors=bc.get("detectors"),
             extended_detectors=bc.get("extended_detectors"),
@@ -297,7 +344,7 @@ class GarakAdapter(FrameworkAdapter):
             buffs=bc.get("buffs"),
             buff_options=bc.get("buff_options"),
             harness_options=bc.get("harness_options"),
-            taxonomy=bc.get("taxonomy"),
+            taxonomy=taxonomy,
             generate_autodan=bc.get("generate_autodan"),
         )
 
