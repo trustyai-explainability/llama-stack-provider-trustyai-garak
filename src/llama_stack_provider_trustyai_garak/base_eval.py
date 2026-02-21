@@ -4,6 +4,8 @@ from .compat import (
     Eval,
     BenchmarkConfig,
     EvaluateResponse,
+    EvaluateRowsRequest,
+    JobResultRequest,
     ProviderSpec,
     BenchmarksProtocolPrivate,
     Api,
@@ -14,16 +16,46 @@ from .compat import (
     JobStatus,
     Safety,
     Shields,
-    GetBenchmarkRequest,
     RetrieveFileContentRequest,
+    GetShieldRequest,
 )
-from typing import Dict, Optional, Set, List, Any, Union
+from typing import Dict, Optional, Set, List, Any, Union, Tuple
+import asyncio
 import logging
 import uuid
 from .config import GarakScanConfig, GarakInlineConfig, GarakRemoteConfig
+from .garak_command_config import GarakCommandConfig, GarakRunConfig
 from .errors import GarakError, GarakConfigError, GarakValidationError, BenchmarkNotFoundError
 
 logger = logging.getLogger(__name__)
+
+
+def deep_merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Deep merge two dictionaries, with override taking precedence.
+    
+    Args:
+        base: Base dictionary with default values
+        override: Override dictionary with custom values
+        
+    Returns:
+        Merged dictionary where override values take precedence at all levels
+        
+    Example:
+        base = {"a": {"b": 1, "c": 2}, "d": 3}
+        override = {"a": {"c": 99}, "e": 4}
+        result = {"a": {"b": 1, "c": 99}, "d": 3, "e": 4}
+    """
+    result = base.copy()
+    
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            # Both are dicts - recursively merge
+            result[key] = deep_merge_dicts(result[key], value)
+        else:
+            # Override takes precedence
+            result[key] = value
+    
+    return result
 
 
 class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
@@ -38,6 +70,7 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         self.shields_api: Optional[Shields] = deps.get(Api.shields)
         self.scan_config = GarakScanConfig()
         self.benchmarks: Dict[str, Benchmark] = {}  # benchmark_id -> benchmark
+        self._benchmarks_lock = asyncio.Lock()
         self.all_probes: Set[str] = set()
         self._verify_ssl = None
         self._initialized: bool = False
@@ -107,60 +140,6 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         plugin_names += list(module_names)
         return set(plugin_names)
 
-    def _resolve_framework_to_probes(self, framework_id: str) -> List[str]:
-        """Resolve a framework ID to a list of probes using taxonomy filters.
-        
-        Args:
-            framework_id: The framework identifier (e.g., 'trustyai_garak::owasp_llm_top10')
-            
-        Returns:
-            List of probe names that match the framework's taxonomy filters
-            
-        Raises:
-            GarakValidationError: If framework is unknown
-            GarakError: If garak's parse_plugin_spec cannot be imported
-        """
-        framework_info = self.scan_config.FRAMEWORK_PROFILES.get(framework_id)
-        if not framework_info:
-            raise GarakValidationError(f"Unknown framework: {framework_id}")
-
-        taxonomy_filters = framework_info.get("taxonomy_filters", [])
-        if not taxonomy_filters:
-            logger.warning(f"No taxonomy filters defined for framework {framework_id}")
-            return []
-
-        # Import garak's config parsing functionality (unfortunately not public API)
-        try:
-            from garak._config import parse_plugin_spec
-        except ImportError:
-            raise GarakError(
-                "Unable to import garak's parse_plugin_spec. The internal API may have changed."
-            )
-
-        resolved_probes = []
-
-        # For each taxonomy filter, get matching probes
-        for tag_filter in taxonomy_filters:
-            try:
-                # Use garak's built-in tag filtering
-                probes, _ = parse_plugin_spec("all", "probes", probe_tag_filter=tag_filter)
-                resolved_probes.extend(probes)
-
-            except Exception as e:
-                logger.error(f"Error resolving probes for tag filter '{tag_filter}': {e}")
-                continue
-
-        # Remove duplicates and garak prefix
-        unique_probes = list(set([p.replace("probes.", "") for p in resolved_probes]))
-        unique_probes.sort()
-
-        logger.info(
-            f"Framework '{framework_id}' resolved to {len(unique_probes)} probes: "
-            f"{unique_probes[:5]}{'...' if len(unique_probes) > 5 else ''}"
-        )
-
-        return unique_probes
-
     async def get_benchmark(self, benchmark_id: str) -> Optional[Benchmark]:
         """Get a benchmark by its id.
         
@@ -170,7 +149,8 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         Returns:
             Benchmark object if found, None otherwise
         """
-        return await self.benchmarks_api.get_benchmark(GetBenchmarkRequest(benchmark_id=benchmark_id))
+        async with self._benchmarks_lock:
+            return self.benchmarks.get(benchmark_id)
 
     async def register_benchmark(self, benchmark: Benchmark) -> None:
         """Register a benchmark by checking if it's a pre-defined scan profile or compliance framework.
@@ -178,42 +158,52 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         Args:
             benchmark: The benchmark to register
         """
-        if benchmark.identifier in (
-            self.scan_config.SCAN_PROFILES | self.scan_config.FRAMEWORK_PROFILES
-        ):
-            logger.info(
-                f"Benchmark '{benchmark.identifier}' is a pre-defined scan profile or compliance framework. "
-                f"It is not recommended to register it as a custom benchmark."
-            )
+        pre_defined_profiles = {
+            **self.scan_config.SCAN_PROFILES,
+            **self.scan_config.FRAMEWORK_PROFILES
+        }
+        # override pre-defined profiles or exising benchmarks
+        if benchmark.provider_benchmark_id:
+            if benchmark.provider_benchmark_id in pre_defined_profiles:
+                logger.info(
+                    f"Deep merging the provider benchmark id '{benchmark.provider_benchmark_id}' with the benchmark metadata."
+                )
+                base_metadata = pre_defined_profiles.get(benchmark.provider_benchmark_id, {})
+                benchmark.metadata = deep_merge_dicts(base_metadata, benchmark.metadata or {})
+            elif benchmark.provider_benchmark_id in self.benchmarks:
+                existing_benchmark = self.benchmarks.get(benchmark.provider_benchmark_id)
+                if existing_benchmark:
+                    logger.info(
+                        f"Deep merging the existing benchmark '{existing_benchmark.identifier}' with the benchmark metadata."
+                    )
+                    base_metadata = existing_benchmark.metadata or {}
+                    benchmark.metadata = deep_merge_dicts(base_metadata, benchmark.metadata or {})
 
         if not benchmark.metadata:
             logger.info(
-                f"Benchmark '{benchmark.identifier}' is pre-defined but has no metadata provided. "
-                f"Using default metadata."
+                f"Benchmark '{benchmark.identifier}' has no metadata. Using defaults from profile."
             )
-            benchmark.metadata = self.scan_config.SCAN_PROFILES.get(
-                benchmark.identifier, {}
-            ) or self.scan_config.FRAMEWORK_PROFILES.get(benchmark.identifier, {})
+            benchmark.metadata = pre_defined_profiles.get(benchmark.identifier, {})
 
-        if not benchmark.metadata.get("probes"):
-            if benchmark.identifier in self.scan_config.SCAN_PROFILES:
-                logger.info(
-                    f"Benchmark '{benchmark.identifier}' is a pre-defined legacy scan profile "
-                    f"but has no probes provided. Using default probes."
-                )
-                benchmark.metadata["probes"] = self.scan_config.SCAN_PROFILES[
-                    benchmark.identifier
-                ]["probes"]
-            elif benchmark.identifier in self.scan_config.FRAMEWORK_PROFILES:
-                logger.info(
-                    f"Benchmark '{benchmark.identifier}' is a pre-defined compliance framework "
-                    f"but has no probes provided. Resolving probes from taxonomy."
-                )
-                benchmark.metadata["probes"] = self._resolve_framework_to_probes(
-                    benchmark.identifier
-                )
 
-        self.benchmarks[benchmark.identifier] = benchmark
+        async with self._benchmarks_lock:
+            self.benchmarks[benchmark.identifier] = benchmark
+    
+    async def unregister_benchmark(
+        self,
+        benchmark_id: str,
+    ) -> None:
+        """Unregister a benchmark.
+        
+        Args:
+            benchmark_id: The benchmark identifier
+        """
+        async with self._benchmarks_lock:
+            if benchmark_id in self.benchmarks:
+                del self.benchmarks[benchmark_id]
+                logger.info(f"Unregistered benchmark: {benchmark_id}")
+            else:
+                logger.warning(f"Benchmark {benchmark_id} not found in provider's internal state")
 
     def _get_job_id(self, prefix: str = "garak-job-") -> str:
         """Generate a unique job ID.
@@ -226,7 +216,7 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         """
         return f"{prefix}{str(uuid.uuid4())}"
 
-    def _normalize_list_arg(self, arg: Union[str, List[str]]) -> str:
+    def _normalize_list_arg(self, arg: Union[str, List[str]]) -> Optional[str]:
         """Normalize a list argument to a comma-separated string.
         
         Args:
@@ -235,9 +225,52 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         Returns:
             Comma-separated string
         """
+        if not arg:
+            return None
         return arg if isinstance(arg, str) else ",".join(arg)
+    
+    def _parse_benchmark_metadata(
+        self, 
+        benchmark_metadata: Dict[str, Any]
+    ) -> Tuple[GarakCommandConfig, Dict[str, Any]]:
+        """
+        Parse benchmark metadata into Garak config and provider params.
+        
+        Args:
+            benchmark_metadata: Raw metadata dict from benchmark
+            
+        Returns:
+            Tuple of (garak_config, remaining_metadata)
+            - garak_config: GarakCommandConfig
+            - remaining_metadata: Provider-specific params (shields, timeout, etc.)
+        """
+        if not benchmark_metadata:
+            benchmark_metadata = {}
 
-    async def _get_generator_options(self, benchmark_config: "BenchmarkConfig", benchmark_metadata: dict) -> dict:
+        provider_params = {
+                k: v for k, v in benchmark_metadata.items()
+                if k != "garak_config"
+            }
+        
+        garak_config = None
+
+        if "garak_config" in benchmark_metadata:
+            try:
+                if isinstance(benchmark_metadata["garak_config"], GarakCommandConfig):
+                    garak_config = benchmark_metadata["garak_config"]
+                else:
+                    garak_config = GarakCommandConfig.from_dict(benchmark_metadata["garak_config"])
+            except Exception as e:
+                raise GarakValidationError(
+                    f"Invalid garak_config in benchmark metadata: {e}"
+                ) from e
+            
+        else:
+            logger.warning("No garak_config found in the benchmark metadata. Using default (all) probes - this could be slow.")
+            garak_config = GarakCommandConfig()
+        return garak_config, provider_params
+
+    async def _get_generator_options(self, benchmark_config: "BenchmarkConfig", provider_params: dict, garak_config: "GarakCommandConfig") -> dict:
         """Get the generator options based on the availability of shields.
         
         Args:
@@ -247,27 +280,27 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         Returns:
             Generator options dictionary
         """
-        if bool(benchmark_metadata.get("shield_ids", []) or benchmark_metadata.get("shield_config", {})):
-            return await self._get_function_based_generator_options(benchmark_config, benchmark_metadata)
+        if bool(provider_params.get("shield_ids", []) or provider_params.get("shield_config", {})):
+            return await self._get_function_based_generator_options(benchmark_config, provider_params)
         else:
-            return await self._get_openai_compatible_generator_options(benchmark_config, benchmark_metadata)
+            return await self._get_openai_compatible_generator_options(benchmark_config, garak_config)
 
     async def _get_openai_compatible_generator_options(
-        self, benchmark_config: "BenchmarkConfig", benchmark_metadata: dict
+        self, benchmark_config: "BenchmarkConfig", garak_config: "GarakCommandConfig"
     ) -> dict:
         """Get the generator options for the OpenAI compatible generator.
         
         Args:
             benchmark_config: Configuration for the evaluation task
-            benchmark_metadata: Metadata from the benchmark
+            garak_config: Garak configuration
             
         Returns:
             Generator options for OpenAI compatible model
         """
         import os
         
-        if 'generator_options' in benchmark_metadata:
-            return benchmark_metadata['generator_options']
+        if garak_config and garak_config.plugins and garak_config.plugins.generators:
+            return garak_config.plugins.generators
         
         llama_stack_url: str = self._get_llama_stack_url()
 
@@ -371,13 +404,13 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         return llama_stack_url
 
     async def _get_function_based_generator_options(
-        self, benchmark_config: "BenchmarkConfig", benchmark_metadata: dict
+        self, benchmark_config: "BenchmarkConfig", provider_params: dict
     ) -> dict:
         """Get the generator options for the custom function-based generator.
         
         Args:
             benchmark_config: Configuration for the evaluation task
-            benchmark_metadata: Metadata from the benchmark
+            provider_params: Provider-specific parameters
             
         Returns:
             Generator options for function-based model with shield support
@@ -409,14 +442,14 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
             "output": []
         }
 
-        if not benchmark_metadata:
-            logger.warning("No benchmark metadata found.")
+        if not provider_params:
+            logger.warning("No provider parameters found.")
         else:
             # get the shield_ids and/or shield_config from the benchmark metadata
-            shield_ids: List[str] = benchmark_metadata.get("shield_ids", [])
-            shield_config: dict = benchmark_metadata.get("shield_config", {})
+            shield_ids: List[str] = provider_params.get("shield_ids", [])
+            shield_config: dict = provider_params.get("shield_config", {})
             if not shield_ids and not shield_config:
-                logger.warning("No shield_ids or shield_config found in the benchmark metadata")
+                logger.warning("No shield_ids or shield_config found in the provider parameters")
             elif shield_ids:
                 if not isinstance(shield_ids, list):
                     raise GarakValidationError("shield_ids must be a list")
@@ -471,132 +504,75 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         error_msg: str = "{type} shield '{shield_id}' is not available. Please provide a valid shield_id in the benchmark metadata."
         
         for shield_id in llm_io_shield_mapping["input"]:
-            if not await self.shields_api.get_shield(shield_id):
+            if not await self.shields_api.get_shield(GetShieldRequest(identifier=shield_id)):
                 raise GarakValidationError(error_msg.format(type="Input", shield_id=shield_id))
             
         for shield_id in llm_io_shield_mapping["output"]:
-            if not await self.shields_api.get_shield(shield_id):
+            if not await self.shields_api.get_shield(GetShieldRequest(identifier=shield_id)):
                 raise GarakValidationError(error_msg.format(type="Output", shield_id=shield_id))
 
     async def _build_command(
         self,
         benchmark_config: "BenchmarkConfig",
-        benchmark_id: str,
-        scan_profile_config: dict,
+        garak_config: "GarakCommandConfig",
+        provider_params: Dict[str, Any],
         scan_report_prefix: Optional[str] = None
-    ) -> List[str]:
+    ) -> dict:
         """Build the garak command to run the scan.
         
         Args:
             benchmark_config: Configuration for the evaluation task
-            benchmark_id: The benchmark identifier
-            scan_profile_config: Configuration for the scan profile (probes, timeout, etc.)
+            garak_config: Garak command configuration
+            provider_params: Provider-specific parameters
             scan_report_prefix: Optional prefix for the scan report (used in inline mode)
             
         Returns:
-            List of command arguments for garak
+            Dictionary of command arguments for garak
             
         Raises:
-            BenchmarkNotFoundError: If benchmark is not found
             GarakValidationError: If configuration is invalid
         """
-        import json
         from llama_stack_provider_trustyai_garak import shield_scan
         
-        stored_benchmark = await self.get_benchmark(benchmark_id)
-        if not stored_benchmark:
-            raise BenchmarkNotFoundError(f"Benchmark {benchmark_id} not found")
-
-        benchmark_metadata: dict = getattr(stored_benchmark, "metadata", {})
-
-        generator_options: dict = await self._get_generator_options(benchmark_config, benchmark_metadata)
+        garak_config.plugins.generators = await self._get_generator_options(benchmark_config, provider_params, garak_config)
         if not benchmark_config.eval_candidate.type == "model":
             raise GarakValidationError("Eval candidate type must be 'model'")
 
-        if bool(benchmark_metadata.get("shield_ids", []) or benchmark_metadata.get("shield_config", {})):
-            model_type: str = self._config.garak_model_type_function
-            model_name: str = f"{shield_scan.__name__}#simple_shield_orchestrator" 
+        if bool(provider_params.get("shield_ids", []) or provider_params.get("shield_config", {})):
+            garak_config.plugins.target_type = self._config.garak_model_type_function
+            garak_config.plugins.target_name = f"{shield_scan.__name__}#simple_shield_orchestrator"
         else:
-            model_type: str = self._config.garak_model_type_openai
-            model_name: str = benchmark_config.eval_candidate.model
-            
-        cmd: List[str] = [
-            "garak",
-            "--model_type", model_type,
-            "--model_name", model_name,
-            "--generator_options", json.dumps(generator_options),
-        ]
+            garak_config.plugins.target_type = self._config.garak_model_type_openai
+            garak_config.plugins.target_name = benchmark_config.eval_candidate.model
         
-        # Add report prefix if provided (inline mode)
         if scan_report_prefix:
-            cmd.extend(["--report_prefix", scan_report_prefix.strip()])
+            garak_config.reporting.report_prefix = scan_report_prefix.strip()
         
-        cmd.extend(["--parallel_attempts", str(benchmark_metadata.get("parallel_attempts", self.scan_config.parallel_probes))])
-        cmd.extend(["--generations", str(benchmark_metadata.get("generations", 1))])
-
-        if "seed" in benchmark_metadata:
-            cmd.extend(["--seed", str(benchmark_metadata["seed"])])
-
-        if "deprefix" in benchmark_metadata:
-            cmd.extend(["--deprefix", benchmark_metadata["deprefix"]])
-
-        if "eval_threshold" in benchmark_metadata:
-            cmd.extend(["--eval_threshold", str(benchmark_metadata["eval_threshold"])])
+        garak_config.plugins.probe_spec = self._normalize_list_arg(garak_config.plugins.probe_spec)
+        garak_config.plugins.detector_spec = self._normalize_list_arg(garak_config.plugins.detector_spec)
+        garak_config.plugins.buff_spec = self._normalize_list_arg(garak_config.plugins.buff_spec)
         
-        if "probe_tags" in benchmark_metadata:
-            cmd.extend(["--probe_tags", self._normalize_list_arg(benchmark_metadata["probe_tags"])])
+        cmd_config: dict = garak_config.to_dict()
         
-        if "probe_options" in benchmark_metadata:
-            cmd.extend(["--probe_options", json.dumps(benchmark_metadata["probe_options"])])
+        # Extract probes from garak_config.plugins.probe_spec
+        if garak_config.plugins and garak_config.plugins.probe_spec and not garak_config.run.probe_tags:
+            probes = garak_config.plugins.probe_spec
         
-        if "detectors" in benchmark_metadata:
-            cmd.extend(["--detectors", self._normalize_list_arg(benchmark_metadata["detectors"])])
-        
-        if "extended_detectors" in benchmark_metadata:
-            cmd.extend(["--extended_detectors", self._normalize_list_arg(benchmark_metadata["extended_detectors"])])
-        
-        if "detector_options" in benchmark_metadata:
-            cmd.extend(["--detector_options", json.dumps(benchmark_metadata["detector_options"])])
-        
-        if "buffs" in benchmark_metadata:
-            cmd.extend(["--buffs", self._normalize_list_arg(benchmark_metadata["buffs"])])
-        
-        if "buff_options" in benchmark_metadata:
-            cmd.extend(["--buff_options", json.dumps(benchmark_metadata["buff_options"])])
-        
-        if "harness_options" in benchmark_metadata:
-            cmd.extend(["--harness_options", json.dumps(benchmark_metadata["harness_options"])])
-        
-        if "taxonomy" in benchmark_metadata:
-            cmd.extend(["--taxonomy", benchmark_metadata["taxonomy"]])
-        
-        if "generate_autodan" in benchmark_metadata:
-            cmd.extend(["--generate_autodan", benchmark_metadata["generate_autodan"]])
-    
-        # Add probes
-        probes = scan_profile_config["probes"]
-        if isinstance(probes, str):
-            if "," in probes:
-                probes = probes.split(",")
-            else:
-                probes = [probes]
-        
-        if probes != ["all"]:
-            # Skip validation if all_probes is empty (remote mode - validation happens in container)
-            if self.all_probes:
-                for probe in probes:
+            # Validate probes if in inline mode (when all_probes is populated)
+            # Remote mode skips validation - Garak validates in the container
+            if probes and probes != "all" and self.all_probes:
+                for probe in probes.split(","):
                     if probe not in self.all_probes:
                         raise GarakValidationError(
-                            f"Probe '{probe}' not found in garak. "
-                            "Please provide valid garak probe name. "
-                            "Or you can just use predefined scan profiles ('quick', 'standard') as benchmark_id."
+                                f"Probe '{probe}' not found in garak. "
+                                "Please provide valid garak probe name. "
                         )
-            cmd.extend(["--probes", ",".join(probes)])
-        return cmd
+        
+        return cmd_config
 
     async def _validate_run_eval_request(
         self, benchmark_id: str, benchmark_config: "BenchmarkConfig"
-    ) -> tuple["Benchmark", dict]:
+    ) -> Tuple[GarakCommandConfig, Dict[str, Any]]:
         """Validate run_eval request and return benchmark and metadata.
         
         Args:
@@ -604,11 +580,10 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
             benchmark_config: Configuration for the evaluation task
             
         Returns:
-            Tuple of (benchmark, benchmark_metadata dict)
+            Tuple of (garak_command_config, provider_params)
             
         Raises:
             GarakValidationError: If validation fails
-            BenchmarkNotFoundError: If benchmark not found
         """
         
         if not isinstance(benchmark_config, BenchmarkConfig):
@@ -626,19 +601,15 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         
         benchmark_metadata: dict = getattr(benchmark, "metadata", {})
         
-        if not benchmark_metadata.get("probes"):
-            raise GarakValidationError(
-                "No probes found for benchmark. Please specify probes list in the benchmark metadata."
-            )
-        
-        return benchmark, benchmark_metadata
+        garak_config, provider_params = self._parse_benchmark_metadata(benchmark_metadata)
 
-    async def job_result(self, benchmark_id: str, job_id: str, prefix: str = "") -> EvaluateResponse:
+        return garak_config, provider_params
+
+    async def job_result(self, request: JobResultRequest, prefix: str = "") -> EvaluateResponse:
         """Get the result of a job (common implementation).
         
         Args:
-            benchmark_id: The benchmark id
-            job_id: The job id
+            request: Job result request containing benchmark_id and job_id
             prefix: Optional prefix for scan reports
         Returns:
             EvaluateResponse with results or empty response
@@ -647,6 +618,9 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
             BenchmarkNotFoundError: If benchmark not found
         """
         import json
+        
+        benchmark_id = request.benchmark_id
+        job_id = request.job_id
         
         stored_benchmark = await self.get_benchmark(benchmark_id)
         if not stored_benchmark:
@@ -684,18 +658,12 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
 
     async def evaluate_rows(
         self,
-        benchmark_id: str,
-        input_rows: list[dict[str, Any]],
-        scoring_functions: list[str],
-        benchmark_config: BenchmarkConfig,
+        request: EvaluateRowsRequest,
     ) -> EvaluateResponse:
         """Evaluate rows (not implemented for Garak).
         
         Args:
-            benchmark_id: The benchmark id
-            input_rows: Input rows to evaluate
-            scoring_functions: Scoring functions to use
-            benchmark_config: Configuration for evaluation
+            request: Evaluate rows request containing benchmark_id, input_rows, scoring_functions, and benchmark_config
             
         Raises:
             NotImplementedError: This method is not implemented for Garak

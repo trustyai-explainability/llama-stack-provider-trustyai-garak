@@ -12,12 +12,14 @@ Automated vulnerability scanning and red teaming for Large Language Models using
 
 ## Pick Your Deployment
 
-| # | Mode | Server | Scans | Use Case | Guide |
-|---|------|--------|-------|----------|-------|
-| **1** | **Total Remote** | OpenShift AI | Data Science Pipelines | **Production** | [→ Setup](demos/1-openshift-ai/README.md) |
-| **2** | **Partial Remote** | Local laptop | Data Science Pipelines | Development | [→ Setup](demos/2-partial-remote/README.md) |
-| **3** | **Total Inline** | Local laptop | Local laptop | Testing only | [→ Setup](demos/3-local-inline/README.md) |
+| Mode | Llama Stack server | Garak scans | Typical use case | Guide |
+|---|---|---|---|---|
+| Total Remote | OpenShift/Kubernetes | KFP pipelines | Production | [→ Setup](demos/1-openshift-ai/README.md) |
+| Partial Remote | Local machine | KFP pipelines | Development | [→ Setup](demos/2-partial-remote/README.md) |
+| Total Inline | Local machine | Local machine | Fast local testing | [→ Setup](demos/3-local-inline/README.md) |
 
+- Feature notebook: `demos/guide.ipynb`
+- Metadata reference: `BENCHMARK_METADATA_REFERENCE.md`
 
 ## Installation
 
@@ -32,92 +34,170 @@ pip install llama-stack-provider-trustyai-garak
 pip install "llama-stack-provider-trustyai-garak[inline]"
 ```
 
-## Quick Example
+## Quick Workflow
 
 ```python
 from llama_stack_client import LlamaStackClient
 
 client = LlamaStackClient(base_url="http://localhost:8321")
 
-# Run security scan (5 minutes)
+# Discover Garak provider
+garak_provider = next(
+    p for p in client.providers.list()
+    if p.provider_type.endswith("trustyai_garak")
+)
+garak_provider_id = garak_provider.provider_id
+
+# List predefined benchmarks
+benchmarks = client.alpha.benchmarks.list()
+print([b.identifier for b in benchmarks if b.identifier.startswith("trustyai_garak::")])
+
+# Run a predefined benchmark
+benchmark_id = "trustyai_garak::quick"
 job = client.alpha.eval.run_eval(
-    benchmark_id="trustyai_garak::quick",
+    benchmark_id=benchmark_id,
     benchmark_config={
         "eval_candidate": {
             "type": "model",
-            "model": "your-model-name",
-            "sampling_params": {"max_tokens": 100}
+            "model": "your-model-id",
+            "sampling_params": {"max_tokens": 100},
+        }
+    },
+)
+
+# Poll status
+status = client.alpha.eval.jobs.status(job_id=job.job_id, benchmark_id=benchmark_id)
+print(status.status)
+
+# Retrieve final result
+if status.status == "completed":
+    job_result = client.alpha.eval.jobs.retrieve(job_id=job.job_id, benchmark_id=benchmark_id)
+```
+
+## Custom Benchmark Schema
+
+Use `metadata.garak_config` for Garak command configuration. Provider-level runtime parameters (for example `timeout`, `shield_ids`) stay at top-level metadata.
+
+```python
+client.alpha.benchmarks.register(
+    benchmark_id="custom_promptinject",
+    dataset_id="garak",
+    scoring_functions=["garak_scoring"],
+    provider_id=garak_provider_id,
+    provider_benchmark_id="custom_promptinject",
+    metadata={
+        "garak_config": {
+            "plugins": {
+                "probe_spec": ["promptinject"]
+            },
+            "reporting": {
+                "taxonomy": "owasp"
+            }
+        },
+        "timeout": 900
+    }
+)
+```
+
+## Update and Deep-Merge Behavior
+
+- To create a tuned variant of a predefined (or existing custom) benchmark, set `provider_benchmark_id` to the predefined (or existing custom) benchmark ID and pass overrides in `metadata`.
+- Provider metadata is deep-merged, so you can override only the parts you care about.
+- Predefined benchmarks are comprehensive by design. For faster exploratory runs, lower `garak_config.run.soft_probe_prompt_cap` to reduce prompts per probe.
+
+```python
+client.alpha.benchmarks.register(
+    benchmark_id="quick_promptinject_tuned",
+    dataset_id="garak",
+    scoring_functions=["garak_scoring"],
+    provider_id=garak_provider_id,
+    provider_benchmark_id="trustyai_garak::quick",
+    metadata={
+        "garak_config": {
+            "plugins": {"probe_spec": ["promptinject"]},
+            "system": {"parallel_attempts": 20}
+        },
+        "timeout": 1200
+    }
+)
+```
+
+```python
+# Faster (less comprehensive) variant of a predefined benchmark
+client.alpha.benchmarks.register(
+    benchmark_id="owasp_fast",
+    dataset_id="garak",
+    scoring_functions=["garak_scoring"],
+    provider_id=garak_provider_id,
+    provider_benchmark_id="trustyai_garak::owasp_llm_top10",
+    metadata={
+        "garak_config": {
+            "run": {"soft_probe_prompt_cap": 100}
         }
     }
 )
-
-# Check status
-status = client.alpha.eval.jobs.status(job_id=job.job_id, benchmark_id="trustyai_garak::quick")
-print(f"Status: {status.status}")
-
-# Get results
-if status.status == "completed":
-    results = client.alpha.eval.get_eval_job_result(job_id=job.job_id, benchmark_id="trustyai_garak::quick")
 ```
 
-## Available Benchmarks
+## Shield Testing
 
-| Benchmark ID | Tests | Duration |
-|--------------|-------|----------|
-| `trustyai_garak::owasp_llm_top10` | [OWASP Top 10](https://genai.owasp.org/llm-top-10/) | ~2 hrs |
-| `trustyai_garak::avid_security` | [AVID Security](https://docs.avidml.org/taxonomy/effect-sep-view/security) | ~2 hrs |
-| `trustyai_garak::avid_ethics` | AVID Ethics | ~10 min |
-| `trustyai_garak::avid_performance` | AVID Performance | ~10 min |
-| `trustyai_garak::quick` | 3 test probes | ~5 min |
-
-Or register custom benchmarks with specific [Garak probes](https://reference.garak.ai/en/latest/probes.html).
-
-## Shield Testing Example
+Use either `shield_ids` (all treated as input shields) or `shield_config` (explicit input/output mapping).
 
 ```python
-# Test how well guardrails (shields) block attacks
-client.benchmarks.register(
-    benchmark_id="with_shield",
+client.alpha.benchmarks.register(
+    benchmark_id="with_shields",
     dataset_id="garak",
     scoring_functions=["garak_scoring"],
-    provider_id="trustyai_garak_remote",  # or trustyai_garak_inline
-    provider_benchmark_id="with_shield",
+    provider_id=garak_provider_id,
+    provider_benchmark_id="with_shields",
     metadata={
-        "probes": ["promptinject.HijackHateHumans"],
-        "shield_ids": ["Prompt-Guard-86M"]  # Shield to test
+        "garak_config": {
+            "plugins": {"probe_spec": ["promptinject.HijackHateHumans"]}
+        },
+        "shield_config": {
+            "input": ["Prompt-Guard-86M"],
+            "output": ["Llama-Guard-3-8B"]
+        },
+        "timeout": 600
     }
 )
-
-job = client.alpha.eval.run_eval(
-    benchmark_id="with_shield",
-    benchmark_config={"eval_candidate": {"type": "model", "model": "your-model"}}
-)
 ```
 
-Compare results with/without shields to measure effectiveness.
+## Understanding Results (`_overall` and TBSA)
 
-## Understanding Results
+`job_result.scores` contains:
 
-### Vulnerability Score
-- **0.0** = Secure (model refused attack)
-- **0.5** = Threshold (concerning)
-- **1.0** = Vulnerable (model was compromised)
+- probe-level entries (for example `promptinject.HijackHateHumans`)
+- synthetic `_overall` aggregate entry across all probes
 
-### Reports Available
-Access via `job.metadata`:
-- `scan.log`: Detailed log of this scan.
-- `scan.report.jsonl`: Report containing information about each attempt (prompt) of each garak probe.
-- `scan.hitlog.jsonl`: Report containing only the information about attempts that the model was found vulnerable to.
-- `scan.avid.jsonl`: AVID (AI Vulnerability Database) format of `scan.report.jsonl`. You can find info about AVID [here](https://avidml.org/).
-- `scan.report.html`: Visual representation of the scan. In remote mode, this is logged as a html artifact of the pipeline.
+`_overall.aggregated_results` can include:
 
-```python
-# Download HTML report
-html_id = job.metadata[f"{job.job_id}_scan.report.html"]
-content = client.files.content(html_id)
-with open("report.html", "w") as f:
-    f.write(content)
-```
+- `total_attempts`
+- `vulnerable_responses`
+- `attack_success_rate`
+- `probe_count`
+- `tbsa` (Tier-Based Security Aggregate, 1.0 to 5.0, higher is better)
+- `version_probe_hash`
+- `probe_detector_pairs_contributing`
+
+TBSA is derived from probe:detector pass-rate and z-score DEFCON grades with tier-aware aggregation and weighting, to give a more meaningful overall security posture than a plain pass/fail metric.
+
+## Scan Artifacts
+
+Access scan files from job metadata:
+
+- `scan.log`
+- `scan.report.jsonl`
+- `scan.hitlog.jsonl`
+- `scan.avid.jsonl`
+- `scan.report.html`
+
+Remote mode stores prefixed keys in metadata (for example `{job_id}_scan.report.html`).
+
+## Notes on Remote Cluster Resources
+
+- Partial remote mode needs KFP resources only.
+- Total remote mode needs full stack resources (KFP, LlamaStackDistribution, RBAC, secrets, and Postgres manifests).
+- See `lsd_remote/` for full reference manifests.
 
 ## Support & Documentation
 

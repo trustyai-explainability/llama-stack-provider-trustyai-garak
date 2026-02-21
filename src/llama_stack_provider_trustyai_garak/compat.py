@@ -20,10 +20,14 @@ try:
         json_schema_type,
         Benchmark,
         Benchmarks,
-        GetBenchmarkRequest,
         Eval,
         BenchmarkConfig,
         EvaluateResponse,
+        RunEvalRequest,
+        EvaluateRowsRequest,
+        JobStatusRequest,
+        JobCancelRequest,
+        JobResultRequest,
         Files,
         OpenAIFilePurpose,
         OpenAIFileObject,
@@ -32,6 +36,7 @@ try:
         UploadFileRequest,
         Safety,
         RunShieldResponse,
+        GetShieldRequest,
         ViolationLevel,
         Shields,
         OpenAIChatCompletion,
@@ -59,10 +64,17 @@ except ModuleNotFoundError:  # fallback to legacy llama_stack layout
 
     # evals
     from llama_stack.apis.benchmarks import (
-        Benchmark, Benchmarks, GetBenchmarkRequest,
+        Benchmark, Benchmarks,
     )
     from llama_stack.apis.eval import (
-        Eval, BenchmarkConfig, EvaluateResponse
+        Eval, 
+        BenchmarkConfig, 
+        EvaluateResponse,
+        RunEvalRequest,
+        EvaluateRowsRequest,
+        JobStatusRequest,
+        JobCancelRequest,
+        JobResultRequest,
     )
 
     # files
@@ -79,7 +91,8 @@ except ModuleNotFoundError:  # fallback to legacy llama_stack layout
     from llama_stack.apis.safety import (
         Safety,
         RunShieldResponse, 
-        ViolationLevel
+        ViolationLevel,
+        GetShieldRequest,
     )
 
     # shields
@@ -96,6 +109,15 @@ except ModuleNotFoundError:  # fallback to legacy llama_stack layout
 
     # scoring
     from llama_stack.apis.scoring import ScoringResult
+finally:
+    # Patch Job model to allow extra fields (e.g., metadata)
+    # This enables additional context in Job responses
+    # The client-side Job model already has extra='allow', so this ensures
+    # the server-side model doesn't strip out extra fields during serialization
+    if not Job.model_config.get('extra'):
+        Job.model_config['extra'] = 'allow'
+        # Rebuild the model to apply the config change
+        Job.model_rebuild(force=True)
 
 
 __all__ = [
@@ -111,10 +133,14 @@ __all__ = [
     # evals
     "Benchmark",
     "Benchmarks",
-    "GetBenchmarkRequest",
     "Eval",
     "BenchmarkConfig",
     "EvaluateResponse",
+    "RunEvalRequest",
+    "EvaluateRowsRequest",
+    "JobStatusRequest",
+    "JobCancelRequest",
+    "JobResultRequest",
     # files
     "Files",
     "OpenAIFilePurpose",
@@ -126,6 +152,7 @@ __all__ = [
     "Safety",
     "RunShieldResponse",
     "ViolationLevel",
+    "GetShieldRequest",
     # shields
     "Shields",
     # inference

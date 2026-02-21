@@ -1,6 +1,6 @@
 [project]
 name = "llama-stack-provider-trustyai-garak"
-version = "0.1.8"
+version = "0.2.0"
 description = "Out-Of-Tree Llama Stack provider for Garak Red-teaming"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -11,7 +11,8 @@ authors = [
 ]
 keywords = ["llama-stack", "garak", "red-teaming", "security", "ai-safety"]
 dependencies = [
-    "llama-stack[client]>=0.4.0",
+    "llama-stack-client>=0.5.0",
+    "llama-stack-api>=0.5.0",
     # Remote execution dependencies
     "kfp>=2.14.6",
     "kfp-kubernetes>=2.14.6",
@@ -26,7 +27,7 @@ homepage = "https://github.com/trustyai-explainability/llama-stack-provider-trus
 repository = "https://github.com/trustyai-explainability/llama-stack-provider-trustyai-garak"
 
 [build-system]
-requires = ["setuptools==80.9.0"]
+requires = ["setuptools>=80.9.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
@@ -34,10 +35,12 @@ where = ["src"]
 
 [project.optional-dependencies]
 inline = [
-    "langchain==0.3.27",  # latest langchain breaks garak, so must be '>=0.3.25,<1.0.0'
-    "garak==0.12.0",
+    "pyasn1==0.6.2", # trivy high vul fix
+    "protobuf==6.33.5", # trivy high vul fix
+    "garak==0.14.0",
 ]
 dev = ["pytest", "pytest-cov",  "pytest-asyncio", "black", "isort"]
+server = ["llama-stack>=0.5.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

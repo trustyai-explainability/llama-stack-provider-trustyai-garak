@@ -11,7 +11,19 @@ from llama_stack_provider_trustyai_garak.remote.garak_remote_eval import GarakRe
 from llama_stack_provider_trustyai_garak.remote.provider import get_provider_spec
 from llama_stack_provider_trustyai_garak.config import GarakRemoteConfig, KubeflowConfig, GarakScanConfig
 from llama_stack_provider_trustyai_garak.errors import GarakConfigError, GarakValidationError
-from llama_stack_provider_trustyai_garak.compat import Api, JobStatus, EvaluateResponse, Benchmark, RetrieveFileContentRequest
+from llama_stack_provider_trustyai_garak.compat import (
+    Api, 
+    Job,
+    JobStatus, 
+    EvaluateResponse, 
+    Benchmark, 
+    RetrieveFileContentRequest,
+    RunEvalRequest,
+    JobStatusRequest,
+    JobCancelRequest,
+    JobResultRequest,
+    EvaluateRowsRequest,
+)
 
 class TestRemoteProvider:
     """Test cases for remote provider specification"""
@@ -227,60 +239,59 @@ class TestGarakRemoteEvalAdapter:
                 
                 assert adapter.kfp_client == mock_kfp_client
 
-    def test_resolve_framework_to_probes(self, adapter):
-        """Test resolving framework ID to probes for remote provider"""
+    def test_framework_uses_probe_tags(self, adapter):
+        """Test that framework profiles use probe_tags for filtering (no provider-side resolution)"""
         adapter.scan_config = GarakScanConfig()
         
-        # Remote provider returns ['all'] and sets probe_tags in metadata
-        # Actual probe resolution happens in the KFP pod
-        probes = adapter._resolve_framework_to_probes('trustyai_garak::owasp_llm_top10')
-            
-        # Remote mode returns ['all'] - filtering via probe_tags
-        assert probes == ['all']
-
-    def test_resolve_framework_to_probes_unknown_framework_raises(self, adapter):
-        """Unknown framework_id should raise GarakValidationError in remote mode."""
-        adapter.scan_config = GarakScanConfig()
+        # Framework profiles now use garak_config with probe_tags
+        # Garak handles probe resolution at runtime (not provider)
+        owasp_profile = adapter.scan_config.FRAMEWORK_PROFILES['trustyai_garak::owasp_llm_top10']
         
-        with pytest.raises(GarakValidationError) as exc_info:
-            adapter._resolve_framework_to_probes("nonexistent_framework_id")
+        assert "garak_config" in owasp_profile
+        assert owasp_profile["garak_config"]["run"]["probe_tags"] == "owasp:llm"
         
-        assert "Unknown framework" in str(exc_info.value)
+        # No more provider-side probe resolution needed
+        # (removed _resolve_framework_to_probes method)
 
     @pytest.mark.asyncio
-    async def test_register_benchmark_enriches_metadata_with_probe_tags_remote(self, adapter):
-        """register_benchmark should copy taxonomy_filters to metadata['probe_tags'] and persist."""
+    async def test_register_benchmark_with_garak_config(self, adapter):
+        """Test benchmark registration with new garak_config format."""
         adapter.scan_config = GarakScanConfig()
         
         # Mock the benchmarks_api to avoid actual API calls
         adapter.benchmarks_api = Mock()
         
         framework_id = "trustyai_garak::owasp_llm_top10"
-        taxonomy_filters = adapter.scan_config.FRAMEWORK_PROFILES[framework_id]["taxonomy_filters"]
         
-        # Create a benchmark for a framework-based profile
+        # Create a benchmark with garak_config (new format)
         benchmark = Benchmark(
             identifier=framework_id,
             dataset_id="garak",
             scoring_functions=["garak_scoring"],
             provider_id="trustyai_garak_remote",
             provider_benchmark_id=framework_id,
-            metadata={}  # Empty metadata - should be enriched
+            metadata={
+                "garak_config": {
+                    "run": {
+                        "probe_tags": "owasp:llm",
+                        "generations": 5
+                    },
+                    "plugins": {
+                        "probe_spec": ["all"]
+                    }
+                },
+                "timeout": 43200
+            }
         )
         
         # Register the benchmark
         await adapter.register_benchmark(benchmark)
         
-        # Benchmark metadata should include probes=['all'] and probe_tags from the framework profile
-        assert "probes" in benchmark.metadata
-        assert benchmark.metadata["probes"] == ['all']
-        assert "probe_tags" in benchmark.metadata
-        assert benchmark.metadata["probe_tags"] == taxonomy_filters
-        
-        # Adapter should persist the enriched benchmark in its internal storage
+        # Benchmark should be stored
         stored_benchmark = adapter.benchmarks[framework_id]
-        assert stored_benchmark.metadata["probe_tags"] == taxonomy_filters
-        assert stored_benchmark.metadata["probes"] == ['all']
+        assert stored_benchmark.identifier == framework_id
+        assert "garak_config" in stored_benchmark.metadata
+        assert stored_benchmark.metadata["garak_config"]["run"]["probe_tags"] == "owasp:llm"
 
     def test_get_job_id(self, adapter):
         """Test job ID generation"""
@@ -307,62 +318,94 @@ class TestGarakRemoteEvalAdapter:
         benchmark.identifier = "trustyai_garak::quick"
         benchmark.metadata = None
         
-        with patch.object(adapter, '_resolve_framework_to_probes', return_value=['probe1']):
-            await adapter.register_benchmark(benchmark)
-            
-            # Check that metadata was set from the predefined profile
-            assert benchmark.metadata is not None
+        await adapter.register_benchmark(benchmark)
+        
+        # Check that metadata was set from the predefined profile
+        assert benchmark.metadata is not None
+        assert "garak_config" in benchmark.metadata
+        assert "timeout" in benchmark.metadata
 
     @pytest.mark.asyncio
-    async def test_build_command_basic(self, adapter, mock_benchmark, mock_benchmark_config):
-        """Test basic command building"""
-        scan_profile_config = {
-            "probes": ["probe1", "probe2"],
-            "timeout": 3600
-        }
+    async def test_build_command_basic(self, adapter, mock_benchmark_config):
+        """Test basic command building with new signature"""
+        from llama_stack_provider_trustyai_garak.garak_command_config import (
+            GarakCommandConfig,
+            GarakPluginsConfig,
+            GarakRunConfig
+        )
+        
+        # Create garak_config
+        garak_config = GarakCommandConfig(
+            plugins=GarakPluginsConfig(
+                probe_spec=["probe1", "probe2"]
+            ),
+            run=GarakRunConfig(
+                generations=5,
+                eval_threshold=0.5
+            )
+        )
+        
+        provider_params = {"timeout": 3600}
         
         # Mock necessary methods
         adapter.all_probes = {"probe1", "probe2"}
         
-        with patch.object(adapter, 'get_benchmark', return_value=mock_benchmark):
-            with patch.object(adapter, '_get_generator_options', return_value={"test": "options"}):
-                cmd = await adapter._build_command(
-                    mock_benchmark_config,
-                    "test-benchmark",
-                    scan_profile_config
-                )
-                
-                assert "garak" in cmd
-                assert "--model_type" in cmd
-                assert "--model_name" in cmd
-                assert "--generator_options" in cmd
-                assert "--probes" in cmd
-                assert "probe1,probe2" in cmd
+        # Build command (returns dict now)
+        cmd_config = await adapter._build_command(
+            mock_benchmark_config,
+            garak_config,
+            provider_params
+        )
+        
+        # Check structure
+        assert isinstance(cmd_config, dict)
+        assert "plugins" in cmd_config
+        assert "run" in cmd_config
+        assert cmd_config["plugins"]["target_type"] == "openai.OpenAICompatible"
+        assert cmd_config["plugins"]["target_name"] == "test-model"
+        assert cmd_config["plugins"]["probe_spec"] == "probe1,probe2"
 
     @pytest.mark.asyncio
     async def test_build_command_with_shields(self, adapter, mock_benchmark_config):
-        """Test command building with shields"""
-        benchmark = Mock()
-        benchmark.identifier = "test-benchmark"
-        benchmark.metadata = {
-            "probes": ["probe1"],
-            "shield_ids": ["shield1", "shield2"]
-        }
+        """Test command building with shields using new signature"""
+        from llama_stack_provider_trustyai_garak.garak_command_config import (
+            GarakCommandConfig,
+            GarakPluginsConfig,
+            GarakRunConfig
+        )
         
-        scan_profile_config = {"probes": ["probe1"], "timeout": 3600}
+        # Create garak_config
+        garak_config = GarakCommandConfig(
+            plugins=GarakPluginsConfig(
+                probe_spec=["probe1"]
+            ),
+            run=GarakRunConfig(
+                generations=5
+            )
+        )
+        
+        provider_params = {
+            "shield_ids": ["shield1", "shield2"],
+            "timeout": 3600
+        }
         
         adapter.all_probes = {"probe1"}
         
-        with patch.object(adapter, 'get_benchmark', return_value=benchmark):
-            with patch.object(adapter, '_get_function_based_generator_options', return_value={"function": "options"}):
-                cmd = await adapter._build_command(
-                    mock_benchmark_config,
-                    "test-benchmark",
-                    scan_profile_config
-                )
-                
-                assert "--model_type" in cmd
-                assert "function.Single" in cmd
+        # Mock shield availability check
+        adapter.shields_api = Mock()
+        adapter.shields_api.get_shield = AsyncMock(return_value=Mock())
+        
+        # Build command
+        cmd_config = await adapter._build_command(
+            mock_benchmark_config,
+            garak_config,
+            provider_params
+        )
+        
+        # Check structure
+        assert isinstance(cmd_config, dict)
+        assert cmd_config["plugins"]["target_type"] == "function.Single"
+        assert "simple_shield_orchestrator" in cmd_config["plugins"]["target_name"]
 
     @pytest.mark.asyncio
     async def test_run_eval_success(self, adapter, mock_benchmark, mock_benchmark_config):
@@ -382,33 +425,32 @@ class TestGarakRemoteEvalAdapter:
                 adapter.kfp_client = Mock()
                 adapter.kfp_client.create_run_from_pipeline_func.return_value = mock_run
                 
-                result = await adapter.run_eval("test-benchmark", mock_benchmark_config)
+                request = RunEvalRequest(benchmark_id="test-benchmark", benchmark_config=mock_benchmark_config)
+                result = await adapter.run_eval(request)
                 
-                assert "job_id" in result
-                assert result["status"] == JobStatus.scheduled
-                assert "metadata" in result
+                assert hasattr(result, 'job_id')
+                assert result.status == JobStatus.scheduled
+                assert hasattr(result, 'metadata')
                 # Verify the job_id is properly stored
-                job_id = result["job_id"]
+                job_id = result.job_id
                 assert job_id in adapter._jobs
                 assert adapter._jobs[job_id].status == JobStatus.scheduled
                 assert adapter._job_metadata[job_id]["kfp_run_id"] == "test-run-id"
 
     @pytest.mark.asyncio
-    async def test_run_eval_invalid_candidate_type(self, adapter, mock_benchmark):
+    async def test_run_eval_invalid_candidate_type(self, adapter, mock_benchmark, mock_benchmark_config):
         """Test run_eval with invalid candidate type"""
-        # Create a mock config that will fail the type check
-        invalid_config = Mock()
-        invalid_config.eval_candidate = Mock()
-        invalid_config.eval_candidate.type = "invalid"  # This should be "model"
-        invalid_config.eval_candidate.model = "test-model"
+        # Modify the mock_benchmark_config to have an invalid candidate type
+        mock_benchmark_config.eval_candidate.type = "invalid"  # This should be "model"
         
-        # Make it not an instance of BenchmarkConfig so it fails isinstance check
         adapter._initialized = True
         
-        with pytest.raises(GarakValidationError) as exc_info:
-            await adapter.run_eval("test-benchmark", invalid_config)
+        with patch.object(adapter, 'get_benchmark', return_value=mock_benchmark):
+            request = RunEvalRequest(benchmark_id="test-benchmark", benchmark_config=mock_benchmark_config)
+            with pytest.raises(GarakValidationError) as exc_info:
+                await adapter.run_eval(request)
         
-        assert "Required benchmark_config to be of type BenchmarkConfig" in str(exc_info.value)
+            assert "Eval candidate type must be 'model'" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_job_status_in_progress(self, adapter):
@@ -425,10 +467,11 @@ class TestGarakRemoteEvalAdapter:
         
         # Mock the mapping function
         with patch.object(adapter, '_map_kfp_run_state_to_job_status', return_value=JobStatus.in_progress):
-            result = await adapter.job_status("test-benchmark", job_id)
+            request = JobStatusRequest(benchmark_id="test-benchmark", job_id=job_id)
+            result = await adapter.job_status(request)
             
-            assert result["job_id"] == job_id
-            assert result["status"] == JobStatus.in_progress
+            assert result.job_id == job_id
+            assert result.status == JobStatus.in_progress
 
     @pytest.mark.asyncio
     async def test_job_status_completed(self, adapter):
@@ -462,9 +505,10 @@ class TestGarakRemoteEvalAdapter:
         adapter.file_api.openai_retrieve_file_content = AsyncMock(return_value=mock_mapping_content)
         
         with patch.object(adapter, '_map_kfp_run_state_to_job_status', return_value=JobStatus.completed):
-            result = await adapter.job_status("test-benchmark", job_id)
+            request = JobStatusRequest(benchmark_id="test-benchmark", job_id=job_id)
+            result = await adapter.job_status(request)
             
-            assert result["status"] == JobStatus.completed
+            assert result.status == JobStatus.completed
             assert adapter._job_metadata[job_id].get(f"{job_id}_scan_result.json") == "file-id-123"
             # Verify mapping_file_id was cached
             assert adapter._job_metadata[job_id].get("mapping_file_id") == "mapping-file-id-123"
@@ -495,10 +539,11 @@ class TestGarakRemoteEvalAdapter:
         
         with caplog.at_level(logging.WARNING):
             with patch.object(adapter, '_map_kfp_run_state_to_job_status', return_value=JobStatus.completed):
-                result = await adapter.job_status("test-benchmark", job_id)
+                request = JobStatusRequest(benchmark_id="test-benchmark", job_id=job_id)
+                result = await adapter.job_status(request)
         
         # Should complete successfully despite missing mapping file
-        assert result["status"] == JobStatus.completed
+        assert result.status == JobStatus.completed
         # Should warn about missing mapping file
         assert "Could not find mapping file" in caplog.text or "mapping" in caplog.text.lower()
 
@@ -534,10 +579,11 @@ class TestGarakRemoteEvalAdapter:
         
         with caplog.at_level(logging.WARNING):
             with patch.object(adapter, '_map_kfp_run_state_to_job_status', return_value=JobStatus.completed):
-                result = await adapter.job_status("test-benchmark", job_id)
+                request = JobStatusRequest(benchmark_id="test-benchmark", job_id=job_id)
+                result = await adapter.job_status(request)
         
         # Should complete successfully despite empty content
-        assert result["status"] == JobStatus.completed
+        assert result.status == JobStatus.completed
         # Should log error about JSON parsing
         assert "JSON" in caplog.text or "parse" in caplog.text.lower()
 
@@ -573,10 +619,11 @@ class TestGarakRemoteEvalAdapter:
         
         with caplog.at_level(logging.ERROR):
             with patch.object(adapter, '_map_kfp_run_state_to_job_status', return_value=JobStatus.completed):
-                result = await adapter.job_status("test-benchmark", job_id)
+                request = JobStatusRequest(benchmark_id="test-benchmark", job_id=job_id)
+                result = await adapter.job_status(request)
         
         # Should complete successfully despite invalid JSON
-        assert result["status"] == JobStatus.completed
+        assert result.status == JobStatus.completed
         # Should log error about JSON parsing failure
         assert "Failed to parse JSON" in caplog.text or "JSON" in caplog.text
 
@@ -608,9 +655,10 @@ class TestGarakRemoteEvalAdapter:
         adapter.file_api.openai_retrieve_file_content = AsyncMock(return_value=mock_mapping_content)
         
         with patch.object(adapter, '_map_kfp_run_state_to_job_status', return_value=JobStatus.completed):
-            result = await adapter.job_status("test-benchmark", job_id)
+            request = JobStatusRequest(benchmark_id="test-benchmark", job_id=job_id)
+            result = await adapter.job_status(request)
             
-            assert result["status"] == JobStatus.completed
+            assert result.status == JobStatus.completed
             assert adapter._job_metadata[job_id].get(f"{job_id}_scan_result.json") == "file-id-789"
             
             # Verify we used cached ID and didn't call list_files
@@ -639,8 +687,9 @@ class TestGarakRemoteEvalAdapter:
         mock_get_benchmark = AsyncMock(return_value=mock_benchmark)
         
         with patch.object(adapter, 'get_benchmark', mock_get_benchmark):
-            with patch.object(adapter, 'job_status', new_callable=AsyncMock, return_value={"status": JobStatus.completed}):
-                result = await adapter.job_result("test-benchmark", job_id)
+            with patch.object(adapter, 'job_status', new_callable=AsyncMock, return_value=Job(job_id=job_id, status=JobStatus.completed)):
+                request = JobResultRequest(benchmark_id="test-benchmark", job_id=job_id)
+                result = await adapter.job_result(request)
                 
                 # Check it's an EvaluateResponse
                 assert isinstance(result, EvaluateResponse)
@@ -655,8 +704,9 @@ class TestGarakRemoteEvalAdapter:
         
         adapter.kfp_client = Mock()
         
-        with patch.object(adapter, 'job_status', new_callable=AsyncMock, return_value={"status": JobStatus.in_progress}):
-            await adapter.job_cancel("test-benchmark", job_id)
+        with patch.object(adapter, 'job_status', new_callable=AsyncMock, return_value=Job(job_id=job_id, status=JobStatus.in_progress)):
+            request = JobCancelRequest(benchmark_id="test-benchmark", job_id=job_id)
+            await adapter.job_cancel(request)
             
             adapter.kfp_client.terminate_run.assert_called_once_with("test-run-id")
 
@@ -791,12 +841,13 @@ class TestGarakRemoteEvalAdapter:
         assert options["function"]["Single"]["kwargs"]["llm_io_shield_mapping"]["input"] == ["shield1", "shield2"]
 
     @pytest.mark.asyncio
-    async def test_evaluate_rows_not_implemented(self, adapter):
+    async def test_evaluate_rows_not_implemented(self, adapter, mock_benchmark_config):
         """Test evaluate_rows raises NotImplementedError"""
+        request = EvaluateRowsRequest(
+            benchmark_id="benchmark-id",
+            input_rows=[{"input": "test"}],
+            scoring_functions=["score1"],
+            benchmark_config=mock_benchmark_config
+        )
         with pytest.raises(NotImplementedError):
-            await adapter.evaluate_rows(
-                "benchmark-id",
-                [{"input": "test"}],
-                ["score1"],
-                Mock()
-            )
+            await adapter.evaluate_rows(request)

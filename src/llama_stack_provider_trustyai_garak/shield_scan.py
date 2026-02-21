@@ -57,7 +57,7 @@ class SimpleShieldOrchestrator:
                 raise ValueError(f"Failed to initialize LlamaStack client: {e}") from e
         return self.llama_stack_client
 
-    def _get_shield_response(self, shield_id: str, prompt: str, base_url: str, params: dict={}) -> RunShieldResponse:
+    def _get_shield_response(self, shield_id: str, prompt: str, base_url: str) -> RunShieldResponse:
         if not isinstance(shield_id, str) or not shield_id.strip():
             raise ValueError("shield_id must be a non-empty string")
         if not isinstance(prompt, str):
@@ -68,7 +68,6 @@ class SimpleShieldOrchestrator:
             return self._get_llama_stack_client(base_url).safety.run_shield(
                 messages=messages,
                 shield_id=shield_id,
-                params=params
             )
         except ValueError:
             raise
@@ -156,7 +155,7 @@ class SimpleShieldOrchestrator:
         if input_shields:
             logger.debug(f"Running input shields: {input_shields}")
             for shield_id in input_shields:
-                shield_response = self._get_shield_response(shield_id, prompt, kwargs["base_url"], kwargs.get("params", {}))
+                shield_response = self._get_shield_response(shield_id, prompt, kwargs["base_url"])
                 if self._is_violation(shield_response):
                     return [self._get_violation_message(shield_response)]
             logger.debug(f"No input violation detected")
@@ -175,7 +174,7 @@ class SimpleShieldOrchestrator:
         if output_shields:
             logger.debug(f"Running output shields: {output_shields}")
             for shield_id in output_shields:
-                shield_response = self._get_shield_response(shield_id, llm_response, kwargs["base_url"], kwargs.get("params", {}))
+                shield_response = self._get_shield_response(shield_id, llm_response, kwargs["base_url"])
                 if self._is_violation(shield_response):
                     return [self._get_violation_message(shield_response)]
             logger.debug(f"No output violation detected. Returning LLM response.")

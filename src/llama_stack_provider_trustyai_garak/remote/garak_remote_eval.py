@@ -1,6 +1,10 @@
 from ..compat import (
     EvaluateResponse, 
     BenchmarkConfig,
+    RunEvalRequest,
+    JobStatusRequest,
+    JobCancelRequest,
+    JobResultRequest,
     Benchmark,
     ProviderSpec, 
     Api, 
@@ -50,64 +54,6 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
         """
         logger.debug("Skipping probe enumeration for remote provider (validated in container)")
         return set()  # Allow any probes; validation happens in the pod
-
-    def _resolve_framework_to_probes(self, framework_id: str) -> List[str]:
-        """Override: Skip resolution for remote provider - use probe_tags instead.
-        
-        For remote execution, we can't resolve frameworks on the server (no garak installed).
-        Instead, we return ['all'] and set probe_tags in the metadata, letting garak
-        resolve the taxonomy filters at runtime in the KFP pod.
-        
-        Args:
-            framework_id: The framework identifier (e.g., 'trustyai_garak::owasp_llm_top10')
-            
-        Returns:
-            List containing 'all' - actual filtering happens via probe_tags
-            
-        Raises:
-            GarakValidationError: If framework is unknown
-        """
-        from ..errors import GarakValidationError
-        
-        framework_info = self.scan_config.FRAMEWORK_PROFILES.get(framework_id)
-        if not framework_info:
-            raise GarakValidationError(f"Unknown framework: {framework_id}")
-        
-        taxonomy_filters = framework_info.get('taxonomy_filters', [])
-        
-        logger.debug(
-            f"Remote mode: Framework '{framework_id}' will use probe_tags for filtering. "
-            f"Taxonomy filters: {taxonomy_filters}"
-        )
-        
-        # Return 'all' - the actual filtering will happen via --probe_tags in the command
-        # The benchmark registration will store taxonomy_filters as probe_tags in metadata
-        return ['all']
-
-    async def register_benchmark(self, benchmark: "Benchmark") -> None:
-        """Override: Handle frameworks specially for remote execution.
-        
-        For framework-based benchmarks, store taxonomy_filters as probe_tags
-        so garak can resolve them at runtime in the KFP pod.
-        """
-        # Call parent to handle basic registration
-        await super().register_benchmark(benchmark)
-        
-        # For frameworks, add probe_tags to metadata for runtime resolution
-        if benchmark.identifier in self.scan_config.FRAMEWORK_PROFILES:
-            framework_info = self.scan_config.FRAMEWORK_PROFILES[benchmark.identifier]
-            taxonomy_filters = framework_info.get('taxonomy_filters', [])
-            
-            if taxonomy_filters and not benchmark.metadata.get('probe_tags'):
-                # Store taxonomy filters as probe_tags for garak's --probe_tags flag
-                benchmark.metadata['probe_tags'] = taxonomy_filters
-                logger.info(
-                    f"Framework '{benchmark.identifier}': Set probe_tags={taxonomy_filters} "
-                    f"for runtime resolution in KFP pod"
-                )
-        
-        # Update the stored benchmark
-        self.benchmarks[benchmark.identifier] = benchmark
 
     async def initialize(self) -> None:
         """Initialize the remote Garak provider."""
@@ -184,12 +130,11 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
             ) from e
         return token
     
-    async def run_eval(self, benchmark_id: str, benchmark_config: BenchmarkConfig) -> Dict[str, Union[str, Dict[str, str]]]:
+    async def run_eval(self, request: RunEvalRequest) -> Job:
         """Run an evaluation for a specific benchmark and configuration.
 
         Args:
-            benchmark_id: The benchmark id
-            benchmark_config: Configuration for the evaluation task
+            request: Run eval request containing benchmark_id and benchmark_config
             
         Raises:
             GarakValidationError: If benchmark_id or benchmark_config are invalid
@@ -199,12 +144,15 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
         if not self._initialized:
             await self.initialize()
         
+        benchmark_id = request.benchmark_id
+        benchmark_config: BenchmarkConfig = request.benchmark_config
+        
         if not benchmark_id or not isinstance(benchmark_id, str):
             raise GarakValidationError("benchmark_id must be a non-empty string")
         if not benchmark_config:
             raise GarakValidationError("benchmark_config cannot be None")
         
-        _, benchmark_metadata = await self._validate_run_eval_request(benchmark_id, benchmark_config)
+        garak_config, provider_params = await self._validate_run_eval_request(benchmark_id, benchmark_config)
         
         job_id = self._get_job_id(prefix=JOB_ID_PREFIX)
         job = Job(
@@ -217,39 +165,40 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
             self._job_metadata[job_id] = {}  # Initialize metadata dict
 
         try:
-            scan_profile_config: dict = {
-                "probes": benchmark_metadata["probes"],
-                "timeout": benchmark_metadata.get("timeout", self._config.timeout)
-            }
+            timeout = provider_params.get("timeout", self._config.timeout)
 
-            cmd: List[str] = await self._build_command(benchmark_config, benchmark_id, scan_profile_config)
+            cmd_config: dict = await self._build_command(benchmark_config, garak_config, provider_params)
 
-            from .kfp_utils.pipeline import garak_scan_pipeline
-            
-            self._ensure_kfp_client()
-            
             # Validate config before creating pipeline
             if not self._config.kubeflow_config.namespace:
                 raise GarakConfigError("kubeflow_config.namespace is not configured")
             if not self._config.llama_stack_url:
                 raise GarakConfigError("llama_stack_url is not configured")
+            garak_base_image = self._config.kubeflow_config.garak_base_image
+            if garak_base_image and garak_base_image.strip() and not os.environ.get("KUBEFLOW_GARAK_BASE_IMAGE"):
+                os.environ["KUBEFLOW_GARAK_BASE_IMAGE"] = garak_base_image
+                logger.info(f"KUBEFLOW_GARAK_BASE_IMAGE set to {garak_base_image}")
             
-            experiment_name = f"trustyai-garak-{self._config.kubeflow_config.namespace}"
+            experiment_name = self._config.kubeflow_config.experiment_name or "trustyai-garak"
             
             llama_stack_url = self._config.llama_stack_url.strip().rstrip("/")
             if not llama_stack_url:
                 raise GarakConfigError("llama_stack_url cannot be empty after normalization")
+
+            from .kfp_utils.pipeline import garak_scan_pipeline
+            
+            self._ensure_kfp_client()
             
             run = self.kfp_client.create_run_from_pipeline_func(
                 garak_scan_pipeline,
                 arguments={
-                    "command": cmd,
+                    "command": json.dumps(cmd_config),
                     "llama_stack_url": llama_stack_url,
                     "job_id": job_id,
-                    "eval_threshold": float(benchmark_metadata.get("eval_threshold", self.scan_config.VULNERABLE_SCORE)),
-                    "timeout_seconds": int(scan_profile_config.get("timeout", self._config.timeout)),
-                    "max_retries": int(benchmark_metadata.get("max_retries", 3)),
-                    "use_gpu": benchmark_metadata.get("use_gpu", False),
+                    "eval_threshold": float(garak_config.run.eval_threshold),
+                    "timeout_seconds": int(timeout),
+                    "max_retries": int(provider_params.get("max_retries", 3)),
+                    "use_gpu": provider_params.get("use_gpu", False),
                     "verify_ssl": str(self._verify_ssl),
                 },
                 run_name=f"garak-{benchmark_id.split('::')[-1]}-{job_id.removeprefix(JOB_ID_PREFIX)}",
@@ -262,7 +211,12 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
                     "created_at": self._convert_datetime_to_str(run.run_info.created_at), 
                     "kfp_run_id": run.run_id}
                 
-            return {"job_id": job_id, "status": job.status, "metadata": self._job_metadata.get(job_id, {})}
+            # Return Job object with metadata (Job model patched in compat.py to allow extra fields)
+            return Job(
+                job_id=job_id,
+                status=job.status,
+                metadata=self._job_metadata.get(job_id, {})
+            )
         except Exception as e:
             logger.error(f"Error running eval for {benchmark_id}: {e}")
             async with self._jobs_lock:
@@ -288,26 +242,28 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
             logger.warning(f"KFP run has an unknown status: {run_state}, mapping to scheduled")
             return JobStatus.scheduled
     
-    async def job_status(self, benchmark_id: str, job_id: str) -> Dict[str, Union[str, Dict[str, str]]]:
+    async def job_status(self, request: JobStatusRequest) -> Job:
         """Get the status of a job.
 
         Args:
-            benchmark_id: The benchmark id
-            job_id: The job id
+            request: Job status request containing benchmark_id and job_id
         """
         from kfp_server_api.models import V2beta1Run
+        
+        benchmark_id = request.benchmark_id
+        job_id = request.job_id
         
         async with self._jobs_lock:
             job = self._jobs.get(job_id)
             if not job:
                 logger.warning(f"Job {job_id} not found")
-                return {"status": "not_found", "job_id": job_id}
+                return Job(job_id=job_id, status=JobStatus.failed, metadata={"error": "Job not found"})
             
             metadata: dict = self._job_metadata.get(job_id, {})
 
             if "kfp_run_id" not in metadata:
                 logger.warning(f"Job {job_id} has no kfp run id")
-                return {"status": "not_found", "job_id": job_id}
+                return Job(job_id=job_id, status=JobStatus.failed, metadata={"error": "No KFP run ID found"})
             
             kfp_run_id = metadata["kfp_run_id"]
         
@@ -370,34 +326,33 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
                 return_status = job.status
         except Exception as e:
             logger.error(f"Error getting KFP run {kfp_run_id}: {e}")
-            return {"status": "not_found", "job_id": job_id}
+            return Job(job_id=job_id, status=JobStatus.failed, metadata={"error": f"Error getting KFP run: {str(e)}"})
         
-        return {"job_id": job_id, "status": return_status, "metadata": return_metadata}
+        # Return Job object with metadata (Job model patched in compat.py to allow extra fields)
+        return Job(job_id=job_id, status=return_status, metadata=return_metadata)
     
-    async def job_result(self, benchmark_id: str, job_id: str) -> EvaluateResponse:
+    async def job_result(self, request: JobResultRequest) -> EvaluateResponse:
         """Get the result of a job (remote-specific: updates job state from KFP first).
 
         Args:
-            benchmark_id: The benchmark id
-            job_id: The job id
+            request: Job result request containing benchmark_id and job_id
         """
         # Update job status from KFP before getting results
-        await self.job_status(benchmark_id, job_id)
+        await self.job_status(JobStatusRequest(benchmark_id=request.benchmark_id, job_id=request.job_id))
         
-        return await super().job_result(benchmark_id, job_id, prefix=f"{job_id}_")
+        return await super().job_result(request, prefix=f"{request.job_id}_")
     
-    async def job_cancel(self, benchmark_id: str, job_id: str) -> None:
+    async def job_cancel(self, request: JobCancelRequest) -> None:
         """Cancel a job and kill the process.
 
         Args:
-            benchmark_id: The benchmark id
-            job_id: The job id
+            request: Job cancel request containing benchmark_id and job_id
         """
+        benchmark_id = request.benchmark_id
+        job_id = request.job_id
         # check/update the current status of the job
-        current_status = await self.job_status(benchmark_id, job_id)
-        if current_status["status"] == "not_found":
-            return
-        elif current_status["status"] in [JobStatus.completed, JobStatus.failed, JobStatus.cancelled]:
+        current_status = await self.job_status(JobStatusRequest(benchmark_id=benchmark_id, job_id=job_id))
+        if current_status.status in [JobStatus.completed, JobStatus.failed, JobStatus.cancelled]:
             logger.warning(f"Job {job_id} is not running. Can't cancel.")
             return
         else:
@@ -422,7 +377,7 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
         
         # Kill all running jobs
         for job_id, job in jobs_to_cancel:
-            await self.job_cancel("placeholder", job_id)
+            await self.job_cancel(JobCancelRequest(benchmark_id="placeholder", job_id=job_id))
         
         # # Clear all running tasks, jobs and job metadata
         async with self._jobs_lock:

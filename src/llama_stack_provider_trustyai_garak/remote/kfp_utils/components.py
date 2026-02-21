@@ -25,7 +25,7 @@ def get_base_image() -> str:
     kubernetes config is not available (e.g., in tests or non-k8s environments).
     """
     # Check environment variable first (highest priority)
-    if (base_image := os.environ.get("KUBEFLOW_BASE_IMAGE")) is not None:
+    if (base_image := os.environ.get("KUBEFLOW_GARAK_BASE_IMAGE")) is not None:
         return base_image
 
     # Try to load from kubernetes ConfigMap
@@ -70,7 +70,7 @@ def get_base_image() -> str:
     packages_to_install=[]  # No additional packages needed
 )
 def validate_inputs(
-    command: List[str],
+    command: str,
     llama_stack_url: str,
     verify_ssl: str
 ) -> NamedTuple('outputs', [
@@ -82,7 +82,8 @@ def validate_inputs(
     from llama_stack_client import LlamaStackClient
     from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
     from llama_stack_provider_trustyai_garak.errors import GarakValidationError
-    
+    import json
+
     validation_errors = []
     
     # Validate Llama Stack connectivity
@@ -107,9 +108,12 @@ def validate_inputs(
         validation_errors.append(f"Garak is not installed. Please install it using 'pip install garak': {e}")
         raise e
 
-    # Validate command structure
-    if not command or command[0] != 'garak':
-        validation_errors.append("Invalid command: must start with 'garak'")
+    # Validate command
+    try:
+        _ = json.loads(command)
+    except json.JSONDecodeError as e:
+        validation_errors.append(f"Invalid command: {e}")
+        raise e
     
     # Check for dangerous flags
     dangerous_flags = ['--rm', '--force', '--no-limit']
@@ -132,7 +136,7 @@ def validate_inputs(
     packages_to_install=[]  # No additional packages needed
 )
 def garak_scan(
-    command: List[str],
+    command: str,
     llama_stack_url: str,
     job_id: str,
     max_retries: int,
@@ -163,50 +167,64 @@ def garak_scan(
     
     scan_log_file = scan_dir / f"{job_id}_scan.log"
     scan_report_prefix = scan_dir / f"{job_id}_scan"
+
+    scan_cmd_config_file = scan_dir / f"config.json"
+    scan_cmd_config = json.loads(command)
+    scan_cmd_config['reporting']['report_prefix'] = str(scan_report_prefix)
+    with open(scan_cmd_config_file, 'w') as f:
+        json.dump(scan_cmd_config, f)
     
-    command = command + ['--report_prefix', str(scan_report_prefix)]
+    command = ['garak', '--config', str(scan_cmd_config_file)]
     env = os.environ.copy()
     env["GARAK_LOG_FILE"] = str(scan_log_file)
     
     file_id_mapping = {}
+    client = None
     
     ## TODO: why not use dsl.PipelineTask.set_retry()..?
     for attempt in range(max_retries):
         
         try:
+            logger.info(f"Starting Garak scan (attempt {attempt + 1}/{max_retries})")
+
             process = subprocess.Popen(
                 command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
+                stdout=None,  # (show progress in KFP pod logs)
+                stderr=None,  # (show progress in KFP pod logs)
                 env=env,
                 preexec_fn=os.setsid  # Create new process group
             )
             
             try:
-                stdout, stderr = process.communicate(timeout=timeout_seconds)
+                # Wait for completion
+                process.wait(timeout=timeout_seconds)
                 
             except subprocess.TimeoutExpired:
+                logger.error(f"Garak scan timed out after {timeout_seconds} seconds")
                 # Kill the entire process group
                 os.killpg(os.getpgid(process.pid), signal.SIGTERM)
                 try:
                     process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     # process is still running, kill it with SIGKILL
+                    logger.warning("Process did not terminate gracefully, forcing kill")
                     os.killpg(os.getpgid(process.pid), signal.SIGKILL)
                     process.wait()
                 raise
             
             
             if process.returncode != 0:
+                logger.error(f"Garak scan failed with exit code {process.returncode}")
                 raise subprocess.CalledProcessError(
-                    process.returncode, command, stdout, stderr
+                    process.returncode, command
                 )
+            
+            logger.info("Garak scan completed successfully")
             
             # create avid report file
             report_file = scan_report_prefix.with_suffix(".report.jsonl")
             try:
-                from llama_stack_provider_trustyai_garak.avid_report import Report
+                from garak.report import Report
                 
                 if not report_file.exists():
                     logger.error(f"Report file not found: {report_file}")
@@ -245,6 +263,7 @@ def garak_scan(
         except Exception as e:
             if attempt < max_retries - 1:
                 wait_time = min(5 * (2 ** attempt), 60)  # Exponential backoff
+                logger.error(f"Error: {e}", exc_info=True)
                 logger.error(f"Attempt {attempt + 1} failed, retrying in {wait_time}s...")
                 time.sleep(wait_time)
             else:
@@ -331,12 +350,17 @@ def parse_results(
     aggregated_by_probe = result_utils.parse_aggregated_from_avid_content(avid_content)
     logger.info(f"Parsed {len(aggregated_by_probe)} probe summaries")
     
+    logger.debug("Parsing digest from report.jsonl...")
+    digest = result_utils.parse_digest_from_report_content(report_content)
+    logger.info(f"Digest parsed: {bool(digest)}")
+    
     logger.debug("Combining results...")
     result_dict = result_utils.combine_parsed_results(
         generations,
         score_rows_by_probe,
         aggregated_by_probe,
-        eval_threshold
+        eval_threshold,
+        digest
     )
     
     # Convert to EvaluateResponse
@@ -386,19 +410,21 @@ def parse_results(
         logger.info(f"File mapping uploaded: {mapping_file.filename} (ID: {mapping_file.id})")
     
     # combine scores of all probes into a single metric to log
-    aggregated_scores = {k: v.aggregated_results for k, v in scores_with_scoring_result.items()}
-    combined_metrics = {
-        "total_attempts": 0,
-        "vulnerable_responses": 0,
-        "attack_success_rate": 0,
+    scoring_result_overall = scores_with_scoring_result.get("_overall")
+    if scoring_result_overall:
+        overall_metrics = scoring_result_overall.aggregated_results
+    else:
+        overall_metrics = {}
+    log_metrics = {
+        "total_attempts": overall_metrics.get("total_attempts", 0),
+        "vulnerable_responses": overall_metrics.get("vulnerable_responses", 0),
+        "attack_success_rate": overall_metrics.get("attack_success_rate", 0),
     }
-    for aggregated_results in aggregated_scores.values():
-        combined_metrics["total_attempts"] += aggregated_results["total_attempts"]
-        combined_metrics["vulnerable_responses"] += aggregated_results["vulnerable_responses"]
-    
-    combined_metrics["attack_success_rate"] = round((combined_metrics["vulnerable_responses"] / combined_metrics["total_attempts"] * 100), 2) if combined_metrics["total_attempts"] > 0 else 0
-    for key, value in combined_metrics.items():
-        summary_metrics.log_metric(key, value)
+    if overall_metrics.get("tbsa"):
+        log_metrics["tbsa"] = overall_metrics["tbsa"]
+    if log_metrics["total_attempts"] > 0:
+        for key, value in log_metrics.items():
+            summary_metrics.log_metric(key, value)
 
     html_report_id = file_id_mapping.get(f"{job_id}_scan.report.html")
     if html_report_id:

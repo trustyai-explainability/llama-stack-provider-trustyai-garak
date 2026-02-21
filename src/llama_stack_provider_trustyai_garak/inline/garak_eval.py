@@ -1,6 +1,9 @@
 from ..compat import (
     EvaluateResponse, 
-    BenchmarkConfig, 
+    BenchmarkConfig,
+    RunEvalRequest,
+    JobStatusRequest,
+    JobCancelRequest,
     ProviderSpec, 
     Api, 
     OpenAIFilePurpose, 
@@ -24,7 +27,8 @@ from llama_stack_provider_trustyai_garak import shield_scan
 from ..result_utils import (
     parse_generations_from_report_content, 
     parse_aggregated_from_avid_content, 
-    combine_parsed_results
+    combine_parsed_results,
+    parse_digest_from_report_content
 )
 
 logger = logging.getLogger(__name__)
@@ -73,15 +77,17 @@ class GarakInlineEvalAdapter(GarakEvalBase):
         self._initialized = True
         logger.info("Initialized Garak inline provider.")
     
-    async def run_eval(self, benchmark_id: str, benchmark_config: BenchmarkConfig) -> Dict[str, Union[str, Dict[str, str]]]:
+    async def run_eval(self, request: RunEvalRequest) -> Job:
         """Run an evaluation for a specific benchmark and configuration.
 
         Args:
-            benchmark_id: The benchmark id
-            benchmark_config: Configuration for the evaluation task
+            request: Run eval request containing benchmark_id and benchmark_config
         """
         if not self._initialized:
             await self.initialize()
+        
+        benchmark_id = request.benchmark_id
+        benchmark_config: BenchmarkConfig = request.benchmark_config
         
         await self._validate_run_eval_request(benchmark_id, benchmark_config)
         
@@ -99,7 +105,12 @@ class GarakInlineEvalAdapter(GarakEvalBase):
                 name=job_id
             )
         
-        return {"job_id": job_id, "status": job.status, "metadata": self._job_metadata.get(job_id, {})}
+        # Return Job object with metadata (Job model patched in compat.py to allow extra fields)
+        return Job(
+            job_id=job_id,
+            status=job.status,
+            metadata=self._job_metadata.get(job_id, {})
+        )
     
     async def _run_scan_with_semaphore(self, job: Job, benchmark_id: str, benchmark_config: BenchmarkConfig):
         """Wrapper to run the scan with semaphore"""
@@ -120,6 +131,7 @@ class GarakInlineEvalAdapter(GarakEvalBase):
         """
         stored_benchmark = await self.get_benchmark(benchmark_id)
         benchmark_metadata: dict = getattr(stored_benchmark, "metadata", {})
+        garak_config, provider_params = self._parse_benchmark_metadata(benchmark_metadata)
 
         async with self._jobs_lock:
             job.status = JobStatus.in_progress
@@ -133,12 +145,20 @@ class GarakInlineEvalAdapter(GarakEvalBase):
         scan_report_prefix: Path = job_scan_dir / "scan"
         
         try:
-            scan_profile_config: dict = {
-                "probes": benchmark_metadata["probes"],
-                "timeout": benchmark_metadata.get("timeout", self._config.timeout)
-            }
-
-            cmd: List[str] = await self._build_command(benchmark_config, benchmark_id, scan_profile_config, scan_report_prefix=str(scan_report_prefix))
+            cmd_config: dict = await self._build_command(
+                benchmark_config,
+                garak_config,
+                provider_params,
+                scan_report_prefix=str(scan_report_prefix)
+            )
+            scan_cmd_config_file: Path = job_scan_dir / "config.json"
+            with open(scan_cmd_config_file, "w") as f:
+                json.dump(cmd_config, f)
+            
+            cmd: List[str] = [
+                "garak",
+                "--config", str(scan_cmd_config_file)
+            ]
             logger.info(f"Running scan with command: {' '.join(cmd)}")
 
             env = os.environ.copy()
@@ -152,7 +172,7 @@ class GarakInlineEvalAdapter(GarakEvalBase):
             
             async with self._jobs_lock:
                 self._job_metadata[job.job_id]["process_id"] = str(process.pid)
-            timeout: int = scan_profile_config.get("timeout", self._config.timeout)
+            timeout: int = provider_params.get("timeout", self._config.timeout)
             
             _, stderr = await asyncio.wait_for(process.communicate(), 
                                                     timeout=timeout)
@@ -161,7 +181,7 @@ class GarakInlineEvalAdapter(GarakEvalBase):
                 # convert report to avid report
                 report_file = scan_report_prefix.with_suffix(".report.jsonl")
                 try:
-                    from ..avid_report import Report
+                    from garak.report import Report
                     
                     if not report_file.exists():
                         logger.error(f"Report file not found: {report_file}")
@@ -300,6 +320,21 @@ class GarakInlineEvalAdapter(GarakEvalBase):
         # Use shared parsing utility
         return parse_generations_from_report_content(report_str, eval_threshold)
 
+    async def _parse_digest_from_report(self, report_file_id: str) -> Dict[str, Any]:
+        """Parse digest entry from report.jsonl.
+        
+        Returns:
+            Dict with digest data or empty dict if not found
+        """
+        report_content = await self.file_api.openai_retrieve_file_content(RetrieveFileContentRequest(file_id=report_file_id))
+        if not report_content:
+            return {}
+        
+        report_str = report_content.body.decode("utf-8")
+        
+        # Use shared parsing utility
+        return parse_digest_from_report_content(report_str)
+
     async def _parse_aggregated_from_avid(self, avid_file_id: str) -> Dict[str, Dict[str, Any]]:
         """Parse probe-level aggregated info from AVID report.
         
@@ -327,13 +362,15 @@ class GarakInlineEvalAdapter(GarakEvalBase):
         # Fetch and parse both reports using shared utilities
         generations, score_rows_by_probe = await self._parse_generations_from_report(report_file_id, eval_threshold)
         aggregated_by_probe = await self._parse_aggregated_from_avid(avid_file_id)
+        digest = await self._parse_digest_from_report(report_file_id)
         
         # Combine using shared utility
         result_dict = combine_parsed_results(
             generations,
             score_rows_by_probe,
             aggregated_by_probe,
-            eval_threshold
+            eval_threshold,
+            digest
         )
         
         scores = {
@@ -346,18 +383,20 @@ class GarakInlineEvalAdapter(GarakEvalBase):
         
         return EvaluateResponse(generations=result_dict["generations"], scores=scores)
 
-    async def job_status(self, benchmark_id: str, job_id: str) -> Dict[str, Union[str, Dict[str, str]]]:
+    async def job_status(self, request: JobStatusRequest) -> Job:
         """Get the status of a job.
 
         Args:
-            benchmark_id: The benchmark id
-            job_id: The job id
+            request: Job status request containing benchmark_id and job_id
         """
+        benchmark_id = request.benchmark_id
+        job_id = request.job_id
+        
         async with self._jobs_lock:
             job = self._jobs.get(job_id)
             if not job:
                 logger.warning(f"Job {job_id} not found")
-                return {"status": "not_found", "job_id": job_id}
+                return Job(job_id=job_id, status=JobStatus.failed, metadata={"error": "Job not found"})
             
             metadata: dict = self._job_metadata.get(job_id, {}).copy()
 
@@ -367,15 +406,18 @@ class GarakInlineEvalAdapter(GarakEvalBase):
                 metadata["running_jobs"] = str(active_jobs)
                 metadata["max_concurrent_jobs"] = str(self._config.max_concurrent_jobs)
 
-        return {"job_id": job_id, "status": job.status, "metadata": metadata}
+        # Return Job object with metadata (Job model patched in compat.py to allow extra fields)
+        return Job(job_id=job_id, status=job.status, metadata=metadata)
     
-    async def job_cancel(self, benchmark_id: str, job_id: str) -> None:
+    async def job_cancel(self, request: JobCancelRequest) -> None:
         """Cancel a job and kill the process.
 
         Args:
-            benchmark_id: The benchmark id
-            job_id: The job id
+            request: Job cancel request containing benchmark_id and job_id
         """
+        benchmark_id = request.benchmark_id
+        job_id = request.job_id
+        
         async with self._jobs_lock:
             job = self._jobs.get(job_id)
             if not job:
