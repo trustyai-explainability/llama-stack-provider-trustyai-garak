@@ -36,7 +36,6 @@ def build_generator_options(
                 "uri": model_endpoint,
                 "model": model_name,
                 "api_key": api_key,
-                "suppressed_params": ["n"]
             }
         }
     }

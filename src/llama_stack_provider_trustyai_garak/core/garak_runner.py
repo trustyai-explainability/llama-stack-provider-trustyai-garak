@@ -7,10 +7,17 @@ import logging
 import os
 import signal
 import subprocess
+import threading
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 logger = logging.getLogger(__name__)
+_STDERR_WARNING_PATTERN = re.compile(
+    r"(?:\berror\b|\bexception\b|\btraceback\b|\bfailed\b|\bfatal\b|\bwarn(?:ing)?\b|⚠)",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -60,11 +67,11 @@ class GarakScanResult:
 
 
 def run_garak_scan(
-    cmd: list[str],
+    config_file: Path,
     timeout_seconds: int,
+    report_prefix: Path,
     env: dict[str, str] | None = None,
     log_file: Path | None = None,
-    report_prefix: Path | None = None,
 ) -> GarakScanResult:
     """Run a Garak scan with proper process group handling.
     
@@ -72,13 +79,14 @@ def run_garak_scan(
     1. Creates a new process group for the garak process
     2. Handles timeout with graceful shutdown (SIGTERM → SIGKILL)
     3. Kills the entire process tree on timeout
+    4. Streams process output to logs in real time
     
     Args:
-        cmd: The garak command to execute
+        config_file: The path to the Garak command config file
         timeout_seconds: Maximum execution time
+        report_prefix: Expected report prefix path (for results)
         env: Environment variables (merged with os.environ)
         log_file: Path to write garak logs
-        report_prefix: Expected report prefix path (for result)
     
     Returns:
         GarakScanResult with execution details
@@ -91,45 +99,93 @@ def run_garak_scan(
     run_env = os.environ.copy()
     if env:
         run_env.update(env)
+    # Improves real-time output behavior for Python subprocesses.
+    run_env.setdefault("PYTHONUNBUFFERED", "1")
     
     # Set log file if provided
     if log_file:
         run_env["GARAK_LOG_FILE"] = str(log_file)
     
-    # Determine report prefix from command
-    if report_prefix is None:
-        # Try to extract from command
-        try:
-            prefix_idx = cmd.index("--report_prefix")
-            report_prefix = Path(cmd[prefix_idx + 1])
-        except (ValueError, IndexError):
-            report_prefix = Path("/tmp/garak_scan")
-    
-    logger.debug(f"Starting Garak scan with command: {' '.join(cmd)}")
     
     timed_out = False
+    output_tail_lines = int(run_env.get("GARAK_OUTPUT_TAIL_LINES", "500"))
+    stdout_tail: deque[str] = deque(maxlen=output_tail_lines)
+    stderr_tail: deque[str] = deque(maxlen=output_tail_lines)
     stdout = ""
     stderr = ""
     returncode = -1
     
+    if not config_file.exists():
+        raise FileNotFoundError(f"Garak command config file not found: {config_file}")
+    
+    cmd = ["garak", "--config", str(config_file)]
+
     # Start process in new process group
+    # argument list with shell=False prevents shell injection
     process = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        bufsize=1,
         env=run_env,
         preexec_fn=os.setsid,
+        shell=False,
     )
+
+    def _stream_pipe(
+        pipe: subprocess.PIPE,
+        tail: deque[str],
+        level: int,
+        stream_name: str,
+    ) -> None:
+        """Read pipe output line-by-line and stream to logger."""
+        if pipe is None:
+            return
+        try:
+            for line in iter(pipe.readline, ""):
+                tail.append(line)
+                text = line.rstrip()
+                if text:
+                    # Garak/tqdm writes progress bars to stderr; avoid classifying
+                    # these as warnings unless the line looks like an actual issue.
+                    is_stderr_issue = bool(
+                        stream_name == "stderr" and _STDERR_WARNING_PATTERN.search(text)
+                    )
+                    line_level = logging.WARNING if is_stderr_issue else level
+                    stream_label = (
+                        "stderr"
+                        if is_stderr_issue
+                        else ("progress" if stream_name == "stderr" else stream_name)
+                    )
+                    logger.log(line_level, "garak[%s] %s", stream_label, text)
+        finally:
+            try:
+                pipe.close()
+            except Exception:
+                pass
+
+    stdout_thread = threading.Thread(
+        target=_stream_pipe,
+        args=(process.stdout, stdout_tail, logging.INFO, "stdout"),
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=_stream_pipe,
+        args=(process.stderr, stderr_tail, logging.INFO, "stderr"),
+        daemon=True,
+    )
+    stdout_thread.start()
+    stderr_thread.start()
     
     try:
-        stdout, stderr = process.communicate(timeout=timeout_seconds)
+        process.wait(timeout=timeout_seconds)
         returncode = process.returncode
         
         if returncode == 0:
             logger.info("Garak scan completed successfully")
         else:
-            logger.error(f"Garak scan failed with return code {returncode}, stderr: {stderr}")
+            logger.error("Garak scan failed with return code %s", returncode)
             
     except subprocess.TimeoutExpired:
         logger.warning(f"Garak scan timed out after {timeout_seconds} seconds")
@@ -160,13 +216,15 @@ def run_garak_scan(
             except Exception:
                 pass
         
-        # Get any output that was produced
-        try:
-            stdout, stderr = process.communicate(timeout=1)
-        except Exception:
-            stdout, stderr = "", "Scan timed out"
-        
         returncode = process.returncode if process.returncode is not None else -1
+    finally:
+        stdout_thread.join(timeout=5)
+        stderr_thread.join(timeout=5)
+
+    stdout = "".join(stdout_tail)
+    stderr = "".join(stderr_tail)
+    if timed_out and not stderr:
+        stderr = "Scan timed out"
     
     return GarakScanResult(
         returncode=returncode,
@@ -191,10 +249,10 @@ def convert_to_avid_report(report_path: Path) -> bool:
         return False
     
     try:
-        from ..avid_report import Report
-        
+        from garak.report import Report
+
         report = Report(str(report_path)).load().get_evaluations()
-        report.export()  # Creates .avid.jsonl file
+        report.export()  # Creates .avid.jsonl file at same location as report_path
         logger.info(f"Converted report to AVID format: {report_path}")
         return True
         

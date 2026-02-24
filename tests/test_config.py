@@ -254,7 +254,7 @@ class TestGarakScanConfig:
         assert config.VULNERABLE_SCORE == 0.5
         assert config.parallel_probes == 8
         assert config.cleanup_scan_dir_on_exit is True
-        assert config.scan_dir.name == "llama_stack_garak_scans"
+        assert config.scan_dir.name == "trustyai_garak_scans"
 
     def test_framework_profile_structure(self):
         """Test framework profile structure with new garak_config format"""
@@ -294,7 +294,7 @@ class TestGarakScanConfig:
     def test_scan_dir_path(self):
         """Test scan directory path construction"""
         config = GarakScanConfig()
-        assert "llama_stack_garak_scans" in str(config.scan_dir)
+        assert "trustyai_garak_scans" in str(config.scan_dir)
         assert config.scan_dir.is_absolute()
 
     def test_scan_dir_respects_garak_scan_dir_env(self, monkeypatch, tmp_path):
@@ -333,9 +333,9 @@ class TestGarakScanConfig:
         
         config = GarakScanConfig()
         
-        # Should be XDG_CACHE_HOME/llama_stack_garak_scans
+        # Should be XDG_CACHE_HOME/trustyai_garak_scans
         assert str(custom_cache) in str(config.scan_dir)
-        assert "llama_stack_garak_scans" in str(config.scan_dir)
+        assert "trustyai_garak_scans" in str(config.scan_dir)
 
     def test_cleanup_scan_dir_defaults_to_true(self):
         """Test that cleanup_scan_dir_on_exit defaults to True for production"""
@@ -378,9 +378,9 @@ class TestGarakScanConfig:
         
         config = GarakScanConfig()
         
-        # Should be XDG_CACHE_HOME/llama_stack_garak_scans
+        # Should be XDG_CACHE_HOME/trustyai_garak_scans
         assert str(custom_cache) in str(config.scan_dir)
-        assert "llama_stack_garak_scans" in str(config.scan_dir)
+        assert "trustyai_garak_scans" in str(config.scan_dir)
 
     def test_cleanup_scan_dir_defaults_to_true(self):
         """Test that cleanup_scan_dir_on_exit defaults to True for production"""

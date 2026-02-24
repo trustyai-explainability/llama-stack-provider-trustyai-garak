@@ -12,11 +12,13 @@ The adapter:
 5. Reports results back to eval-hub via sidecar callbacks
 """
 
+import json
 import logging
 import os
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from evalhub.adapter import (
     DefaultCallbacks,
@@ -32,23 +34,23 @@ from evalhub.adapter import (
 from evalhub.adapter.models.job import ErrorInfo, MessageInfo
 from evalhub.models.api import EvaluationResult
 
-from ..config import GarakScanConfig
-from ..core.command_builder import build_garak_command, build_generator_options
+from ..core.command_builder import build_generator_options
+from ..core.config_resolution import (
+    build_effective_garak_config,
+    resolve_scan_profile,
+    resolve_timeout_seconds,
+)
 from ..core.garak_runner import convert_to_avid_report, GarakScanResult, run_garak_scan
+from ..garak_command_config import GarakCommandConfig
 from ..result_utils import (
     combine_parsed_results,
     parse_aggregated_from_avid_content,
+    parse_digest_from_report_content,
     parse_generations_from_report_content,
 )
 from ..utils import get_scan_base_dir
-
+from ..constants import DEFAULT_TIMEOUT, DEFAULT_MODEL_TYPE, DEFAULT_EVAL_THRESHOLD
 logger = logging.getLogger(__name__)
-
-# Default model type for OpenAI-compatible endpoints
-DEFAULT_MODEL_TYPE = "openai.OpenAICompatible"
-
-# Default evaluation threshold
-DEFAULT_EVAL_THRESHOLD = 0.5
 
 
 class GarakAdapter(FrameworkAdapter):
@@ -111,9 +113,18 @@ class GarakAdapter(FrameworkAdapter):
             log_file = scan_dir / "scan.log"
             report_prefix = scan_dir / "scan"
 
-            # Build command from config
-            cmd = self._build_command_from_spec(config, report_prefix)
-            logger.info(f"Built Garak command: {' '.join(cmd)}")
+            # Build merged config and execute garak using --config.
+            garak_config_dict, profile = self._build_config_from_spec(config, report_prefix)
+            if not garak_config_dict:
+                raise ValueError("Garak command config is empty")
+            
+            try:
+                config_file = scan_dir / "config.json"
+                with open(config_file, "w") as f:
+                    json.dump(garak_config_dict, f, indent=1)
+            except Exception as e:
+                logger.error(f"Error writing Garak command config to file: {e}")
+                raise
 
             # Phase 2: Run scan
             callbacks.report_status(JobStatusUpdate(
@@ -127,10 +138,11 @@ class GarakAdapter(FrameworkAdapter):
                 current_step="Executing probes",
             ))
 
-            timeout = config.benchmark_config.get("timeout_seconds", 600)
+            timeout = resolve_timeout_seconds(config.benchmark_config, profile, default_timeout=DEFAULT_TIMEOUT)
+            logger.info("Using timeout=%ss for benchmark=%s", timeout, config.benchmark_id)
 
             result = run_garak_scan(
-                cmd=cmd,
+                config_file=config_file,
                 timeout_seconds=timeout,
                 log_file=log_file,
                 report_prefix=report_prefix,
@@ -171,8 +183,10 @@ class GarakAdapter(FrameworkAdapter):
                 ),
             ))
 
-            eval_threshold = config.benchmark_config.get("eval_threshold", DEFAULT_EVAL_THRESHOLD)
-            metrics, overall_score, num_examples = self._parse_results(
+            eval_threshold = float(
+                garak_config_dict.get("run", {}).get("eval_threshold", DEFAULT_EVAL_THRESHOLD)
+            )
+            metrics, overall_score, num_examples, overall_summary = self._parse_results(
                 result, eval_threshold
             )
 
@@ -204,6 +218,7 @@ class GarakAdapter(FrameworkAdapter):
                     "framework_version": self._get_garak_version(),
                     "eval_threshold": eval_threshold,
                     "timed_out": result.timed_out,
+                    "overall": overall_summary,
                 },
                 oci_artifact=oci_artifact,
             )
@@ -224,16 +239,7 @@ class GarakAdapter(FrameworkAdapter):
         the 'trustyai_garak::' prefix, so that bare IDs like 'owasp_llm_top10'
         and fully-qualified IDs like 'trustyai_garak::owasp_llm_top10' both work.
         """
-        _cfg = GarakScanConfig()
-        all_profiles = {
-            **_cfg.FRAMEWORK_PROFILES,
-            **_cfg.SCAN_PROFILES,
-        }
-        return (
-            all_profiles.get(benchmark_id)
-            or all_profiles.get(f"trustyai_garak::{benchmark_id}")
-            or {}
-        )
+        return resolve_scan_profile(benchmark_id)
 
     def _validate_config(self, config: JobSpec) -> None:
         """Validate job configuration."""
@@ -247,8 +253,19 @@ class GarakAdapter(FrameworkAdapter):
             raise ValueError("model.name is required")
 
         profile = self._resolve_profile(config.benchmark_id)
-        explicit_probes = config.benchmark_config.get("probes")
-        explicit_tags = config.benchmark_config.get("probe_tags")
+        benchmark_config = config.benchmark_config or {}
+        explicit_garak_cfg = benchmark_config.get("garak_config", {})
+        if not isinstance(explicit_garak_cfg, dict):
+            explicit_garak_cfg = {}
+
+        explicit_probes = (
+            benchmark_config.get("probes")
+            or explicit_garak_cfg.get("plugins", {}).get("probe_spec")
+        )
+        explicit_tags = (
+            benchmark_config.get("probe_tags")
+            or explicit_garak_cfg.get("run", {}).get("probe_tags")
+        )
 
         if not explicit_probes and not explicit_tags and not profile:
             logger.warning(
@@ -259,70 +276,41 @@ class GarakAdapter(FrameworkAdapter):
 
         logger.debug("Configuration validated successfully")
 
-    def _build_command_from_spec(
+    def _build_config_from_spec(
         self, config: JobSpec, report_prefix: Path
-    ) -> list[str]:
-        """Build Garak CLI command from JobSpec.
-
-        Profile defaults (probe_tags, probe_spec, taxonomy) are resolved from
-        the benchmark_id and can be overridden by explicit values in benchmark_config.
-        """
-        # Resolve profile defaults from benchmark_id
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Build Garak command config dict from JobSpec."""
+        benchmark_config = config.benchmark_config or {}
         profile = self._resolve_profile(config.benchmark_id)
-        profile_cfg = profile.get("garak_config", {})
-        profile_run = profile_cfg.get("run", {})
-        profile_plugins = profile_cfg.get("plugins", {})
-        profile_reporting = profile_cfg.get("reporting", {})
-
-        # benchmark_config values take precedence over profile defaults
-        bc = config.benchmark_config
-
-        probe_tags = bc.get("probe_tags") or profile_run.get("probe_tags")
-        probe_spec = bc.get("probes") or profile_plugins.get("probe_spec", "all")
-        taxonomy = bc.get("taxonomy") or profile_reporting.get("taxonomy")
-
-        if isinstance(probe_spec, str):
-            probe_spec = [probe_spec]
+        garak_config: GarakCommandConfig = build_effective_garak_config(
+            benchmark_config=benchmark_config,
+            profile=profile,
+        )
 
         if profile:
             logger.info(
-                "Resolved benchmark_id '%s' to profile '%s' (probe_tags=%s, probe_spec=%s)",
-                config.benchmark_id, profile.get("name"), probe_tags, probe_spec,
+                "Resolved benchmark_id '%s' to profile '%s'",
+                config.benchmark_id,
+                profile.get("name"),
             )
 
-        # Build generator options for the model
-        model_params = bc.get("model_parameters") or {}
-        generator_options = build_generator_options(
-            model_endpoint=self._normalize_url(config.model.url),
-            model_name=config.model.name,
-            api_key=getattr(config.model, "api_key", None) or os.getenv("OPENAICOMPATIBLE_API_KEY", "DUMMY"),
-            extra_params=model_params,
-        )
+        model_params = benchmark_config.get("model_parameters") or {}
+        model_type = benchmark_config.get("model_type", DEFAULT_MODEL_TYPE)
+        # set generators if not already set by user (because there's a eval-hub config.model for this)
+        if model_type == DEFAULT_MODEL_TYPE and not garak_config.plugins.generators:
+            garak_config.plugins.generators = build_generator_options(
+                model_endpoint=self._normalize_url(config.model.url),
+                model_name=config.model.name,
+                api_key=getattr(config.model, "api_key", None)
+                or os.getenv("OPENAICOMPATIBLE_API_KEY", "DUMMY"),
+                extra_params=model_params,
+            )
 
-        return build_garak_command(
-            model_type=bc.get("model_type", DEFAULT_MODEL_TYPE),
-            model_name=config.model.name,
-            generator_options=generator_options,
-            probes=probe_spec,
-            report_prefix=str(report_prefix),
-            parallel_attempts=bc.get("parallel_attempts", 8),
-            generations=bc.get("generations", 1),
-            parallel_requests=bc.get("parallel_requests"),
-            skip_unknown=bc.get("skip_unknown"),
-            seed=bc.get("seed"),
-            deprefix=bc.get("deprefix"),
-            eval_threshold=bc.get("eval_threshold"),
-            probe_tags=probe_tags,
-            probe_options=bc.get("probe_options"),
-            detectors=bc.get("detectors"),
-            extended_detectors=bc.get("extended_detectors"),
-            detector_options=bc.get("detector_options"),
-            buffs=bc.get("buffs"),
-            buff_options=bc.get("buff_options"),
-            harness_options=bc.get("harness_options"),
-            taxonomy=taxonomy,
-            generate_autodan=bc.get("generate_autodan"),
-        )
+        garak_config.plugins.target_type = model_type
+        garak_config.plugins.target_name = config.model.name
+        garak_config.reporting.report_prefix = str(report_prefix)
+
+        return garak_config.to_dict(exclude_none=True), profile
 
     def _normalize_url(self, url: str) -> str:
         """Normalize model URL to include /v1 suffix if needed."""
@@ -347,15 +335,14 @@ class GarakAdapter(FrameworkAdapter):
 
     def _parse_results(
         self, result: GarakScanResult, eval_threshold: float
-    ) -> tuple[list[EvaluationResult], float | None, int]:
+    ) -> tuple[list[EvaluationResult], float | None, int, dict[str, Any]]:
         """Parse Garak results into EvaluationResult metrics.
         
         Returns:
-            Tuple of (metrics list, overall_score, num_examples)
+            Tuple of (metrics list, overall_score, num_examples, overall summary)
         """
         metrics: list[EvaluationResult] = []
         total_attempts = 0
-        total_vulnerable = 0
         
         # Read report content
         report_content = ""
@@ -363,7 +350,7 @@ class GarakAdapter(FrameworkAdapter):
             report_content = result.report_jsonl.read_text()
             if not report_content.strip():
                 logger.warning("Report file is empty")
-                return metrics, None, 0
+                return metrics, None, 0, {}
         
         avid_content = ""
         if result.avid_jsonl.exists():
@@ -374,14 +361,23 @@ class GarakAdapter(FrameworkAdapter):
             report_content, eval_threshold
         )
         aggregated_by_probe = parse_aggregated_from_avid_content(avid_content)
+        digest = parse_digest_from_report_content(report_content)
         
         # Combine results
         combined = combine_parsed_results(
-            generations, score_rows_by_probe, aggregated_by_probe, eval_threshold
+            generations, score_rows_by_probe, aggregated_by_probe, eval_threshold, digest
+        )
+        overall_summary = (
+            combined.get("scores", {})
+            .get("_overall", {})
+            .get("aggregated_results", {})
         )
         
         # Convert to EvaluationResult format (one per probe)
         for probe_name, score_data in combined["scores"].items():
+            if probe_name == "_overall":
+                continue
+
             agg = score_data["aggregated_results"]
             
             probe_attempts = agg.get("total_attempts", 0)
@@ -389,7 +385,6 @@ class GarakAdapter(FrameworkAdapter):
             attack_success_rate = agg.get("attack_success_rate", 0.0)
             
             total_attempts += probe_attempts
-            total_vulnerable += probe_vulnerable
             
             # Create metric for this probe
             metrics.append(EvaluationResult(
@@ -406,12 +401,28 @@ class GarakAdapter(FrameworkAdapter):
                 },
             ))
         
-        # Calculate overall attack success rate
-        overall_score = None
-        if total_attempts > 0:
+        overall_score = overall_summary.get("attack_success_rate")
+        if overall_score is not None:
+            try:
+                overall_score = float(overall_score)
+            except (TypeError, ValueError):
+                overall_score = None
+
+        if overall_score is None and total_attempts > 0:
+            total_vulnerable = sum(
+                score_data["aggregated_results"].get("vulnerable_responses", 0)
+                for probe_name, score_data in combined["scores"].items()
+                if probe_name != "_overall"
+            )
             overall_score = round((total_vulnerable / total_attempts) * 100, 2)
+
+        num_examples = overall_summary.get("total_attempts", total_attempts)
+        try:
+            num_examples = int(num_examples)
+        except (TypeError, ValueError):
+            num_examples = total_attempts
         
-        return metrics, overall_score, total_attempts
+        return metrics, overall_score, num_examples, overall_summary
 
 
     def _get_garak_version(self) -> str:
