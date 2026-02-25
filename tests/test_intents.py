@@ -104,6 +104,31 @@ class TestGenerateIntentsFromDataset:
         assert garak_data_dir.exists()
         assert intent_stubs_dir.exists()
 
+    def test_generate_intents_name_sanitization(self):
+        """Test that intent IDs are sanitized to match Garak's intent name regex [CTMS]([0-9]{3}([a-z]+)?)?
+        while names retain the original category value."""
+        data = {
+            'category': ['Hate Speech', 'FRAUD', 'self-harm 101'],
+            'prompt': ['Prompt A', 'Prompt B', 'Prompt C']
+        }
+        dataset = pd.DataFrame(data)
+
+        generate_intents_from_dataset(dataset)
+
+        typology_file = Path(self.temp_dir) / 'garak' / 'data' / 'cas' / 'trait_typology.json'
+        with open(typology_file, 'r') as f:
+            typology = json.load(f)
+
+        # Keys (intent IDs) use sanitized lowercase [a-z] after the prefix+digits
+        assert 'S001fraud' in typology
+        assert typology['S001fraud']['name'] == 'FRAUD'
+
+        assert 'S002hatespeech' in typology
+        assert typology['S002hatespeech']['name'] == 'Hate Speech'
+
+        assert 'S003selfharm' in typology
+        assert typology['S003selfharm']['name'] == 'self-harm 101'
+
     def test_generate_intents_empty_dataset(self):
         """Test behavior with empty dataset"""
         # Create empty dataset
