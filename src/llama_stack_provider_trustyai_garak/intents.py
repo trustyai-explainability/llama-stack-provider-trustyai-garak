@@ -6,7 +6,8 @@ import pandas
 
 def generate_intents_from_dataset(dataset: pandas.DataFrame,
                                   category_column_name="category",
-                                  prompt_column_name="prompt"):
+                                  prompt_column_name="prompt",
+                                  category_description_column_name=None):
     """
     Given a dataset of prompts that we want to test the model against (input taxonomy),
     creates the corresponding Garak topology and intent stub files.
@@ -38,12 +39,13 @@ def generate_intents_from_dataset(dataset: pandas.DataFrame,
 
     for idx, (category, group) in enumerate(grouped):
         # Generate intent ID (S001, S002, etc.)
-        intent_id = f"S{idx+1:03d}{category}"
+        intent_id = f"S{idx + 1:03d}{category}"
 
         # Add to typology
+        descr = group[category_description_column_name].iloc[0] if category_description_column_name else ""
         typology_dict[intent_id] = {
             "name": category,
-            "descr": ""
+            "descr": descr
         }
 
         # Combine all prompts for this category into one file
