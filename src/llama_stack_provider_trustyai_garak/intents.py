@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import Path
 import pandas
 
@@ -38,8 +39,11 @@ def generate_intents_from_dataset(dataset: pandas.DataFrame,
     grouped = dataset.groupby(category_column_name, sort=True)
 
     for idx, (category, group) in enumerate(grouped):
+        # Sanitize category to match Garak's intent name regex: [CTMS]([0-9]{3}([a-z]+)?)?
+        sanitized = re.sub(r'[^a-z]', '', str(category).lower())
+
         # Generate intent ID (S001, S002, etc.)
-        intent_id = f"S{idx + 1:03d}{category}"
+        intent_id = f"S{idx + 1:03d}{sanitized}"
 
         # Add to typology
         descr = group[category_description_column_name].iloc[0] if category_description_column_name else ""
