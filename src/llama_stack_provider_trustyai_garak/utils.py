@@ -50,8 +50,8 @@ def get_scan_base_dir() -> Path:
     if scan_dir := os.environ.get("GARAK_SCAN_DIR"):
         return Path(scan_dir)
     
-    # Use XDG_CACHE_HOME/llama_stack_garak_scans
-    return Path(os.environ["XDG_CACHE_HOME"]) / "llama_stack_garak_scans"
+    # Use XDG_CACHE_HOME/trustyai_garak_scans
+    return Path(os.environ["XDG_CACHE_HOME"]) / "trustyai_garak_scans"
 
 
 def get_http_client_with_tls(tls_verify: Union[bool, str] = True) -> httpx.Client:
