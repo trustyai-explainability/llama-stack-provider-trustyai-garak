@@ -274,9 +274,118 @@ class TestResultUtils:
         
         from llama_stack_provider_trustyai_garak.result_utils import parse_generations_from_report_content
         
-        generations, score_rows_by_probe = parse_generations_from_report_content(test_content, eval_threshold=0.5)
+        generations, score_rows_by_probe, raw_entries_by_probe = parse_generations_from_report_content(test_content, eval_threshold=0.5)
         ## we only look at probes and not harnesses
         assert len(generations) == 73
         assert set(score_rows_by_probe.keys()) == {'base.IntentProbe', 'spo.SPOIntent', 'spo.SPOIntentUserAugmented',
                                                    'spo.SPOIntentSystemAugmented', 'spo.SPOIntentBothAugmented'}
+        assert set(raw_entries_by_probe.keys()) == set(score_rows_by_probe.keys())
+
+
+class TestIntentsAggregation:
+    """Tests for intents prompt-level aggregation aligned with ART HTML report."""
+
+    def test_intents_aggregates_match_high_level_stats(self):
+        """Verify calculate_intents_aggregates produces the same metrics as
+        vega_data + high_level_stats (the ART HTML report pipeline)."""
+        test_data_path = Path(__file__).parent / "_resources/garak_earlystop_run.jsonl"
+        with open(test_data_path, 'r') as f:
+            test_content = f.read()
+
+        from llama_stack_provider_trustyai_garak.result_utils import (
+            parse_jsonl, vega_data, high_level_stats,
+            parse_generations_from_report_content, calculate_intents_aggregates,
+        )
+
+        raw_report = parse_jsonl(test_content)
+        art_data = vega_data(raw_report)
+        art_stats = high_level_stats(art_data)
+        art_dict = {s["label"]: s["value"] for s in art_stats}
+
+        _, _, raw_entries_by_probe = parse_generations_from_report_content(test_content, 0.5)
+        all_raw = [e for entries in raw_entries_by_probe.values() for e in entries]
+        intents_metrics = calculate_intents_aggregates(all_raw)
+
+        assert intents_metrics["total_attacks"] == art_dict["Total attacks"]
+        assert intents_metrics["successful_attacks"] == art_dict["Successful attacks"]
+        assert intents_metrics["safe_prompts"] == art_dict["Safe prompts"]
+        expected_rate = art_dict["Attack success rate"].replace("%", "")
+        assert format(intents_metrics["attack_success_rate"], '.0f') == expected_rate
+
+    def test_intents_aggregates_per_probe(self):
+        """Per-probe intents aggregates should sum to overall totals
+        for total_attacks and successful_attacks."""
+        test_data_path = Path(__file__).parent / "_resources/garak_earlystop_run.jsonl"
+        with open(test_data_path, 'r') as f:
+            test_content = f.read()
+
+        from llama_stack_provider_trustyai_garak.result_utils import (
+            parse_generations_from_report_content, calculate_intents_aggregates,
+        )
+
+        _, _, raw_entries_by_probe = parse_generations_from_report_content(test_content, 0.5)
+
+        sum_attacks = 0
+        sum_successful = 0
+        for probe_entries in raw_entries_by_probe.values():
+            metrics = calculate_intents_aggregates(probe_entries)
+            sum_attacks += metrics["total_attacks"]
+            sum_successful += metrics["successful_attacks"]
+            assert metrics["total_prompts"] >= metrics["safe_prompts"]
+            assert metrics["attack_success_rate"] >= 0
+
+        all_raw = [e for entries in raw_entries_by_probe.values() for e in entries]
+        overall = calculate_intents_aggregates(all_raw)
+        assert overall["total_attacks"] == sum_attacks
+        assert overall["successful_attacks"] == sum_successful
+
+    def test_intents_aggregates_empty_input(self):
+        from llama_stack_provider_trustyai_garak.result_utils import calculate_intents_aggregates
+        result = calculate_intents_aggregates([])
+        assert result["total_attacks"] == 0
+        assert result["successful_attacks"] == 0
+        assert result["attack_success_rate"] == 0
+
+    def test_combine_parsed_results_uses_intents_path(self):
+        """combine_parsed_results with art_intents=True should produce
+        intents-style metrics, not attempt-level ones."""
+        test_data_path = Path(__file__).parent / "_resources/garak_earlystop_run.jsonl"
+        with open(test_data_path, 'r') as f:
+            test_content = f.read()
+
+        from llama_stack_provider_trustyai_garak.result_utils import (
+            parse_generations_from_report_content,
+            parse_aggregated_from_avid_content,
+            parse_digest_from_report_content,
+            combine_parsed_results,
+        )
+
+        generations, score_rows_by_probe, raw_entries_by_probe = \
+            parse_generations_from_report_content(test_content, 0.5)
+        digest = parse_digest_from_report_content(test_content)
+
+        result_intents = combine_parsed_results(
+            generations, score_rows_by_probe, {},
+            0.5, digest,
+            art_intents=True,
+            raw_entries_by_probe=raw_entries_by_probe,
+        )
+        result_native = combine_parsed_results(
+            generations, score_rows_by_probe, {},
+            0.5, digest,
+            art_intents=False,
+        )
+
+        overall_intents = result_intents["scores"]["_overall"]["aggregated_results"]
+        overall_native = result_native["scores"]["_overall"]["aggregated_results"]
+
+        # Intents path should have prompt-level fields
+        assert "total_attacks" in overall_intents
+        assert "safe_prompts" in overall_intents
+        assert "total_attempts" not in overall_intents
+
+        # Native path should have attempt-level fields
+        assert "total_attempts" in overall_native
+        assert "vulnerable_responses" in overall_native
+        assert "total_attacks" not in overall_native
         

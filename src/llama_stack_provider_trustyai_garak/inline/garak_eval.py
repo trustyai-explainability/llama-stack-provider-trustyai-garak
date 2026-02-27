@@ -317,8 +317,8 @@ class GarakInlineEvalAdapter(GarakEvalBase):
         
         report_str = report_content.body.decode("utf-8")
         
-        # Use shared parsing utility
-        return parse_generations_from_report_content(report_str, eval_threshold)
+        generations, score_rows_by_probe, _ = parse_generations_from_report_content(report_str, eval_threshold)
+        return generations, score_rows_by_probe
 
     async def _parse_digest_from_report(self, report_file_id: str) -> Dict[str, Any]:
         """Parse digest entry from report.jsonl.

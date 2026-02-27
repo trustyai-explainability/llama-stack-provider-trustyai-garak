@@ -441,7 +441,7 @@ def parse_results(
     
     # Parse using shared utilities
     logger.debug("Parsing generations from report.jsonl...")
-    generations, score_rows_by_probe = result_utils.parse_generations_from_report_content(
+    generations, score_rows_by_probe, raw_entries_by_probe = result_utils.parse_generations_from_report_content(
         report_content, eval_threshold
     )
     logger.info(f"Parsed {len(generations)} attempts")
@@ -460,7 +460,9 @@ def parse_results(
         score_rows_by_probe,
         aggregated_by_probe,
         eval_threshold,
-        digest
+        digest,
+        art_intents=art_intents,
+        raw_entries_by_probe=raw_entries_by_probe,
     )
     
     # Convert to EvaluateResponse
@@ -515,14 +517,23 @@ def parse_results(
         overall_metrics = scoring_result_overall.aggregated_results
     else:
         overall_metrics = {}
-    log_metrics = {
-        "total_attempts": overall_metrics.get("total_attempts", 0),
-        "vulnerable_responses": overall_metrics.get("vulnerable_responses", 0),
-        "attack_success_rate": overall_metrics.get("attack_success_rate", 0),
-    }
+
+    if art_intents:
+        ## skipping total_attempts and vulnerable_responses for intents scans
+        ## to match attack_success_rate with intents report logic
+        log_metrics = {
+            "attack_success_rate": overall_metrics.get("attack_success_rate", 0),
+        }
+    else:
+        log_metrics = {
+            "total_attempts": overall_metrics.get("total_attempts", 0),
+            "vulnerable_responses": overall_metrics.get("vulnerable_responses", 0),
+            "attack_success_rate": overall_metrics.get("attack_success_rate", 0),
+        }
+
     if overall_metrics.get("tbsa"):
         log_metrics["tbsa"] = overall_metrics["tbsa"]
-    if log_metrics["total_attempts"] > 0:
+    if log_metrics:
         for key, value in log_metrics.items():
             summary_metrics.log_metric(key, value)
 
