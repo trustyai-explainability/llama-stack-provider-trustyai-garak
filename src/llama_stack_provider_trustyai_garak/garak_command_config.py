@@ -208,8 +208,8 @@ class GarakCASConfig(BaseModel):
     """
     model_config = ConfigDict(extra="allow")
 
-    intent_spec: Optional[str] = Field(
-        default=None,
+    intent_spec: str = Field(
+        default="",
         description="Comma-separated list of intents to scan. If not provided, disables the context aware scanning. If all intents need to be scanned, use '*'."
     )
     expand_intent_tree: bool = Field(
