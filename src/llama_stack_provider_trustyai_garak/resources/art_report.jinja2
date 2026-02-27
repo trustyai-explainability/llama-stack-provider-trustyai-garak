@@ -60,12 +60,17 @@
                     </li>
                     <li class="pf-v6-c-nav__item">
                         <a href="#vega_chart_attacks_by_scenario" class="pf-v6-c-nav__link">
-                            <span class="pf-v6-c-nav__link-text">Attacks by scenario</span>
+                            <span class="pf-v6-c-nav__link-text">Behavior by strategy</span>
                         </a>
                     </li>
                     <li class="pf-v6-c-nav__item">
-                        <a href="#vega_chart_strategy_vs_scenario" class="pf-v6-c-nav__link">
-                            <span class="pf-v6-c-nav__link-text">Strategy by scenario</span>
+                        <a href="#scenario_overview" class="pf-v6-c-nav__link">
+                            <span class="pf-v6-c-nav__link-text">Overview by scenario</span>
+                        </a>
+                    </li>
+                    <li class="pf-v6-c-nav__item">
+                        <a href="#strategy_details" class="pf-v6-c-nav__link">
+                            <span class="pf-v6-c-nav__link-text">Strategy details</span>
                         </a>
                     </li>
                 </ul>
@@ -100,11 +105,121 @@
                     </div>
                 </div>
             </section>
-            <section class="pf-v6-c-page__main-section pf-m-limit-width">
+            <section id="scenario_overview" class="pf-v6-c-page__main-section pf-m-limit-width">
                 <div class="pf-v6-c-page__main-body">
+                    <h2 class="pf-v6-c-title pf-m-xl" style="margin-bottom: var(--pf-t--global--spacer--md, 16px);">Overview by Scenario</h2>
+                    <div class="pf-v6-c-card" style="margin-bottom: var(--pf-t--global--spacer--lg, 24px);">
+                        <div class="pf-v6-c-card__body">
+                            <table class="pf-v6-c-table pf-m-grid-md" role="grid">
+                                <thead>
+                                <tr role="row">
+                                    <th role="columnheader" scope="col">Scenario</th>
+                                    <th role="columnheader" scope="col">Total Attempts</th>
+                                    <th role="columnheader" scope="col">Jailbroken Prompts</th>
+                                    <th role="columnheader" scope="col">Attack Success Rate</th>
+                                </tr>
+                                </thead>
+                                <tbody role="rowgroup">
+                                {% for row in scenario_stats %}
+                                    <tr role="row">
+                                        <td role="cell" data-label="Scenario">{{ row.intent_name }}</td>
+                                        <td role="cell" data-label="Total Attempts">{{ row.total_attempts }}</td>
+                                        <td role="cell" data-label="Jailbroken Prompts">{{ row.jailbroken }}
+                                            / {{ row.baseline_stubs }}</td>
+                                        <td role="cell"
+                                            data-label="Attack Success Rate">{{ row.attack_success_rate }}%
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                     <div class="pf-v6-c-card">
                         <div id="vega_chart_strategy_vs_scenario" class="pf-v6-c-card__body"></div>
                     </div>
+                </div>
+            </section>
+            <section id="strategy_details" class="pf-v6-c-page__main-section pf-m-limit-width">
+                <div class="pf-v6-c-page__main-body">
+                    <h2 class="pf-v6-c-title pf-m-xl" style="margin-bottom: var(--pf-t--global--spacer--md, 16px);">Strategy Details</h2>
+                    {% for strategy in strategy_details %}
+                    <div style="margin-bottom: var(--pf-t--global--spacer--xl, 32px);">
+                        <h3 class="pf-v6-c-title pf-m-lg" style="margin-bottom: var(--pf-t--global--spacer--sm, 8px);">{{ strategy.probe_name }}</h3>
+                        <div class="pf-v6-c-card" style="margin-bottom: var(--pf-t--global--spacer--md, 16px);">
+                            <div class="pf-v6-c-card__body">
+                                <table class="pf-v6-c-table pf-m-grid-md" role="grid">
+                                    <thead>
+                                    <tr role="row">
+                                        <th role="columnheader" scope="col">Scenario</th>
+                                        <th role="columnheader" scope="col">Total Attacks</th>
+                                        {% if strategy.is_baseline %}
+                                        <th role="columnheader" scope="col">Complied Prompts</th>
+                                        <th role="columnheader" scope="col">Complied Rate</th>
+                                        {% else %}
+                                        <th role="columnheader" scope="col">Jailbroken Prompts</th>
+                                        <th role="columnheader" scope="col">Attack Success Rate</th>
+                                        {% endif %}
+                                    </tr>
+                                    </thead>
+                                    <tbody role="rowgroup">
+                                    {% for row in strategy.table %}
+                                        <tr role="row">
+                                            <td role="cell" data-label="Scenario">{{ row.intent_name }}</td>
+                                            <td role="cell" data-label="Total Attacks">{{ row.total_attacks }}</td>
+                                            {% if strategy.is_baseline %}
+                                            <td role="cell" data-label="Complied Prompts">{{ row.complied_attacks }}
+                                                / {{ row.total_attacks }}</td>
+                                            <td role="cell"
+                                                data-label="Complied Rate">{{ row.asr }}%</td>
+                                            {% else %}
+                                            <td role="cell" data-label="Jailbroken Prompts">{{ row.jailbroken_stubs }}
+                                                / {{ row.baseline_stubs }}</td>
+                                            <td role="cell"
+                                                data-label="Attack Success Rate">{{ row.asr }}%</td>
+                                            {% endif %}
+                                        </tr>
+                                    {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        {% if strategy.heatmap_data %}
+                        <div class="pf-v6-c-card">
+                            <div id="{{ strategy.heatmap_id }}" class="pf-v6-c-card__body"></div>
+                        </div>
+                        {% elif strategy.variant_table %}
+                        <div class="pf-v6-c-card">
+                            <div class="pf-v6-c-card__body">
+                                <table class="pf-v6-c-table pf-m-grid-md" role="grid">
+                                    <thead>
+                                    <tr role="row">
+                                        <th role="columnheader" scope="col">{{ strategy.variant_table[0].variant_label }}</th>
+                                        <th role="columnheader" scope="col">Scenario</th>
+                                        <th role="columnheader" scope="col">Total Attacks</th>
+                                        <th role="columnheader" scope="col">Complied</th>
+                                        <th role="columnheader" scope="col">Attack Success Rate</th>
+                                    </tr>
+                                    </thead>
+                                    <tbody role="rowgroup">
+                                    {% for vrow in strategy.variant_table %}
+                                        <tr role="row">
+                                            <td role="cell" data-label="{{ vrow.variant_label }}">{{ vrow.variant }}</td>
+                                            <td role="cell" data-label="Scenario">{{ vrow.scenario }}</td>
+                                            <td role="cell" data-label="Total Attacks">{{ vrow.total_questions }}</td>
+                                            <td role="cell" data-label="Complied">{{ vrow.complied }}
+                                                / {{ vrow.total_questions }}</td>
+                                            <td role="cell"
+                                                data-label="Attack Success Rate">{{ vrow.success_rate }}%</td>
+                                        </tr>
+                                    {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
                 </div>
             </section>
         </main>
@@ -121,10 +236,13 @@
             link.setAttribute('aria-current', isActive ? 'page' : 'false');
         });
     }
+
     window.addEventListener('hashchange', updateActiveNav);
     document.addEventListener('DOMContentLoaded', updateActiveNav);
 
     const attack_by_scenario_data = {{ attacks_by_scenario_data | tojson }};
+
+    // Attacks by scenario
     const spec_a = {{ vega_chart_attacks_by_scenario | tojson }};
     spec_a.data = {"values": attack_by_scenario_data};
     vegaEmbed('#vega_chart_attacks_by_scenario', spec_a)
@@ -132,11 +250,27 @@
         })
         .catch(console.error);
 
+    // Strategy vs scenario
     const spec_b = {{ vega_chart_strategy_vs_scenario | tojson }};
     spec_b.data = {"values": attack_by_scenario_data};
     vegaEmbed('#vega_chart_strategy_vs_scenario', spec_b)
         .then(function (result) {
         })
         .catch(console.error);
+
+    // Per-strategy heatmaps
+    const strategy_heatmap_spec = {{ vega_chart_strategy_heatmap | tojson }};
+    {% for strategy in strategy_details %}
+    {% if strategy.heatmap_data %}
+    (function() {
+        var spec = JSON.parse(JSON.stringify(strategy_heatmap_spec));
+        spec.data = {"values": {{ strategy.heatmap_data | tojson }}};
+        vegaEmbed('#{{ strategy.heatmap_id }}', spec)
+            .then(function (result) {
+            })
+            .catch(console.error);
+    })();
+    {% endif %}
+    {% endfor %}
 </script>
 </html>

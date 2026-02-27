@@ -121,7 +121,7 @@ def generate_intents_from_dataset(dataset: pandas.DataFrame,
         }
 
         # Combine all prompts for this category into one file
-        prompts = group[prompt_column_name].tolist()
+        prompts = [p.replace('\n', ' ').replace('\r', ' ') for p in group[prompt_column_name].tolist()]
         prompt_content = '\n'.join(prompts)
 
         # Create intent stub file

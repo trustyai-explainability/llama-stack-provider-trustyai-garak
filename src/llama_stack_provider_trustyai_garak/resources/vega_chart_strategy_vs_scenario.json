@@ -17,19 +17,45 @@
     },
     {
       "aggregate": [
-        {"op": "max", "field": "outcome_score", "as": "max_outcome_score"},
-        {"op": "count", "as": "attempt_count"}
+        {
+          "op": "max",
+          "field": "outcome_score",
+          "as": "max_outcome_score"
+        },
+        {
+          "op": "count",
+          "as": "attempt_count"
+        }
       ],
-      "groupby": ["probe_classname", "intent", "stub"]
+      "groupby": [
+        "probe_classname",
+        "probe_name",
+        "intent",
+        "intent_name",
+        "stub"
+      ]
     },
     {
       "calculate": "datum.max_outcome_score == 1 ? 'complied' : 'refused'",
       "as": "outcome"
+    },
+    {
+      "joinaggregate": [
+        {
+          "op": "count",
+          "as": "baseline_stubs"
+        }
+      ],
+      "groupby": [
+        "probe_name",
+        "intent_name",
+        "outcome"
+      ]
     }
   ],
   "encoding": {
     "x": {
-      "field": "probe_classname",
+      "field": "probe_name",
       "type": "ordinal",
       "sort": {
         "field": "run-iter",
@@ -46,11 +72,11 @@
       }
     },
     "y": {
-      "field": "intent",
+      "field": "intent_name",
       "type": "ordinal",
       "axis": {
         "grid": false,
-        "title": "Intent"
+        "title": "Scenario"
       }
     },
     "xOffset": {
@@ -61,11 +87,11 @@
       }
     },
     "size": {
-      "field": "attempt_count",
-      "aggregate": "sum",
+      "field": "baseline_stubs",
+      "aggregate": "max",
       "type": "quantitative",
       "legend": {
-        "title": "Attempt Count",
+        "title": "Baseline Stubs",
         "format": "d"
       }
     },
@@ -88,15 +114,15 @@
     },
     "tooltip": [
       {
-        "field": "intent",
-        "title": "Intent"
+        "field": "intent_name",
+        "title": "Scenario"
       },
       {
         "field": "stub",
         "title": "Scenario"
       },
       {
-        "field": "probe_classname",
+        "field": "probe_name",
         "title": "Attack Strategy"
       },
       {
@@ -104,8 +130,9 @@
         "title": "Model Behavior"
       },
       {
-        "field": "attempt_count",
-        "title": "Attempts"
+        "field": "baseline_stubs",
+        "type": "quantitative",
+        "title": "Baseline Stubs"
       }
     ]
   },

@@ -21,7 +21,9 @@
           ],
           "groupby": [
             "probe_classname",
+            "probe_name",
             "intent",
+            "intent_name",
             "stub"
           ]
         },
@@ -33,7 +35,8 @@
             }
           ],
           "groupby": [
-            "probe_classname"
+            "probe_classname",
+            "probe_name"
           ]
         }
       ],
@@ -49,7 +52,7 @@
       },
       "encoding": {
         "x": {
-          "field": "probe_classname",
+          "field": "probe_name",
           "sort": {
             "field": "run-iter",
             "op": "min"
@@ -88,7 +91,9 @@
           ],
           "groupby": [
             "probe_classname",
+            "probe_name",
             "intent",
+            "intent_name",
             "stub"
           ]
         },
@@ -99,15 +104,26 @@
         {
           "calculate": "indexof(['refused', 'complied'], datum.outcome)",
           "as": "order"
+        },
+        {
+          "joinaggregate": [
+            {
+              "op": "count",
+              "as": "baseline_stubs"
+            }
+          ],
+          "groupby": [
+            "probe_name",
+            "outcome"
+          ]
         }
       ],
       "mark": {
-        "type": "bar",
-        "strokeWidth": 1
+        "type": "bar"
       },
       "encoding": {
         "x": {
-          "field": "probe_classname",
+          "field": "probe_name",
           "title": "Attack Strategy",
           "axis": {
             "labelAngle": 45,
@@ -121,6 +137,20 @@
         "y": {
           "aggregate": "count",
           "title": "Unique Scenarios"
+        },
+        "stroke": {
+          "field": "outcome",
+          "scale": {
+            "domain": [
+              "complied",
+              "refused"
+            ],
+            "range": [
+              "#CA5050",
+              "#A4A4A4"
+            ]
+          },
+          "legend": null
         },
         "color": {
           "field": "outcome",
@@ -138,7 +168,9 @@
             "complied",
             "refused"
           ],
-          "title": "Model Behavior"
+          "legend": {
+            "title": "Model Behavior"
+          }
         },
         "order": {
           "field": "order",
@@ -146,24 +178,25 @@
         },
         "tooltip": [
           {
-            "field": "probe_classname",
+            "field": "probe_name",
             "title": "Attack Strategy"
           },
           {
-            "field": "intent",
-            "title": "Intent"
+            "field": "baseline_stubs",
+            "type": "quantitative",
+            "title": "Baseline Stubs"
+          },
+          {
+            "field": "intent_name",
+            "title": "Scenario"
           },
           {
             "field": "stub",
-            "title": "Scenario"
+            "title": "Stub"
           },
           {
             "field": "outcome",
             "title": "Model Behavior"
-          },
-          {
-            "field": "attempt_count",
-            "title": "Attempts"
           }
         ]
       }
