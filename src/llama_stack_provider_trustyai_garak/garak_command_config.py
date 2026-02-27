@@ -201,6 +201,29 @@ class GarakReportingConfig(BaseModel):
         description="Prefix for output report files. No need to set this as it will be automatically created by the provider."
     )
 
+@json_schema_type
+class GarakCASConfig(BaseModel):
+    """
+    Context Aware Scanning configuration.
+    """
+    model_config = ConfigDict(extra="allow")
+
+    intent_spec: Optional[str] = Field(
+        default=None,
+        description="Comma-separated list of intents to scan. If not provided, disables the context aware scanning. If all intents need to be scanned, use '*'."
+    )
+    expand_intent_tree: bool = Field(
+        default=True,
+    )
+    trust_code_stubs: bool = Field(
+        default=False,
+    )
+    serve_detectorless_intents: bool = Field(
+        default=False,
+        description="Whether to serve detectorless intents. If True, detectorless intents will be served."
+    )
+
+
 
 @json_schema_type
 class GarakCommandConfig(BaseModel):
@@ -245,6 +268,10 @@ class GarakCommandConfig(BaseModel):
     reporting: GarakReportingConfig = Field(
         default_factory=GarakReportingConfig,
         description="Reporting configuration (output format, taxonomy, etc.)"
+    )
+    cas: GarakCASConfig = Field(
+        default_factory=GarakCASConfig,
+        description="Context Aware Scanning configuration"
     )
     
     def to_dict(self, exclude_none: bool = True) -> Dict[str, Any]:

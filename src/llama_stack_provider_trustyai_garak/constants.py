@@ -8,3 +8,8 @@ KUBEFLOW_CANDIDATE_NAMESPACES = ["redhat-ods-applications", "opendatahub"]
 DEFAULT_TIMEOUT = 600
 DEFAULT_MODEL_TYPE = "openai.OpenAICompatible"
 DEFAULT_EVAL_THRESHOLD = 0.5
+
+# XDG variables
+XDG_CACHE_HOME = "/tmp/.cache"
+XDG_DATA_HOME = "/tmp/.local/share"
+XDG_CONFIG_HOME = "/tmp/.config"

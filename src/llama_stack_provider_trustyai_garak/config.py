@@ -3,7 +3,7 @@ from typing import Dict, Any, Union, Optional
 from pydantic import BaseModel, Field, field_validator, SecretStr, AliasChoices
 from pathlib import Path
 from .utils import get_scan_base_dir
-from .garak_command_config import GarakCommandConfig, GarakRunConfig, GarakReportingConfig, GarakPluginsConfig
+from .garak_command_config import GarakCASConfig, GarakCommandConfig, GarakRunConfig, GarakReportingConfig, GarakPluginsConfig
 
 @json_schema_type
 class GarakProviderBaseConfig(BaseModel):
@@ -360,6 +360,10 @@ class GarakScanConfig(BaseModel):
                         }
                     }
                 ),
+                cas=GarakCASConfig(
+                    intent_spec="*",
+                    serve_detectorless_intents=True,
+                )
             ).to_dict(),
             "timeout": 60*60*12,  # 12 hours
             "art_intents": True
