@@ -275,8 +275,8 @@ class TestResultUtils:
         from llama_stack_provider_trustyai_garak.result_utils import parse_generations_from_report_content
         
         generations, score_rows_by_probe = parse_generations_from_report_content(test_content, eval_threshold=0.5)
-        assert len(generations) == 81
+        ## we only look at probes and not harnesses
+        assert len(generations) == 73
         assert set(score_rows_by_probe.keys()) == {'base.IntentProbe', 'spo.SPOIntent', 'spo.SPOIntentUserAugmented',
-                                                   'spo.SPOIntentSystemAugmented', 'spo.SPOIntentBothAugmented',
-                                                   'garak.harnesses.earlystop.EarlyStopHarness'}
+                                                   'spo.SPOIntentSystemAugmented', 'spo.SPOIntentBothAugmented'}
         

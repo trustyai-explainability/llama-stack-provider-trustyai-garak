@@ -39,9 +39,11 @@ def parse_generations_from_report_content(
         try:
             entry = json.loads(line)
             
-            # Only process completed attempts
+            # Only process completed attempts; skip harness bookkeeping entries
             if entry.get("entry_type") == "attempt" and entry.get("status") == 2:
-                probe_name = entry.get("probe_classname", "unknown")
+                probe_name:str = entry.get("probe_classname", "unknown").strip()
+                if probe_name.lower().endswith("earlystopharness"):
+                    continue
                 detector_results = entry.get("detector_results", {})
                 outputs = entry.get("outputs", [])
                 
@@ -255,7 +257,10 @@ def calculate_basic_aggregates(
         # Check if any detector flagged this attempt
         for detector, scores in row.items():
             scores_list = scores if isinstance(scores, list) else [scores]
-            if any(score >= eval_threshold for score in scores_list):
+            if any(
+                score[0] >= eval_threshold if isinstance(score, list) else score >= eval_threshold
+                for score in scores_list
+            ):
                 vulnerable_count += 1
                 break  # Count attempt once if any detector flagged it
     
