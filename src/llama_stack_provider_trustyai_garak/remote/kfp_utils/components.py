@@ -144,23 +144,22 @@ def resolve_intents_dataset(
     prompt_column: str,
     description_column: str,
     verify_ssl: str,
+    sdg_model: str,
+    sdg_api_base: str,
+    sdg_flow_id: str,
     intents_dataset: dsl.Output[dsl.Dataset],
 ):
-    """Resolve intents dataset from the Files API, or write an empty marker for non-intents scans.
+    """Resolve intents dataset for a Garak scan.
 
-    For art_intents=True with a file ID: fetches the user-uploaded dataset,
-    validates required columns, normalizes to (category, prompt, description),
-    and writes the CSV to the output artifact.
-
-    For art_intents=False: writes an empty file (native probes need no dataset).
-
-    When SDG (Synthetic Data Generation) is available, the art_intents=True
-    path without a file ID will invoke the SDG component instead of raising.
+    Three modes:
+      1. ``art_intents=False`` -- writes an empty marker (native probes).
+      2. ``art_intents=True`` + ``intents_file_id`` -- fetches a user-uploaded
+         dataset from the Llama Stack Files API.
+      3. ``art_intents=True`` + no file ID + ``sdg_model`` -- generates a
+         synthetic dataset via sdg_hub.
     """
     import logging
-    from llama_stack_client import LlamaStackClient
-    from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
-    from llama_stack_provider_trustyai_garak.intents import load_intents_dataset
+    from llama_stack_provider_trustyai_garak.errors import GarakValidationError
 
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
@@ -171,43 +170,66 @@ def resolve_intents_dataset(
             f.write("")
         return
 
-    if not intents_file_id:
-        raise NotImplementedError(
-            "Synthetic Data Generation (SDG) for intents is not yet available. "
-            "Please upload an intents dataset via the Llama Stack Files API and "
-            "pass the file ID as 'intents_file_id' in the benchmark metadata."
+    if intents_file_id:
+        from llama_stack_client import LlamaStackClient
+        from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
+        from llama_stack_provider_trustyai_garak.intents import load_intents_dataset
+
+        logger.info(f"Fetching intents dataset (file_id={intents_file_id}, format={intents_format})")
+        client = LlamaStackClient(
+            base_url=llama_stack_url,
+            http_client=get_http_client_with_tls(verify_ssl),
         )
 
-    logger.info(f"Fetching intents dataset (file_id={intents_file_id}, format={intents_format})")
-    client = LlamaStackClient(
-        base_url=llama_stack_url,
-        http_client=get_http_client_with_tls(verify_ssl),
-    )
+        try:
+            file_content = client.files.content(intents_file_id)
+            if isinstance(file_content, bytes):
+                file_content = file_content.decode("utf-8")
+            file_content = str(file_content)
 
-    try:
-        file_content = client.files.content(intents_file_id)
-        if isinstance(file_content, bytes):
-            file_content = file_content.decode("utf-8")
-        file_content = str(file_content)
+            normalized = load_intents_dataset(
+                content=file_content,
+                format=intents_format,
+                category_column=category_column,
+                prompt_column=prompt_column,
+                description_column=description_column or None,
+            )
 
-        normalized = load_intents_dataset(
-            content=file_content,
-            format=intents_format,
-            category_column=category_column,
-            prompt_column=prompt_column,
-            description_column=description_column or None,
+            normalized.to_csv(intents_dataset.path, index=False)
+            logger.info(
+                f"Resolved {len(normalized)} intent prompts across "
+                f"{normalized['category'].nunique()} categories"
+            )
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+        return
+
+    if sdg_model:
+        from llama_stack_provider_trustyai_garak.sdg import generate_sdg_dataset
+
+        if not sdg_api_base.strip() or not sdg_flow_id.strip():
+            raise GarakValidationError("sdg_api_base and sdg_flow_id are required for synthetic data generation")
+
+        logger.info(f"Running SDG: model={sdg_model}, api_base={sdg_api_base}, flow={sdg_flow_id}")
+        normalized = generate_sdg_dataset(
+            model=sdg_model,
+            api_base=sdg_api_base,
+            flow_id=sdg_flow_id,
         )
-
         normalized.to_csv(intents_dataset.path, index=False)
         logger.info(
-            f"Resolved {len(normalized)} intent prompts across "
+            f"SDG produced {len(normalized)} intent prompts across "
             f"{normalized['category'].nunique()} categories"
         )
-    finally:
-        try:
-            client.close()
-        except Exception:
-            pass
+        return
+
+    raise GarakValidationError(
+        "Intents scan requires either an intents_file_id (user-uploaded dataset) "
+        "or sdg_model + sdg_api_base (for synthetic data generation)."
+    )
 
 
 # Component 3: Garak Scan
@@ -259,7 +281,11 @@ def garak_scan(
     if os.path.getsize(intents_dataset.path) > 0:
         df = pd.read_csv(intents_dataset.path)
         if not df.empty:
-            generate_intents_from_dataset(df)
+            desc_col = "description" if "description" in df.columns else None
+            generate_intents_from_dataset(
+                df,
+                category_description_column_name=desc_col,
+            )
             logger.info(
                 f"Generated intent stubs for {len(df)} prompts "
                 f"across {df['category'].nunique()} categories"
