@@ -1,115 +1,154 @@
 # Deployment 2: Partial Remote (Hybrid)
 
-**Server runs locally, scans run on OpenShift AI KFP** - great for development.
+Llama Stack runs locally, while Garak scans run remotely on KFP.
+
+This is usually the best developer workflow:
+
+- quick local iteration on server config
+- realistic remote pipeline execution for scans
 
 ## What Runs Where
 
 | Component | Runs On |
-|-----------|---------|
-| Llama Stack Server | Your laptop (local) |
-| Garak Scans | Data Science Pipelines (KFP) on OpenShift AI |
+|---|---|
+| Llama Stack server | Your local machine |
+| Garak scans | KFP (DSP v2) in cluster |
+
+## Cluster Resource Scope
+
+- Partial remote requires KFP resources only.
+- You do not need to deploy full remote Llama Stack Distro/Postgres stack for this mode.
+- If your cluster has no DSP yet, use `lsd_remote/kfp-setup/kfp.yaml`.
 
 ## Prerequisites
 
-- Python 3.12+ with package installed
-- OpenShift AI cluster with Data Science Pipelines
-- A VLLM hosted Model. You can easily get one using [LiteMaas](https://litemaas-litemaas.apps.prod.rhoai.rh-aiservices-bu.com/home).
+- Python 3.12+
+- Local access to run `llama stack`
+- OpenShift/Kubernetes cluster with DSP endpoint
+- Model endpoint (for example vLLM)
 
-## Quick Start
-
-### 1. Install
-
-```bash
-# Remote provider is default, no extra needed
-pip install lama-stack-provider-trustyai-garak
-```
-
-### 2. Configure Environment
+## 1) Install
 
 ```bash
-# Model endpoint
-export VLLM_URL="http://your-model-endpoint/v1"
-export VLLM_API_TOKEN="<token identifier>"
-export INFERENCE_MODEL="your-model-name"
-
-# Llama Stack URL (must be accessible from KFP pods)
-# Use ngrok to create an external route (see below section to get this url)
-export KUBEFLOW_LLAMA_STACK_URL="https://your-ngrok-url.ngrok.io"
-
-# Kubeflow configuration
-export KUBEFLOW_PIPELINES_ENDPOINT="https://your-dsp-pipeline-endpoint" # (`kubectl get routes -A | grep -i pipeline`)
-export KUBEFLOW_NAMESPACE="your-namespace"
-export KUBEFLOW_BASE_IMAGE="quay.io/rh-ee-spandraj/trustyai-lls-garak-provider-dsp:latest"
+pip install llama-stack-provider-trustyai-garak
 ```
+## 2) Expose Local Server URL to KFP
 
-### 3. Set Up Ngrok (If Running Locally)
+If running locally, expose port 8321 to the cluster (for example ngrok).
 
 ```bash
 # Install ngrok: https://ngrok.com/download
 # Start tunnel
 ngrok http 8321
 
-# Copy the HTTPS URL to KUBEFLOW_LLAMA_STACK_URL
-export KUBEFLOW_LLAMA_STACK_URL="https://xxxx-xx-xx-xx-xx.ngrok.io"
+# Copy the HTTPS URL to KUBEFLOW_LLAMA_STACK_URL in the below step
 ```
 
-### 4. Start Server
+
+## 3) Configure Environment
 
 ```bash
-llama stack run configs/partial-remote.yaml
+# Model endpoint
+export VLLM_URL="http://your-model-endpoint/v1"
+export VLLM_API_TOKEN="<token>"
+
+# Local Llama Stack URL reachable from KFP pods
+# (route/ngrok/public endpoint)
+export KUBEFLOW_LLAMA_STACK_URL="https://your-public-url"
+
+# KFP configuration
+export KUBEFLOW_PIPELINES_ENDPOINT="https://your-dsp-endpoint" # echo “https://$(oc get routes ds-pipeline-dspa -o jsonpath='{.spec.host}')”
+export KUBEFLOW_NAMESPACE="your-namespace"
+export KUBEFLOW_GARAK_BASE_IMAGE="quay.io/opendatahub/odh-trustyai-garak-lls-provider-dsp:dev" # quay.io/rhoai/odh-trustyai-garak-lls-provider-dsp-rhel9:rhoai-3.4 (if you have access)
+export KUBEFLOW_EXPERIMENT_NAME="trustyai-garak" # optional: group runs under a custom KFP experiment name
+
+# By default this will be loaded from your local machine (login to your cluster beforehand). Or you can manually provide token that has permissions to CRUD KFP
+export KUBEFLOW_PIPELINES_TOKEN="<token>"
 ```
 
-### 5. Run Security Scan with Shields
+`KUBEFLOW_EXPERIMENT_NAME` provider defaults to `trustyai-garak` if not provided
+
+## 4) Start Local Server
+
+```bash
+llama stack run partial-remote.yaml # (or partial-remote-shield.yaml which is a sample config with local ollama llama-guard as a shield)
+```
+
+## 5) Register and Run Benchmark 
 
 ```python
 from llama_stack_client import LlamaStackClient
 
 client = LlamaStackClient(base_url="http://localhost:8321")
 
-# Register benchmark with shield testing
+# Discover provider id
+garak_provider = next(
+    p for p in client.providers.list()
+    if p.provider_type.endswith("trustyai_garak")
+)
+garak_provider_id = garak_provider.provider_id
+
 client.benchmarks.register(
     benchmark_id="custom_with_shield",
     dataset_id="garak",
     scoring_functions=["garak_scoring"],
-    provider_id="trustyai_garak_remote",
+    provider_id=garak_provider_id,
     provider_benchmark_id="custom_with_shield",
     metadata={
-        "probes": ["promptinject.HijackHateHumans"],
-        "shield_ids": ["Prompt-Guard-86M"],  # Test shield effectiveness
+        "garak_config": {
+            "plugins": {
+                "probe_spec": ["promptinject.HijackHateHumans"]
+            }
+        },
+        "shield_ids": ["llama-guard"],
         "timeout": 600
     }
 )
 
-# Run scan
 job = client.alpha.eval.run_eval(
     benchmark_id="custom_with_shield",
     benchmark_config={
         "eval_candidate": {
             "type": "model",
-            "model": "your-model-name",
+            "model": "your-model-id",
             "sampling_params": {"max_tokens": 100}
         }
     }
 )
+```
 
-# Monitor KFP pipeline
+## 6) Check Results
+
+```python
+status = client.alpha.eval.jobs.status(job_id=job.job_id, benchmark_id="custom_with_shield")
+if status.status == "completed":
+    result = client.alpha.eval.jobs.retrieve(job_id=job.job_id, benchmark_id="custom_with_shield")
+    overall = result.scores.get("_overall")
+    print(overall.aggregated_results if overall else {})
 ```
 
 ## Troubleshooting
 
-**KFP can't reach server:**
-- Ensure ngrok is running
-- Check `KUBEFLOW_LLAMA_STACK_URL` uses accessbile URL
-- Test: `curl $KUBEFLOW_LLAMA_STACK_URL/v1/files`
+### KFP cannot reach local server
 
-**Authentication errors:**
+- verify route/ngrok URL is correct and active
+- verify `KUBEFLOW_LLAMA_STACK_URL` is reachable from cluster
+- test with `curl $KUBEFLOW_LLAMA_STACK_URL/v1/files`
+
+### Pipeline auth failures
+
 ```bash
-# Verify oc login
+oc login --token=<your-token> --server=<your-server>
 oc whoami
-oc project your-namespace
+oc project <your-namespace>
 ```
 
-## Next Steps
+Then either:
 
-See `demo.ipynb` for complete examples with shield testing.
+- grant service account permissions, or
+- provide `KUBEFLOW_PIPELINES_TOKEN`
+
+## Canonical Demo
+
+Use `demos/guide.ipynb` for the full walkthrough (predefined listing, custom `garak_config`, benchmark deep-merge updates, shield mapping, `_overall`, and TBSA).
 

@@ -98,12 +98,12 @@ class TestXDGFunctions:
         
         scan_dir = utils.get_scan_base_dir()
         
-        # Should be XDG_CACHE_HOME/llama_stack_garak_scans
-        expected = custom_cache / "llama_stack_garak_scans"
+        # Should be XDG_CACHE_HOME/trustyai_garak_scans
+        expected = custom_cache / "trustyai_garak_scans"
         assert scan_dir == expected
 
     def test_get_scan_base_dir_default_tmp_cache(self, monkeypatch):
-        """Test that get_scan_base_dir defaults to /tmp/.cache/llama_stack_garak_scans"""
+        """Test that get_scan_base_dir defaults to /tmp/.cache/trustyai_garak_scans"""
         # Clear both GARAK_SCAN_DIR and XDG_CACHE_HOME
         monkeypatch.delenv("GARAK_SCAN_DIR", raising=False)
         monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
@@ -115,8 +115,8 @@ class TestXDGFunctions:
         
         scan_dir = utils.get_scan_base_dir()
         
-        # Should default to /tmp/.cache/llama_stack_garak_scans
-        assert str(scan_dir) == "/tmp/.cache/llama_stack_garak_scans"
+        # Should default to /tmp/.cache/trustyai_garak_scans
+        assert str(scan_dir) == "/tmp/.cache/trustyai_garak_scans"
 
 
 class TestHTTPClientWithTLS:

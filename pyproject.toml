@@ -21,6 +21,8 @@ dependencies = [
     "pandas>=2.3.3",
     "Jinja2>=3.1.6",
     # "pytest>=9.0.2", # included in 'dev' extra
+    # eval-hub integration
+    "eval-hub-sdk[adapter] @ git+https://github.com/eval-hub/eval-hub-sdk.git@main",
 ]
 
 [project.urls]

@@ -11,3 +11,7 @@ XDG_CONFIG_HOME = "/tmp/.config"
 
 # SDG variables
 DEFAULT_SDG_FLOW_ID = "major-sage-742"
+# Default values
+DEFAULT_TIMEOUT = 600
+DEFAULT_MODEL_TYPE = "openai.OpenAICompatible"
+DEFAULT_EVAL_THRESHOLD = 0.5
