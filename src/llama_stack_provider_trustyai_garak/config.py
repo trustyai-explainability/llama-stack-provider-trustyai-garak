@@ -3,7 +3,7 @@ from typing import Dict, Any, Union, Optional
 from pydantic import BaseModel, Field, field_validator, SecretStr, AliasChoices
 from pathlib import Path
 from .utils import get_scan_base_dir
-from .garak_command_config import GarakCommandConfig, GarakRunConfig, GarakReportingConfig, GarakPluginsConfig
+from .garak_command_config import GarakCASConfig, GarakCommandConfig, GarakRunConfig, GarakReportingConfig, GarakPluginsConfig
 
 @json_schema_type
 class GarakProviderBaseConfig(BaseModel):
@@ -141,6 +141,53 @@ class KubeflowConfig(BaseModel):
         description="Name of the KFP experiment to run the scans in. If not provided, the experiment name will be set to 'trustyai-garak'.",
     )
 
+class TapIntentConfig(BaseModel):
+    """Configuration for the TAPIntent probe."""
+    attack_model_type: str = Field(
+        default="openai.OpenAICompatible",
+        description="The model type for the attack model.",
+    )
+    attack_model_name: Optional[str] = Field(
+        default=None,
+        description="The name of the attack model.",
+    )
+    attack_model_config: dict[str, Any] = Field(
+        default={},
+        description="The configuration for the attack model.",
+    )
+    evaluator_model_type: str = Field(
+        default="openai.OpenAICompatible",
+        description="The model type for the evaluator model.",
+    )
+    evaluator_model_name: Optional[str] = Field(
+        default=None,
+        description="The name of the evaluator model.",
+    )
+    evaluator_model_config: dict[str, Any] = Field(
+        default={},
+        description="The configuration for the evaluator model.",
+    )
+    attack_max_attempts: int = Field(
+        default=2,
+        description="The maximum number of attempts for the attack.",
+    )
+    width: int = Field(
+        default=2,
+        description="The width of the attack.",
+    )
+    depth: int = Field(
+        default=1,
+        description="The depth of the attack.",
+    )
+    branching_factor: int = Field(
+        default=2,
+        description="The branching factor of the attack.",
+    )
+    pruning: bool = Field(
+        default=False,
+        description="Whether to prune the attack.",
+    )
+
 
 @json_schema_type
 class GarakScanConfig(BaseModel):
@@ -250,6 +297,79 @@ class GarakScanConfig(BaseModel):
                 )
             ).to_dict(),
             "timeout": 60*60*2,  # 2 hours
+        },
+        ## happy path intents test
+        "trustyai_garak::intents": {
+            "name": "Intents Test",
+            "description": "Intents Test",
+            "garak_config": GarakCommandConfig(
+                run=GarakRunConfig(
+                    eval_threshold=0.5,
+                    generations=2,
+                    langproviders=[
+                        {
+                            "language": "zh,en",
+                            "model_type": "local.LocalHFTranslator",
+                            "model_name": "Helsinki-NLP/opus-mt-zh-en",
+                        },
+                        {
+                            "language": "en,zh",
+                            "model_type": "local.LocalHFTranslator",
+                            "model_name": "Helsinki-NLP/opus-mt-en-zh",
+                        }
+                    ]
+                ),
+                plugins=GarakPluginsConfig(
+                    detector_spec="judge.ModelAsJudge,judge.Refusal", # We use the judge detector to pick up rejections
+                    detectors={
+                        "judge": {
+                            "detector_model_type": "openai.OpenAICompatible",
+                            "detector_model_name": "", # TODO: This needed fron user
+                            "detector_model_config": {
+                                "uri": "", # TODO: override this to llama stack url at runtime if not provided by user
+                                "api_key": "dummy",
+                            }
+                        }
+                    },
+                    probe_spec="spo.SPOIntent,spo.SPOIntentUserAugmented,spo.SPOIntentSystemAugmented,spo.SPOIntentBothAugmented,multilingual.TranslationIntent,tap.TAPIntent",
+                    probes={
+                        "spo": {
+                            "SPOIntent": {
+                                "max_dan_samples": 5,
+                            }
+                        },
+                        "multilingual": {
+                            "TranslationIntent": {
+                                "target_lang": "zh",
+                            }
+                        },
+                        "tap": {
+                            "TAPIntent": TapIntentConfig(
+                                attack_model_config={
+                                    "uri": "", # TODO: override this to llama stack url at runtime if not provided by user
+                                    "api_key": "dummy",
+                                    "max_tokens": 500,
+                                },
+                                evaluator_model_config={
+                                    "uri": "", # TODO: override this to llama stack url at runtime if not provided by user
+                                    "api_key": "dummy",
+                                    "max_tokens": 10,
+                                    "temperature": 0.0,
+                                }
+                            ),
+                        }
+                    }
+                ),
+                cas=GarakCASConfig(
+                    intent_spec="*",
+                    serve_detectorless_intents=True,
+                )
+            ).to_dict(),
+            "timeout": 60*60*12,  # 12 hours
+            "art_intents": True,
+            "sdg_model": "",
+            "sdg_api_base": "",
+            "sdg_flow_id": "major-sage-742",
         },
     }
 

@@ -1,0 +1,172 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "title": {
+    "text": "Model Behavior By Attack Strategy",
+    "dy": -20
+  },
+  "width": "container",
+  "height": 300,
+  "data": {
+    "name": "data"
+  },
+  "layer": [
+    {
+      "transform": [
+        {
+          "aggregate": [
+            {
+              "op": "count",
+              "as": "scenario_count"
+            }
+          ],
+          "groupby": [
+            "probe_classname",
+            "intent",
+            "stub"
+          ]
+        },
+        {
+          "aggregate": [
+            {
+              "op": "count",
+              "as": "unique_scenarios"
+            }
+          ],
+          "groupby": [
+            "probe_classname"
+          ]
+        }
+      ],
+      "mark": {
+        "type": "bar",
+        "stroke": "#A4A4A4",
+        "strokeWidth": 1,
+        "strokeDash": [
+          2,
+          2
+        ],
+        "fill": "transparent"
+      },
+      "encoding": {
+        "x": {
+          "field": "probe_classname",
+          "sort": {
+            "field": "run-iter",
+            "op": "min"
+          },
+          "title": "Attack Strategy",
+          "legend": null
+        },
+        "y": {
+          "field": "unique_scenarios",
+          "scale": {
+            "type": "point"
+          },
+          "aggregate": "max",
+          "title": null,
+          "legend": null
+        }
+      }
+    },
+    {
+      "transform": [
+        {
+          "calculate": "datum.outcome == 'complied' ? 1 : 0",
+          "as": "outcome_score"
+        },
+        {
+          "aggregate": [
+            {
+              "op": "max",
+              "field": "outcome_score",
+              "as": "max_outcome_score"
+            },
+            {
+              "op": "count",
+              "as": "attempt_count"
+            }
+          ],
+          "groupby": [
+            "probe_classname",
+            "intent",
+            "stub"
+          ]
+        },
+        {
+          "calculate": "datum.max_outcome_score == 1 ? 'complied' : 'refused'",
+          "as": "outcome"
+        },
+        {
+          "calculate": "indexof(['refused', 'complied'], datum.outcome)",
+          "as": "order"
+        }
+      ],
+      "mark": {
+        "type": "bar",
+        "strokeWidth": 1
+      },
+      "encoding": {
+        "x": {
+          "field": "probe_classname",
+          "title": "Attack Strategy",
+          "axis": {
+            "labelAngle": 45,
+            "labelAlign": "left"
+          },
+          "scale": {
+            "paddingOuter": 1,
+            "paddingInner": 0.5
+          }
+        },
+        "y": {
+          "aggregate": "count",
+          "title": "Unique Scenarios"
+        },
+        "color": {
+          "field": "outcome",
+          "scale": {
+            "domain": [
+              "complied",
+              "refused"
+            ],
+            "range": [
+              "#CA5050",
+              "#A4A4A4"
+            ]
+          },
+          "sort": [
+            "complied",
+            "refused"
+          ],
+          "title": "Model Behavior"
+        },
+        "order": {
+          "field": "order",
+          "type": "ordinal"
+        },
+        "tooltip": [
+          {
+            "field": "probe_classname",
+            "title": "Attack Strategy"
+          },
+          {
+            "field": "intent",
+            "title": "Intent"
+          },
+          {
+            "field": "stub",
+            "title": "Scenario"
+          },
+          {
+            "field": "outcome",
+            "title": "Model Behavior"
+          },
+          {
+            "field": "attempt_count",
+            "title": "Attempts"
+          }
+        ]
+      }
+    }
+  ]
+}

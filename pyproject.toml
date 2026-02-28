@@ -18,6 +18,9 @@ dependencies = [
     "kfp-kubernetes>=2.14.6",
     "kfp-server-api>=2.14.6",
     "boto3>=1.35.88",
+    "pandas>=2.3.3",
+    "Jinja2>=3.1.6",
+    # "pytest>=9.0.2", # included in 'dev' extra
     # eval-hub integration
     "eval-hub-sdk[adapter] @ git+https://github.com/eval-hub/eval-hub-sdk.git@main",
 ]
@@ -33,14 +36,25 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"llama_stack_provider_trustyai_garak" = ["resources/*"]
+
 [project.optional-dependencies]
 inline = [
     "pyasn1==0.6.2", # trivy high vul fix
     "protobuf==6.33.5", # trivy high vul fix
-    "garak==0.14.0",
+    "nest_asyncio>=1.6.0",
+    "sdg-hub @ git+https://github.com/Red-Hat-AI-Innovation-Team/sdg_hub.git@feat/redteam-promptgen",
+    "garak @ git+https://github.com/trustyai-explainability/garak.git@automated-red-teaming",
 ]
 dev = ["pytest", "pytest-cov",  "pytest-asyncio", "black", "isort"]
 server = ["llama-stack>=0.5.0"]
+
+# [tool.uv] - no need as latest garak has "openai>=2,<3"
+# # Added this because:
+# # - llama-stack[client] requires openai>=2.5.0
+# # - garak requires openai>=1.45.0,<2
+# override-dependencies = ["openai>=1.45.0,<2"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

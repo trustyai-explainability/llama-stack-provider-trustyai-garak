@@ -548,6 +548,90 @@ class TestGarakRemoteEvalAdapter:
         assert "Could not find mapping file" in caplog.text or "mapping" in caplog.text.lower()
 
     @pytest.mark.asyncio
+    async def test_job_status_falls_back_to_raw_mapping(self, adapter):
+        """Test that server falls back to raw mapping when enriched mapping is absent"""
+        mock_run = Mock()
+        mock_run.state = "SUCCEEDED"
+        mock_run.finished_at = datetime.now()
+        
+        job_id = "test-job-raw-fallback"
+        adapter._jobs[job_id] = Mock(status=JobStatus.in_progress)
+        adapter._job_metadata[job_id] = {"kfp_run_id": "test-run-id"}
+        
+        adapter.kfp_client = Mock()
+        adapter.kfp_client.get_run.return_value = mock_run
+        
+        from llama_stack_provider_trustyai_garak.compat import OpenAIFilePurpose
+        
+        # Only the raw mapping exists (parse_results failed, so no enriched mapping)
+        mock_file_obj = Mock()
+        mock_file_obj.filename = f"{job_id}_mapping_raw.json"
+        mock_file_obj.id = "raw-mapping-file-id"
+        mock_file_list = Mock()
+        mock_file_list.data = [mock_file_obj]
+        
+        mock_mapping_content = Mock()
+        mock_mapping_content.body.decode.return_value = json.dumps({
+            f"{job_id}_scan.report.jsonl": "report-file-id",
+            f"{job_id}_scan.log": "log-file-id",
+        })
+        
+        adapter.file_api.openai_list_files = AsyncMock(return_value=mock_file_list)
+        adapter.file_api.openai_retrieve_file_content = AsyncMock(return_value=mock_mapping_content)
+        
+        with patch.object(adapter, '_map_kfp_run_state_to_job_status', return_value=JobStatus.completed):
+            request = JobStatusRequest(benchmark_id="test-benchmark", job_id=job_id)
+            result = await adapter.job_status(request)
+        
+        assert result.status == JobStatus.completed
+        assert adapter._job_metadata[job_id].get("mapping_file_id") == "raw-mapping-file-id"
+        assert adapter._job_metadata[job_id].get(f"{job_id}_scan.report.jsonl") == "report-file-id"
+        assert adapter._job_metadata[job_id].get(f"{job_id}_scan.log") == "log-file-id"
+
+    @pytest.mark.asyncio
+    async def test_job_status_prefers_enriched_over_raw_mapping(self, adapter):
+        """Test that enriched mapping is preferred when both exist"""
+        mock_run = Mock()
+        mock_run.state = "SUCCEEDED"
+        mock_run.finished_at = datetime.now()
+        
+        job_id = "test-job-both-mappings"
+        adapter._jobs[job_id] = Mock(status=JobStatus.in_progress)
+        adapter._job_metadata[job_id] = {"kfp_run_id": "test-run-id"}
+        
+        adapter.kfp_client = Mock()
+        adapter.kfp_client.get_run.return_value = mock_run
+        
+        from llama_stack_provider_trustyai_garak.compat import OpenAIFilePurpose
+        
+        # Both mappings exist: raw first in list, enriched second
+        mock_raw = Mock()
+        mock_raw.filename = f"{job_id}_mapping_raw.json"
+        mock_raw.id = "raw-mapping-id"
+        mock_enriched = Mock()
+        mock_enriched.filename = f"{job_id}_mapping.json"
+        mock_enriched.id = "enriched-mapping-id"
+        mock_file_list = Mock()
+        mock_file_list.data = [mock_raw, mock_enriched]
+        
+        mock_mapping_content = Mock()
+        mock_mapping_content.body.decode.return_value = json.dumps({
+            f"{job_id}_scan.report.jsonl": "report-file-id",
+            f"{job_id}_scan_result.json": "result-file-id",
+        })
+        
+        adapter.file_api.openai_list_files = AsyncMock(return_value=mock_file_list)
+        adapter.file_api.openai_retrieve_file_content = AsyncMock(return_value=mock_mapping_content)
+        
+        with patch.object(adapter, '_map_kfp_run_state_to_job_status', return_value=JobStatus.completed):
+            request = JobStatusRequest(benchmark_id="test-benchmark", job_id=job_id)
+            result = await adapter.job_status(request)
+        
+        assert result.status == JobStatus.completed
+        # Should have selected the enriched mapping, not the raw one
+        assert adapter._job_metadata[job_id].get("mapping_file_id") == "enriched-mapping-id"
+
+    @pytest.mark.asyncio
     async def test_job_status_empty_mapping_file_logs_warning(self, adapter, caplog):
         """Test that empty mapping file content logs warning without failing"""
         mock_run = Mock()
