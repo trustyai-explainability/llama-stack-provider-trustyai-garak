@@ -8,3 +8,6 @@ KUBEFLOW_CANDIDATE_NAMESPACES = ["redhat-ods-applications", "opendatahub"]
 XDG_CACHE_HOME = "/tmp/.cache"
 XDG_DATA_HOME = "/tmp/.local/share"
 XDG_CONFIG_HOME = "/tmp/.config"
+
+# SDG variables
+DEFAULT_SDG_FLOW_ID = "major-sage-742"

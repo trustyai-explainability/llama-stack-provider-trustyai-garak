@@ -24,6 +24,9 @@ def garak_scan_pipeline(
     category_column: str = "category",
     prompt_column: str = "prompt",
     description_column: str = "",
+    sdg_model: str = "",
+    sdg_api_base: str = "",
+    sdg_flow_id: str = "major-sage-742",
 ):
 
     # Step 1: Validate inputs (raises on failure, short-circuiting the pipeline)
@@ -44,8 +47,11 @@ def garak_scan_pipeline(
         prompt_column=prompt_column,
         description_column=description_column,
         verify_ssl=verify_ssl,
+        sdg_model=sdg_model,
+        sdg_api_base=sdg_api_base,
+        sdg_flow_id=sdg_flow_id,
     )
-    resolve_task.set_caching_options(False)
+    resolve_task.set_caching_options(True)
     resolve_task.after(validate_task)
 
     # Common arguments

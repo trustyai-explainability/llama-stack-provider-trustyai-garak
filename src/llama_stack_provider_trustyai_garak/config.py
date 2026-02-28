@@ -366,7 +366,10 @@ class GarakScanConfig(BaseModel):
                 )
             ).to_dict(),
             "timeout": 60*60*12,  # 12 hours
-            "art_intents": True
+            "art_intents": True,
+            "sdg_model": "",
+            "sdg_api_base": "",
+            "sdg_flow_id": "major-sage-742",
         },
     }
 

@@ -41,6 +41,8 @@ where = ["src"]
 inline = [
     "pyasn1==0.6.2", # trivy high vul fix
     "protobuf==6.33.5", # trivy high vul fix
+    "nest_asyncio>=1.6.0",
+    "sdg-hub @ git+https://github.com/Red-Hat-AI-Innovation-Team/sdg_hub.git@feat/redteam-promptgen",
     "garak @ git+https://github.com/trustyai-explainability/garak.git@automated-red-teaming",
 ]
 dev = ["pytest", "pytest-cov",  "pytest-asyncio", "black", "isort"]
