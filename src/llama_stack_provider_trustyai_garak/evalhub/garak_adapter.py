@@ -1,16 +1,23 @@
 """Garak Framework Adapter for eval-hub.
 
 This adapter integrates NVIDIA's Garak red-teaming framework with the
-eval-hub evaluation platform. It runs Garak scans as K8s Jobs and reports
-results via the eval-hub sidecar.
+eval-hub evaluation platform. It supports two execution modes:
+
+- **simple** (default): Runs garak as a subprocess inside the K8s Job pod.
+- **kfp**: Delegates scan execution to a Kubeflow Pipeline, using S3
+  (via a Data Connection secret) for artifact transfer. The adapter
+  submits the pipeline, polls for completion, and downloads results
+  from the shared S3 bucket.
 
 The adapter:
 1. Reads JobSpec from mounted ConfigMap (/etc/eval-job/spec.json)
-2. Builds and executes Garak CLI commands
+2. Builds and executes Garak CLI commands (simple) or submits KFP pipeline (kfp)
 3. Parses results from Garak's JSONL reports
 4. Persists artifacts to OCI registry
 5. Reports results back to eval-hub via sidecar callbacks
 """
+
+from __future__ import annotations
 
 import json
 import logging
@@ -18,7 +25,10 @@ import os
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .kfp_pipeline import KFPConfig
 
 from evalhub.adapter import (
     DefaultCallbacks,
@@ -53,19 +63,27 @@ from ..constants import DEFAULT_TIMEOUT, DEFAULT_MODEL_TYPE, DEFAULT_EVAL_THRESH
 logger = logging.getLogger(__name__)
 
 
+EXECUTION_MODE_SIMPLE = "simple"
+EXECUTION_MODE_KFP = "kfp"
+
+
 class GarakAdapter(FrameworkAdapter):
     """Garak red-teaming framework adapter for eval-hub.
-    
-    This adapter runs Garak security scans against LLM models and reports
-    vulnerability metrics back to eval-hub.
-    
+
+    Supports two execution modes:
+    - **simple**: Runs garak as a local subprocess (default).
+    - **kfp**: Submits a Kubeflow Pipeline, polls for completion, and
+      downloads results from S3 via a Data Connection secret.
+
     Benchmark Configuration:
         The adapter expects benchmark_config in JobSpec to contain:
         - probes: List of Garak probe names
         - probe_tags: Optional probe tag filters
         - eval_threshold: Threshold for vulnerability detection (default: 0.5)
+        - execution_mode: "simple" or "kfp" (default: "simple")
+        - kfp_config: dict with KFP connection details (for kfp mode)
         - Other Garak CLI options (detectors, buffs, etc.)
-    
+
     Results:
         Returns one EvaluationResult per probe with:
         - attack_success_rate: Percentage of successful attacks
@@ -77,17 +95,9 @@ class GarakAdapter(FrameworkAdapter):
         self, config: JobSpec, callbacks: JobCallbacks
     ) -> JobResults:
         """Run a Garak security scan job.
-        
-        Args:
-            config: Job specification with model and benchmark configuration
-            callbacks: Callbacks for status updates and artifact persistence
-        
-        Returns:
-            JobResults with vulnerability metrics per probe
-        
-        Raises:
-            ValueError: If configuration is invalid
-            RuntimeError: If scan execution fails
+
+        Dispatches to either local subprocess execution or KFP pipeline
+        execution depending on the resolved execution_mode.
         """
         start_time = time.time()
         logger.info(f"Starting Garak job {config.id} for benchmark {config.benchmark_id}")
@@ -106,47 +116,44 @@ class GarakAdapter(FrameworkAdapter):
 
             self._validate_config(config)
 
-            # Setup scan directories
+            benchmark_config = config.benchmark_config or {}
+            execution_mode = self._resolve_execution_mode(benchmark_config)
+            logger.info("Execution mode: %s", execution_mode)
+
+            # Build merged garak config (common to both modes)
             scan_dir = get_scan_base_dir() / config.id
             scan_dir.mkdir(parents=True, exist_ok=True)
-
-            log_file = scan_dir / "scan.log"
             report_prefix = scan_dir / "scan"
 
-            # Build merged config and execute garak using --config.
             garak_config_dict, profile = self._build_config_from_spec(config, report_prefix)
             if not garak_config_dict:
                 raise ValueError("Garak command config is empty")
-            
-            try:
-                config_file = scan_dir / "config.json"
-                with open(config_file, "w") as f:
-                    json.dump(garak_config_dict, f, indent=1)
-            except Exception as e:
-                logger.error(f"Error writing Garak command config to file: {e}")
-                raise
 
-            # Phase 2: Run scan
-            callbacks.report_status(JobStatusUpdate(
-                status=JobStatus.RUNNING,
-                phase=JobPhase.RUNNING_EVALUATION,
-                progress=0.1,
-                message=MessageInfo(
-                    message=f"Running Garak scan for {config.benchmark_id}",
-                    message_code="running_scan",
-                ),
-                current_step="Executing probes",
-            ))
-
-            timeout = resolve_timeout_seconds(config.benchmark_config, profile, default_timeout=DEFAULT_TIMEOUT)
+            timeout = resolve_timeout_seconds(
+                benchmark_config, profile, default_timeout=DEFAULT_TIMEOUT,
+            )
             logger.info("Using timeout=%ss for benchmark=%s", timeout, config.benchmark_id)
 
-            result = run_garak_scan(
-                config_file=config_file,
-                timeout_seconds=timeout,
-                log_file=log_file,
-                report_prefix=report_prefix,
+            eval_threshold = float(
+                garak_config_dict.get("run", {}).get("eval_threshold", DEFAULT_EVAL_THRESHOLD)
             )
+
+            # Phase 2: Execute scan (mode-dependent)
+            if execution_mode == EXECUTION_MODE_KFP:
+                result, scan_dir = self._run_via_kfp(
+                    config=config,
+                    callbacks=callbacks,
+                    garak_config_dict=garak_config_dict,
+                    timeout=timeout,
+                )
+            else:
+                result = self._run_simple(
+                    config=config,
+                    callbacks=callbacks,
+                    garak_config_dict=garak_config_dict,
+                    scan_dir=scan_dir,
+                    timeout=timeout,
+                )
 
             if not result.success:
                 error_msg = f"Garak scan failed: {result.stderr}" if result.stderr else "Unknown error"
@@ -159,20 +166,7 @@ class GarakAdapter(FrameworkAdapter):
                 ))
                 raise RuntimeError(error_msg)
 
-            # Phase 3: Convert to AVID format
-            callbacks.report_status(JobStatusUpdate(
-                status=JobStatus.RUNNING,
-                phase=JobPhase.POST_PROCESSING,
-                progress=0.7,
-                message=MessageInfo(
-                    message="Converting results to AVID format",
-                    message_code="post_processing",
-                ),
-            ))
-
-            convert_to_avid_report(result.report_jsonl)
-
-            # Phase 4: Parse results
+            # Phase 3: Parse results (common to both modes)
             callbacks.report_status(JobStatusUpdate(
                 status=JobStatus.RUNNING,
                 phase=JobPhase.POST_PROCESSING,
@@ -183,16 +177,12 @@ class GarakAdapter(FrameworkAdapter):
                 ),
             ))
 
-            eval_threshold = float(
-                garak_config_dict.get("run", {}).get("eval_threshold", DEFAULT_EVAL_THRESHOLD)
-            )
             metrics, overall_score, num_examples, overall_summary = self._parse_results(
-                result, eval_threshold
+                result, eval_threshold,
             )
-
             logger.info(f"Parsed {len(metrics)} probe metrics, overall score: {overall_score}")
 
-            # Phase 5: Persist artifacts (only if OCI export coordinates are provided)
+            # Phase 4: Persist artifacts
             oci_artifact = None
             if config.exports and config.exports.oci:
                 oci_artifact = callbacks.create_oci_artifact(OCIArtifactSpec(
@@ -207,6 +197,7 @@ class GarakAdapter(FrameworkAdapter):
             return JobResults(
                 id=config.id,
                 benchmark_id=config.benchmark_id,
+                benchmark_index=config.benchmark_index,
                 model_name=config.model.name,
                 results=metrics,
                 overall_score=overall_score,
@@ -218,6 +209,7 @@ class GarakAdapter(FrameworkAdapter):
                     "framework_version": self._get_garak_version(),
                     "eval_threshold": eval_threshold,
                     "timed_out": result.timed_out,
+                    "execution_mode": execution_mode,
                     "overall": overall_summary,
                 },
                 oci_artifact=oci_artifact,
@@ -231,6 +223,289 @@ class GarakAdapter(FrameworkAdapter):
                 error_details={"exception_type": type(e).__name__},
             ))
             raise
+
+    # ------------------------------------------------------------------
+    # Execution mode helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_execution_mode(benchmark_config: dict) -> str:
+        """Resolve execution mode from benchmark_config or env var.
+
+        Priority: benchmark_config > env var > default ("simple").
+        """
+        mode = (
+            benchmark_config.get("execution_mode")
+            or os.getenv("EVALHUB_EXECUTION_MODE", EXECUTION_MODE_SIMPLE)
+        )
+        mode = mode.strip().lower()
+        if mode not in (EXECUTION_MODE_SIMPLE, EXECUTION_MODE_KFP):
+            logger.warning("Unknown execution_mode '%s', falling back to simple", mode)
+            mode = EXECUTION_MODE_SIMPLE
+        return mode
+
+    # ------------------------------------------------------------------
+    # Simple (subprocess) execution
+    # ------------------------------------------------------------------
+
+    def _run_simple(
+        self,
+        config: JobSpec,
+        callbacks: JobCallbacks,
+        garak_config_dict: dict,
+        scan_dir: Path,
+        timeout: int,
+    ) -> GarakScanResult:
+        """Run garak as a local subprocess."""
+        log_file = scan_dir / "scan.log"
+        report_prefix = scan_dir / "scan"
+
+        config_file = scan_dir / "config.json"
+        with open(config_file, "w") as f:
+            json.dump(garak_config_dict, f, indent=1)
+
+        callbacks.report_status(JobStatusUpdate(
+            status=JobStatus.RUNNING,
+            phase=JobPhase.RUNNING_EVALUATION,
+            progress=0.1,
+            message=MessageInfo(
+                message=f"Running Garak scan for {config.benchmark_id}",
+                message_code="running_scan",
+            ),
+            current_step="Executing probes",
+        ))
+
+        result = run_garak_scan(
+            config_file=config_file,
+            timeout_seconds=timeout,
+            log_file=log_file,
+            report_prefix=report_prefix,
+        )
+
+        # AVID conversion
+        if result.success:
+            callbacks.report_status(JobStatusUpdate(
+                status=JobStatus.RUNNING,
+                phase=JobPhase.POST_PROCESSING,
+                progress=0.7,
+                message=MessageInfo(
+                    message="Converting results to AVID format",
+                    message_code="post_processing",
+                ),
+            ))
+            convert_to_avid_report(result.report_jsonl)
+
+        return result
+
+    # ------------------------------------------------------------------
+    # KFP execution
+    # ------------------------------------------------------------------
+
+    def _run_via_kfp(
+        self,
+        config: JobSpec,
+        callbacks: JobCallbacks,
+        garak_config_dict: dict,
+        timeout: int,
+    ) -> tuple[GarakScanResult, Path]:
+        """Submit a KFP pipeline, poll until done, download results from S3.
+
+        The KFP component uploads scan output to S3 under
+        ``{DEFAULT_S3_PREFIX}/{job_id}/``. After the run completes, this
+        method downloads those files to a local scan_dir for parsing.
+
+        Both sides get S3 credentials from the same Data Connection secret:
+        - KFP pod: injected via ``kubernetes.use_secret_as_env``
+        - Adapter pod: mounted via ``envFrom`` by the eval-hub service
+
+        Returns:
+            Tuple of (GarakScanResult, local scan_dir with downloaded results).
+        """
+        from .kfp_pipeline import (
+            KFPConfig, DEFAULT_S3_PREFIX, evalhub_garak_pipeline, _resolve_base_image,
+        )
+
+        benchmark_config = config.benchmark_config or {}
+        kfp_config = KFPConfig.from_env_and_config(benchmark_config)
+
+        s3_prefix = f"{DEFAULT_S3_PREFIX}/{config.id}"
+        scan_dir = get_scan_base_dir() / config.id
+        scan_dir.mkdir(parents=True, exist_ok=True)
+
+        config_json = json.dumps(garak_config_dict)
+
+        callbacks.report_status(JobStatusUpdate(
+            status=JobStatus.RUNNING,
+            phase=JobPhase.RUNNING_EVALUATION,
+            progress=0.1,
+            message=MessageInfo(
+                message=f"Submitting KFP pipeline for {config.benchmark_id}",
+                message_code="kfp_submitting",
+            ),
+            current_step="Submitting to Kubeflow Pipelines",
+        ))
+
+        kfp_client = self._create_kfp_client(kfp_config)
+
+        base_image = _resolve_base_image(kfp_config)
+        logger.info("Using base image for KFP: %s", base_image)
+
+        run = kfp_client.create_run_from_pipeline_func(
+            evalhub_garak_pipeline,
+            arguments={
+                "config_json": config_json,
+                "s3_prefix": s3_prefix,
+                "timeout_seconds": timeout,
+                "s3_secret_name": kfp_config.s3_secret_name,
+            },
+            run_name=f"evalhub-garak-{config.id}",
+            namespace=kfp_config.namespace,
+            experiment_name=kfp_config.experiment_name,
+        )
+
+        kfp_run_id = run.run_id
+        logger.info("Submitted KFP run %s", kfp_run_id)
+
+        final_state = self._poll_kfp_run(
+            kfp_client, kfp_run_id, callbacks, kfp_config.poll_interval_seconds,
+        )
+
+        success = final_state == "SUCCEEDED"
+
+        if success:
+            callbacks.report_status(JobStatusUpdate(
+                status=JobStatus.RUNNING,
+                phase=JobPhase.POST_PROCESSING,
+                progress=0.7,
+                message=MessageInfo(
+                    message="Downloading scan results from S3",
+                    message_code="downloading_results",
+                ),
+            ))
+            s3_bucket = kfp_config.s3_bucket or os.getenv("AWS_S3_BUCKET", "")
+            self._download_results_from_s3(s3_bucket, s3_prefix, scan_dir)
+
+        report_prefix = scan_dir / "scan"
+
+        return GarakScanResult(
+            returncode=0 if success else 1,
+            stdout="",
+            stderr="" if success else f"KFP run ended with state: {final_state}",
+            report_prefix=report_prefix,
+            timed_out=False,
+        ), scan_dir
+
+    @staticmethod
+    def _create_kfp_client(kfp_config: "KFPConfig"):
+        """Create a KFP Client from KFPConfig."""
+        from kfp import Client
+
+        ssl_ca_cert = kfp_config.ssl_ca_cert or None
+        token = kfp_config.auth_token or None
+
+        # If no explicit token, try to get one from the cluster service account
+        if not token:
+            sa_token_path = Path("/var/run/secrets/kubernetes.io/serviceaccount/token")
+            if sa_token_path.exists():
+                token = sa_token_path.read_text().strip()
+                logger.debug("Using service account token for KFP auth")
+
+        return Client(
+            host=kfp_config.endpoint,
+            existing_token=token,
+            verify_ssl=kfp_config.verify_ssl,
+            ssl_ca_cert=ssl_ca_cert,
+        )
+
+    @staticmethod
+    def _poll_kfp_run(
+        kfp_client,
+        run_id: str,
+        callbacks: JobCallbacks,
+        poll_interval: int,
+    ) -> str:
+        """Poll a KFP run until it reaches a terminal state.
+
+        Relays progress updates to the eval-hub sidecar via callbacks.
+
+        Returns:
+            Final run state string (e.g. "SUCCEEDED", "FAILED").
+        """
+        terminal_states = {"SUCCEEDED", "FAILED", "SKIPPED", "CANCELED", "CANCELING"}
+
+        while True:
+            run = kfp_client.get_run(run_id)
+            state = run.state or "UNKNOWN"
+            logger.info("KFP run %s state: %s", run_id, state)
+
+            if state in terminal_states:
+                return state
+
+            callbacks.report_status(JobStatusUpdate(
+                status=JobStatus.RUNNING,
+                phase=JobPhase.RUNNING_EVALUATION,
+                progress=0.3,
+                message=MessageInfo(
+                    message=f"KFP pipeline running (state: {state})",
+                    message_code="kfp_running",
+                ),
+                current_step=f"KFP state: {state}",
+            ))
+
+            time.sleep(poll_interval)
+
+    @staticmethod
+    def _create_s3_client():
+        """Create a boto3 S3 client from Data Connection environment variables.
+
+        Expects standard Data Connection env vars (``AWS_ACCESS_KEY_ID``,
+        ``AWS_SECRET_ACCESS_KEY``, ``AWS_S3_ENDPOINT``, etc.) injected from
+        the same secret that the KFP component uses.
+        """
+        import boto3
+        from botocore.config import Config as BotoConfig
+
+        s3_endpoint = os.getenv("AWS_S3_ENDPOINT", "")
+        client_kwargs: dict = {
+            "aws_access_key_id": os.getenv("AWS_ACCESS_KEY_ID"),
+            "aws_secret_access_key": os.getenv("AWS_SECRET_ACCESS_KEY"),
+            "region_name": os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
+        }
+        if s3_endpoint:
+            client_kwargs["endpoint_url"] = s3_endpoint
+            client_kwargs["config"] = BotoConfig(s3={"addressing_style": "path"})
+
+        return boto3.client("s3", **client_kwargs)
+
+    @staticmethod
+    def _download_results_from_s3(bucket: str, prefix: str, local_dir: Path) -> None:
+        """Download all scan result files from S3 to a local directory.
+
+        Uses pagination to handle prefixes with many objects.
+        """
+        if not bucket:
+            logger.warning("No S3 bucket configured; skipping result download")
+            return
+
+        s3 = GarakAdapter._create_s3_client()
+
+        paginator = s3.get_paginator("list_objects_v2")
+        downloaded = 0
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                relative = key[len(prefix):].lstrip("/")
+                if not relative:
+                    continue
+                local_path = local_dir / relative
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+                s3.download_file(bucket, key, str(local_path))
+                downloaded += 1
+
+        logger.info(
+            "Downloaded %d files from s3://%s/%s to %s",
+            downloaded, bucket, prefix, local_dir,
+        )
 
     def _resolve_profile(self, benchmark_id: str) -> dict:
         """Resolve a benchmark_id to a GarakScanConfig profile dict.
