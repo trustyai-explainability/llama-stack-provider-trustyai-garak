@@ -10,6 +10,8 @@ from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from llama_stack_provider_trustyai_garak.core.config_resolution import (
     build_effective_garak_config,
     resolve_scan_profile,
@@ -589,3 +591,91 @@ class TestPollKFPRun:
             _FakeClient(), "run-456", _Callbacks(), poll_interval=0,
         )
         assert state == "FAILED"
+
+    @pytest.mark.parametrize("terminal_state", ["SKIPPED", "CANCELED", "CANCELING"])
+    def test_returns_immediately_on_other_terminal_states(self, monkeypatch, terminal_state):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+
+        call_count = {"n": 0}
+
+        class _FakeClient:
+            def get_run(self, run_id):
+                call_count["n"] += 1
+                return SimpleNamespace(state=terminal_state)
+
+        class _Callbacks:
+            statuses = []
+            def report_status(self, update):
+                self.statuses.append(update)
+
+        monkeypatch.setattr("time.sleep", lambda _: None)
+
+        callbacks = _Callbacks()
+        state = module.GarakAdapter._poll_kfp_run(
+            _FakeClient(), "run-789", callbacks, poll_interval=0,
+        )
+        assert state == terminal_state
+        assert call_count["n"] == 1
+
+    def test_times_out_when_deadline_exceeded(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+
+        clock = {"now": 0.0}
+        monkeypatch.setattr("time.monotonic", lambda: clock["now"])
+        monkeypatch.setattr("time.sleep", lambda _: None)
+
+        class _FakeClient:
+            def get_run(self, run_id):
+                clock["now"] += 50
+                return SimpleNamespace(state="RUNNING")
+
+        class _Callbacks:
+            def report_status(self, update):
+                pass
+
+        state = module.GarakAdapter._poll_kfp_run(
+            _FakeClient(), "run-timeout", _Callbacks(), poll_interval=0, timeout=100,
+        )
+        assert state == "TIMED_OUT"
+
+
+class TestResolveExecutionModeNonString:
+    """Test that non-string execution_mode values are handled safely."""
+
+    def test_bool_execution_mode_falls_back_to_simple(self, monkeypatch):
+        monkeypatch.delenv("EVALHUB_EXECUTION_MODE", raising=False)
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        assert module.GarakAdapter._resolve_execution_mode({"execution_mode": True}) == "simple"
+
+    def test_int_execution_mode_falls_back_to_simple(self, monkeypatch):
+        monkeypatch.delenv("EVALHUB_EXECUTION_MODE", raising=False)
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        assert module.GarakAdapter._resolve_execution_mode({"execution_mode": 42}) == "simple"
+
+
+class TestKFPMissingS3Secret:
+    """Test that missing s3_secret_name is caught early."""
+
+    def test_run_via_kfp_raises_without_s3_secret(self, monkeypatch, tmp_path):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+        monkeypatch.setenv("EVALHUB_KFP_ENDPOINT", "https://kfp.example.com")
+        monkeypatch.setenv("EVALHUB_KFP_NAMESPACE", "test-ns")
+        monkeypatch.delenv("EVALHUB_KFP_S3_SECRET_NAME", raising=False)
+
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+
+        job = SimpleNamespace(
+            id="kfp-no-secret",
+            benchmark_id="trustyai_garak::quick",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
+            benchmark_config={"execution_mode": "kfp"},
+            exports=None,
+        )
+
+        with pytest.raises(ValueError, match="S3 data-connection secret name is required"):
+            adapter.run_benchmark_job(job, _Callbacks())

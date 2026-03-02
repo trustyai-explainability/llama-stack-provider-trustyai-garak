@@ -238,7 +238,7 @@ class GarakAdapter(FrameworkAdapter):
             benchmark_config.get("execution_mode")
             or os.getenv("EVALHUB_EXECUTION_MODE", EXECUTION_MODE_SIMPLE)
         )
-        mode = mode.strip().lower()
+        mode = str(mode).strip().lower()
         if mode not in (EXECUTION_MODE_SIMPLE, EXECUTION_MODE_KFP):
             logger.warning("Unknown execution_mode '%s', falling back to simple", mode)
             mode = EXECUTION_MODE_SIMPLE
@@ -328,6 +328,13 @@ class GarakAdapter(FrameworkAdapter):
         benchmark_config = config.benchmark_config or {}
         kfp_config = KFPConfig.from_env_and_config(benchmark_config)
 
+        if not kfp_config.s3_secret_name:
+            raise ValueError(
+                "S3 data-connection secret name is required for KFP mode. "
+                "Set EVALHUB_KFP_S3_SECRET_NAME or provide "
+                "kfp_config.s3_secret_name in benchmark_config."
+            )
+
         s3_prefix = f"{DEFAULT_S3_PREFIX}/{config.id}"
         scan_dir = get_scan_base_dir() / config.id
         scan_dir.mkdir(parents=True, exist_ok=True)
@@ -366,10 +373,13 @@ class GarakAdapter(FrameworkAdapter):
         kfp_run_id = run.run_id
         logger.info("Submitted KFP run %s", kfp_run_id)
 
+        poll_timeout = int(timeout * 2) if timeout > 0 else 0
         final_state = self._poll_kfp_run(
             kfp_client, kfp_run_id, callbacks, kfp_config.poll_interval_seconds,
+            timeout=poll_timeout,
         )
 
+        timed_out = final_state == "TIMED_OUT"
         success = final_state == "SUCCEEDED"
 
         if success:
@@ -392,7 +402,7 @@ class GarakAdapter(FrameworkAdapter):
             stdout="",
             stderr="" if success else f"KFP run ended with state: {final_state}",
             report_prefix=report_prefix,
-            timed_out=False,
+            timed_out=timed_out,
         ), scan_dir
 
     @staticmethod
@@ -423,15 +433,20 @@ class GarakAdapter(FrameworkAdapter):
         run_id: str,
         callbacks: JobCallbacks,
         poll_interval: int,
+        timeout: int = 0,
     ) -> str:
-        """Poll a KFP run until it reaches a terminal state.
+        """Poll a KFP run until it reaches a terminal state or times out.
 
         Relays progress updates to the eval-hub sidecar via callbacks.
 
+        Args:
+            timeout: Maximum wall-clock seconds to wait. 0 means no limit.
+
         Returns:
-            Final run state string (e.g. "SUCCEEDED", "FAILED").
+            Final run state string (e.g. "SUCCEEDED", "FAILED", "TIMED_OUT").
         """
         terminal_states = {"SUCCEEDED", "FAILED", "SKIPPED", "CANCELED", "CANCELING"}
+        deadline = (time.monotonic() + timeout) if timeout > 0 else None
 
         while True:
             run = kfp_client.get_run(run_id)
@@ -440,6 +455,13 @@ class GarakAdapter(FrameworkAdapter):
 
             if state in terminal_states:
                 return state
+
+            if deadline and time.monotonic() >= deadline:
+                logger.error(
+                    "KFP run %s timed out after %ss (last state: %s)",
+                    run_id, timeout, state,
+                )
+                return "TIMED_OUT"
 
             callbacks.report_status(JobStatusUpdate(
                 status=JobStatus.RUNNING,
