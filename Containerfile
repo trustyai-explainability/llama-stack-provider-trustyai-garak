@@ -26,21 +26,14 @@ RUN --mount=type=cache,target=/var/cache/dnf \
 # Copy from official uv image (minimal security surface - single static binary)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Copy dependency specification and create minimal src structure
+# Copy all source code and install everything
 COPY pyproject.toml ./
-RUN mkdir -p src/llama_stack_provider_trustyai_garak && \
-    touch src/llama_stack_provider_trustyai_garak/__init__.py
+COPY src src
 
-# Create virtual environment using uv (much faster than python -m venv)
-RUN uv venv /opt/venv
-
-ENV PATH="/opt/venv/bin:$PATH" \
-    VIRTUAL_ENV="/opt/venv"
-
-# Install all dependencies from pyproject.toml (installs package too but we'll reinstall in runtime)
-# This layer is cached and won't be invalidated by real source code changes
+# Install package and all dependencies to the UBI9 Python venv at /opt/app-root
+# This venv is automatically created and activated by the base image
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install .[inline]
+    uv pip install --python=/opt/app-root/bin/python .[inline]
 
 
 # ============================================================================
@@ -53,32 +46,22 @@ WORKDIR /opt/app-root
 # Switch to root to copy files and set permissions
 USER root
 
-# Copy virtual environment with all dependencies from builder
-COPY --from=builder /opt/venv /opt/venv
+# Copy the entire /opt/app-root venv from builder (includes all packages)
+# The UBI9 Python image auto-creates and activates a venv at this location
+COPY --from=builder /opt/app-root /opt/app-root
 
-# Copy source code and pyproject.toml (this layer changes frequently but is small and fast to rebuild)
-COPY src src
-COPY pyproject.toml ./
-
-# Set environment to use the virtual environment
-ENV PATH="/opt/venv/bin:$PATH" \
-    VIRTUAL_ENV="/opt/venv" \
-    PYTHONUNBUFFERED=1
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
 
 # Set XDG environment variables to use /tmp (always writable) for garak to write to
 ENV XDG_CACHE_HOME=/tmp/.cache \
     XDG_DATA_HOME=/tmp/.local/share \
     XDG_CONFIG_HOME=/tmp/.config
 
-# Install the package without dependencies and set permissions
-# setuptools is already in venv from builder stage (from build-system.requires in pyproject.toml)
-# Combine operations to reduce layers and remove uv after use
-COPY --from=builder /usr/local/bin/uv /usr/local/bin/uv
-RUN uv pip install --no-deps . && \
-    rm /usr/local/bin/uv && \
-    mkdir -p ${XDG_CACHE_HOME} ${XDG_DATA_HOME} ${XDG_CONFIG_HOME} && \
-    chown -R 1001:0 /opt/app-root /opt/venv && \
-    chmod -R g=u /opt/app-root /opt/venv && \
+# Create XDG directories and set permissions
+RUN mkdir -p ${XDG_CACHE_HOME} ${XDG_DATA_HOME} ${XDG_CONFIG_HOME} && \
+    chown -R 1001:0 /opt/app-root && \
+    chmod -R g=u /opt/app-root && \
     chmod -R 1777 ${XDG_CACHE_HOME} ${XDG_DATA_HOME} ${XDG_CONFIG_HOME} /tmp/.local
 
 # Switch back to non-root user (UBI9 uses 1001)
@@ -93,5 +76,4 @@ LABEL org.opencontainers.image.title="TrustyAI Garak Provider for Llama Stack" \
 
 # Default CMD for eval-hub (runs as K8s Job)
 # Note: KFP components override this via @dsl.component, so this doesn't affect KFP usage
-# Use absolute path to venv Python to ensure the correct Python is used
-CMD ["/opt/venv/bin/python", "-m", "llama_stack_provider_trustyai_garak.evalhub"]
+CMD ["python", "-m", "llama_stack_provider_trustyai_garak.evalhub"]
