@@ -16,6 +16,7 @@ USER root
 
 # Install build-time dependencies required for Rust-based Python packages
 # These tools (cargo, rust, git) are excluded from the final runtime image
+# --disablerepo flags prevent 403 errors from RHEL subscription repos
 RUN --mount=type=cache,target=/var/cache/dnf \
     dnf install -y --setopt install_weak_deps=0 --nodocs \
     --disablerepo=rhel-9-for-aarch64-appstream-rpms \
@@ -44,15 +45,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # Remove build artifacts, caches, and source files to reduce image size
 # Package is already installed in venv's site-packages
-RUN rm -rf /opt/app-root/src/.cache \
-           /opt/app-root/src/.local \
-           /opt/app-root/src/llama_stack_provider_trustyai_garak \
-           /opt/app-root/src/llama_stack_provider_trustyai_garak.egg-info \
+RUN rm -rf /opt/app-root/src \
            /opt/app-root/pyproject.toml && \
     find /opt/app-root -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && \
     find /opt/app-root -type f -name '*.pyc' -delete 2>/dev/null || true
-
-
 
 # ============================================================================
 # Stage 2: Runtime
