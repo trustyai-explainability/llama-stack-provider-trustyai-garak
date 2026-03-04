@@ -1,6 +1,6 @@
 [project]
 name = "llama-stack-provider-trustyai-garak"
-version = "0.2.0"
+dynamic = ["version"]
 description = "Out-Of-Tree Llama Stack provider for Garak Red-teaming"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -27,11 +27,20 @@ homepage = "https://github.com/trustyai-explainability/llama-stack-provider-trus
 repository = "https://github.com/trustyai-explainability/llama-stack-provider-trustyai-garak"
 
 [build-system]
-requires = ["setuptools>=80.9.0"]
+requires = ["setuptools>=80.9.0", "setuptools-scm[simple]>=9.2"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools_scm]
+# Automatically derive version from git tags
+# Supports the midstream pattern: X.Y.Z+rhaiv.N
+version_file = "src/llama_stack_provider_trustyai_garak/_version.py"
+# Preserve local version from tags (e.g., +rhaiv.N)
+local_scheme = "no-local-version"
+# Don't modify version - use tag as-is
+version_scheme = "no-guess-dev"
 
 [project.optional-dependencies]
 inline = [

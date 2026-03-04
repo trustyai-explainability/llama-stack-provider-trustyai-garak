@@ -30,22 +30,27 @@ RUN --mount=type=cache,target=/var/cache/dnf \
 # Use uv for fast dependency installation (10-100x faster than pip)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Copy source code
+# Copy source code AND .git directory for setuptools-scm version detection
+# .git is only needed in builder stage and will NOT be in final image
 COPY pyproject.toml ./
 COPY src src
+COPY .git .git
 
 # Install to UBI9's native venv at /opt/app-root (auto-created by base image)
 # This ensures proper Python path resolution and follows Red Hat's standard pattern
+# setuptools-scm will automatically detect version from .git directory
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --python=/opt/app-root/bin/python .[inline]
 
-# Remove build artifacts, caches, and source files to reduce image size
+# Remove build artifacts, caches, source files, and .git directory to reduce image size
 # Package is already installed in venv's site-packages
+# .git directory is REMOVED here - it was only needed for version detection
 RUN rm -rf /opt/app-root/src/.cache \
            /opt/app-root/src/.local \
            /opt/app-root/src/llama_stack_provider_trustyai_garak \
            /opt/app-root/src/llama_stack_provider_trustyai_garak.egg-info \
-           /opt/app-root/pyproject.toml && \
+           /opt/app-root/pyproject.toml \
+           /opt/app-root/.git && \
     find /opt/app-root -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && \
     find /opt/app-root -type f -name '*.pyc' -delete 2>/dev/null || true
 
@@ -55,6 +60,10 @@ RUN rm -rf /opt/app-root/src/.cache \
 # Stage 2: Runtime
 # ============================================================================
 FROM registry.access.redhat.com/ubi9/python-312-minimal:latest AS runtime
+
+# Optional build arg for version label - can be provided or auto-detected
+# If not provided, can be queried from installed package at runtime
+ARG VERSION=""
 
 WORKDIR /opt/app-root
 USER root
@@ -86,11 +95,13 @@ RUN mkdir -p ${XDG_CACHE_HOME} ${XDG_DATA_HOME} ${XDG_CONFIG_HOME} && \
 USER 1001
 
 # Image metadata
+# VERSION can be optionally passed as build arg for the label
+# If not provided, version is still available in the installed package
 LABEL org.opencontainers.image.title="TrustyAI Garak Provider for Llama Stack" \
       org.opencontainers.image.description="Out-of-tree Llama Stack provider for Garak red-teaming with EvalHub integration" \
       org.opencontainers.image.source="https://github.com/trustyai-explainability/llama-stack-provider-trustyai-garak" \
       org.opencontainers.image.vendor="TrustyAI" \
-      org.opencontainers.image.version="0.2.0"
+      org.opencontainers.image.version="${VERSION}"
 
 # Default entrypoint for EvalHub K8s Job execution
 CMD ["python", "-m", "llama_stack_provider_trustyai_garak.evalhub"]
