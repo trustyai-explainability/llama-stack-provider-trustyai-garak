@@ -199,6 +199,50 @@ Remote mode stores prefixed keys in metadata (for example `{job_id}_scan.report.
 - Total remote mode needs full stack resources (KFP, LlamaStackDistribution, RBAC, secrets, and Postgres manifests).
 - See `lsd_remote/` for full reference manifests.
 
+## Versioning
+
+This project follows the **RHEL AI midstream versioning pattern** for releases:
+
+```
+$version+rhaiv.$build[.$accelerator]
+```
+
+### Version Format
+
+- **Base version**: Semantic version (e.g., `0.2.0`)
+- **Midstream marker**: `+rhaiv` (Red Hat AI version)
+- **Build number**: `.N` (increments for midstream releases)
+- **Accelerator** (optional): `.cuda`, `.rocm`, etc; not applicable for this project
+
+### Examples
+
+| Version | Description |
+|---------|-------------|
+| `0.2.0+rhaiv.1` | First RHEL AI midstream release of 0.2.0 |
+| `0.2.0+rhaiv.2` | Second RHEL AI midstream release (e.g., security fix) |
+| `0.3.0+rhaiv.1` | New upstream 0.3.0, build counter resets to 1 |
+| `0.2.0+rhaiv.1.cuda` | CUDA-accelerated variant |
+
+### Installing Specific Versions
+
+```bash
+# Install latest version
+pip install llama-stack-provider-trustyai-garak
+
+# Install specific midstream version
+pip install llama-stack-provider-trustyai-garak==0.2.0+rhaiv.1
+
+# Check installed version
+python -c "import llama_stack_provider_trustyai_garak; print(llama_stack_provider_trustyai_garak.__version__)"
+```
+
+### Version Progression Rules
+
+1. **Tags are immutable**: Never delete, move, or replace existing tags
+2. **Build counter increments**: Fix releases increment the build number (e.g., `+rhaiv.1` → `+rhaiv.2`)
+3. **Counter resets on upstream bump**: New upstream version resets build to 1 (e.g., `0.2.0+rhaiv.5` → `0.3.0+rhaiv.1`)
+4. **PEP 440 compliant**: Versions sort correctly using Python's version comparison
+
 ## Support & Documentation
 
 - 📚 **Tutorial**: https://trustyai.org/docs/main/red-teaming-introduction

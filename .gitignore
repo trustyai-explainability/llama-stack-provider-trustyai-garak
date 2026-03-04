@@ -1,5 +1,6 @@
 src/llama_stack_provider_trustyai_garak.egg-info/*
 src/llama_stack_provider_trustyai_garak/__pycache__/
+src/llama_stack_provider_trustyai_garak/_version.py
 _scan_files/
 .idea
 .mypy_cache/
@@ -14,3 +15,7 @@ _providers.d/
 # Hermeto outputs (generated during testing)
 hermeto-output*/
 hermeto*.env
+
+# AI
+.claude
+.cursor
