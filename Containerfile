@@ -77,10 +77,10 @@ ENV XDG_CACHE_HOME=/tmp/.cache \
     XDG_CONFIG_HOME=/tmp/.config
 
 # Set up directories and permissions for OpenShift compatibility
-# - Creates XDG directories
+# - Creates XDG directories and /tmp/.local explicitly
 # - Sets ownership to user 1001 with group 0 (root group)
 # - Allows group write access (OpenShift uses arbitrary UIDs in root group)
-RUN mkdir -p ${XDG_CACHE_HOME} ${XDG_DATA_HOME} ${XDG_CONFIG_HOME} && \
+RUN mkdir -p ${XDG_CACHE_HOME} ${XDG_DATA_HOME} ${XDG_CONFIG_HOME} /tmp/.local && \
     chown -R 1001:0 /opt/app-root && \
     chmod -R g=u /opt/app-root && \
     chmod -R 1777 ${XDG_CACHE_HOME} ${XDG_DATA_HOME} ${XDG_CONFIG_HOME} /tmp/.local
