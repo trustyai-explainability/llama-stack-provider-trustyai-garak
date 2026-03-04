@@ -27,8 +27,11 @@ RUN --mount=type=cache,target=/var/cache/dnf \
     git && \
     dnf clean all
 
-# Use uv for fast dependency installation (10-100x faster than pip)
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Install uv for fast dependency installation (10-100x faster than pip)
+# Using pip install instead of COPY --from for Konflux hermetic build compatibility
+# This avoids external registry dependencies (ghcr.io) while maintaining performance
+RUN --mount=type=cache,target=/root/.cache/pip \
+    /opt/app-root/bin/python -m pip install --no-warn-script-location uv
 
 # Copy source code
 COPY pyproject.toml ./
@@ -37,7 +40,7 @@ COPY src src
 # Install to UBI9's native venv at /opt/app-root (auto-created by base image)
 # This ensures proper Python path resolution and follows Red Hat's standard pattern
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --python=/opt/app-root/bin/python .[inline]
+    /opt/app-root/bin/uv pip install --python=/opt/app-root/bin/python .[inline]
 
 # Remove build artifacts, caches, and source files to reduce image size
 # Package is already installed in venv's site-packages
