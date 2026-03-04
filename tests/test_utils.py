@@ -735,13 +735,14 @@ class TestIntentsAggregation:
             test_content = f.read()
 
         from llama_stack_provider_trustyai_garak.result_utils import (
-            parse_jsonl, vega_data, high_level_stats,
+            parse_jsonl, vega_data, high_level_stats, earlystop_summary_data,
             parse_generations_from_report_content, calculate_intents_aggregates,
         )
 
         raw_report = parse_jsonl(test_content)
         art_data = vega_data(raw_report)
-        art_stats = high_level_stats(art_data)
+        earlystop = earlystop_summary_data(raw_report)
+        art_stats = high_level_stats(art_data, earlystop_data=earlystop)
         art_dict = {s["label"]: s["value"] for s in art_stats}
 
         _, _, raw_entries_by_probe = parse_generations_from_report_content(test_content, 0.5)
@@ -749,8 +750,11 @@ class TestIntentsAggregation:
         intents_metrics = calculate_intents_aggregates(all_raw)
 
         assert intents_metrics["total_attacks"] == art_dict["Total attacks"]
-        assert intents_metrics["successful_attacks"] == art_dict["Successful attacks"]
-        assert intents_metrics["safe_prompts"] == art_dict["Safe prompts"]
+        # Compare stub-level jailbroken counts (new high_level_stats uses
+        # "Jailbroken questions" instead of generation-level "Successful attacks")
+        unsafe_prompts = intents_metrics["total_prompts"] - intents_metrics["safe_prompts"]
+        assert unsafe_prompts == art_dict["Jailbroken questions"]
+        assert intents_metrics["safe_prompts"] == art_dict["Safe questions"]
         expected_rate = art_dict["Attack success rate"].replace("%", "")
         assert format(intents_metrics["attack_success_rate"], '.0f') == expected_rate
 
