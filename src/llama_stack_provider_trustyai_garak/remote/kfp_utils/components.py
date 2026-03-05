@@ -513,6 +513,20 @@ def parse_results(
     with open(scan_result_file, 'w') as f:
         json.dump(scan_result, f)
     
+    ## upload intents html if needed
+    if art_intents:
+        intents_html_file = scan_dir / f"{job_id}_scan.intents.html"
+        intents_html_content = result_utils.generate_art_report(report_content)
+        with open(intents_html_file, 'w') as f:
+            f.write(intents_html_content)
+        with open(intents_html_file, 'rb') as f:
+            uploaded_file = client.files.create(
+                file=f,
+                purpose='assistants'
+            )
+            file_id_mapping[uploaded_file.filename] = uploaded_file.id
+        logger.info(f"Intents HTML uploaded: {intents_html_file} (ID: {uploaded_file.id})")
+    
     with open(scan_result_file, 'rb') as result_file:
         uploaded_file = client.files.create(
             file=result_file,
@@ -567,12 +581,16 @@ def parse_results(
     # native probe scans use garak's own HTML report uploaded during the scan step
     html_content = None
     if art_intents:
-        logger.info("Generating ART HTML report for garak scan (intents)")
-        html_content = result_utils.generate_art_report(report_content)
+        html_report_id = file_id_mapping.get(f"{job_id}_scan.intents.html")
+        if html_report_id:
+            logger.info(f"Fetching HTML report for intents scan (ID: {html_report_id})")
+            html_content = _content_to_str(client.files.content(html_report_id))
+        else:
+            logger.warning("No HTML report ID found in file mapping")
     else:
         html_report_id = file_id_mapping.get(f"{job_id}_scan.report.html")
         if html_report_id:
-            logger.info(f"Generating HTML report for garak scan")
+            logger.info(f"Fetching HTML report for garak scan (ID: {html_report_id})")
             html_content = _content_to_str(client.files.content(html_report_id))
         else:
             logger.warning("No HTML report ID found in file mapping")
