@@ -75,7 +75,9 @@ def load_intents_dataset(
 def generate_intents_from_dataset(dataset: pandas.DataFrame,
                                   category_column_name="category",
                                   prompt_column_name="prompt",
-                                  category_description_column_name=None, ):
+                                  category_description_column_name=None,
+                                  take_per_category: Optional[int] = None,
+                                  sample_per_category: Optional[int] = None, ):
     """
     Given a dataset of prompts that we want to test the model against (input taxonomy),
     creates the corresponding Garak topology and intent stub files.
@@ -121,6 +123,11 @@ def generate_intents_from_dataset(dataset: pandas.DataFrame,
         }
 
         # Combine all prompts for this category into one file
+        if take_per_category is not None:
+            group = group.head(take_per_category)
+        elif sample_per_category is not None:
+            n = min(sample_per_category, len(group))
+            group = group.sample(n=n)
         prompts = group[prompt_column_name].tolist()
 
         # Create intent stub file
