@@ -830,7 +830,13 @@ def probe_details_data(attacks_by_intent_data: List[Dict[str, Any]],
             complied = g["complied"]
             jailbroken_stubs = len(g["stubs_complied"])
             bs = baseline_stubs_per_intent.get(intent, 0)
-            asr = round(complied / total * 100, 1) if total > 0 else 0.0
+
+            if is_baseline:
+                # Baseline ASR: what fraction of stubs did the model answer unsafely?
+                asr = round(complied / total * 100, 1) if total > 0 else 0.0
+            else:
+                # Non-baseline ASR: what fraction of baseline stubs did this probe jailbreak?
+                asr = round(jailbroken_stubs / bs * 100, 1) if bs > 0 else 0.0
 
             table.append({
                 "intent": intent,
@@ -961,27 +967,26 @@ def intent_stats(attacks_by_intent_data: List[Dict[str, Any]],
     return result
 
 
-def normalize_for_funnel_chart(attacks_by_intent_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def normalize_for_funnel_chart(attacks_by_intent_data: List[Dict[str, Any]],
+                               probe_order: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     """Normalize attack data so the funnel chart enforces stage constraints.
 
     The EarlyStop pipeline sends only baseline-refused stubs (or their intents)
-    to subsequent attack probes.  SPO and other probes may generate *new*
-    prompts for those intents, inflating the stub count beyond the number of
-    baseline-refused stubs.  They may also include intents that baseline never
-    evaluated (all skipped / status != 2).
+    to subsequent attack probes in order.  Each probe only receives stubs from
+    intents that ALL previous probes failed to crack.
 
     This function:
     1. Keeps baseline rows unchanged.
-    2. For every non-baseline probe, computes a per-intent outcome
-       (``complied`` if *any* attempt for that intent complied, ``refused``
-       otherwise).
-    3. Emits one synthetic row per *baseline-refused stub* (not per
-       SPO-generated stub), carrying the per-intent outcome.  Stubs whose
-       intent was never refused by baseline are dropped.
+    2. For every non-baseline probe (in pipeline order), computes a per-intent
+       outcome (``complied`` if *any* attempt for that intent complied,
+       ``refused`` otherwise).
+    3. Cascades: each probe only receives stubs from intents still refused
+       after all previous probes.  Once a probe cracks an intent, those stubs
+       exit the funnel and don't appear in later stages.
 
     The result is suitable for the "Model Behavior By Probe" Vega
     chart where the funnel property must hold:
-    ``count(non-baseline stubs) <= count(baseline refused stubs)``.
+    ``count(probe[n] stubs) <= count(probe[n-1] refused stubs)``.
     """
     # --- 1. Identify baseline-refused stubs per intent ----------------------
     baseline_refused: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
@@ -992,36 +997,70 @@ def normalize_for_funnel_chart(attacks_by_intent_data: List[Dict[str, Any]]) -> 
             if row["outcome"] == "refused":
                 baseline_refused[row["intent"]].append(row)
 
-    # --- 2. Per-intent max outcome for non-baseline probes ------------------
-    # {(probe_classname, intent): "complied" | "refused"}
-    non_baseline_outcomes: Dict[tuple, str] = {}
+    # --- 2. Per-intent outcome for each non-baseline probe ------------------
+    # {probe_classname: {intent: "complied" | "refused"}}
+    probe_intent_outcomes: Dict[str, Dict[str, str]] = defaultdict(dict)
     # Keep one template row per (probe, intent) to copy display fields from
     non_baseline_templates: Dict[tuple, Dict[str, Any]] = {}
     for row in attacks_by_intent_data:
         if row["probe_classname"] == "base.IntentProbe":
             continue
-        key = (row["probe_classname"], row["intent"])
-        if key not in non_baseline_outcomes:
-            non_baseline_outcomes[key] = row["outcome"]
-            non_baseline_templates[key] = row
+        probe = row["probe_classname"]
+        intent = row["intent"]
+        if intent not in probe_intent_outcomes[probe]:
+            probe_intent_outcomes[probe][intent] = row["outcome"]
+            non_baseline_templates[(probe, intent)] = row
         elif row["outcome"] == "complied":
-            non_baseline_outcomes[key] = "complied"
+            probe_intent_outcomes[probe][intent] = "complied"
 
-    # --- 3. Build normalised result -----------------------------------------
+    # --- 3. Cascade through probes in order ---------------------------------
     result = list(baseline_rows)
 
-    for (probe_cls, intent), outcome in non_baseline_outcomes.items():
-        if intent not in baseline_refused:
-            continue  # intent was never refused at baseline — skip
-        template = non_baseline_templates[(probe_cls, intent)]
-        for ref_row in baseline_refused[intent]:
-            result.append({
-                **template,
-                "stub": ref_row["stub"],  # original baseline stub
-                "intent": intent,
-                "intent_name": ref_row.get("intent_name", template.get("intent_name", intent)),
-                "outcome": outcome,
-            })
+    # Determine probe order: use provided order, else order of appearance
+    if probe_order:
+        ordered_probes = [p for p in probe_order
+                          if p != "base.IntentProbe" and p in probe_intent_outcomes]
+    else:
+        seen = []
+        for row in attacks_by_intent_data:
+            p = row["probe_classname"]
+            if p != "base.IntentProbe" and p not in seen:
+                seen.append(p)
+        ordered_probes = [p for p in seen if p in probe_intent_outcomes]
+
+    # Track which intents still have refused stubs flowing through the funnel
+    remaining_stubs = dict(baseline_refused)  # intent -> [stub_rows]
+
+    for probe_cls in ordered_probes:
+        new_remaining: Dict[str, List[Dict[str, Any]]] = {}
+
+        for intent, stub_rows in remaining_stubs.items():
+            outcome = probe_intent_outcomes[probe_cls].get(intent, "refused")
+            template = non_baseline_templates.get((probe_cls, intent))
+
+            for ref_row in stub_rows:
+                if template:
+                    result.append({
+                        **template,
+                        "stub": ref_row["stub"],
+                        "intent": intent,
+                        "intent_name": ref_row.get("intent_name",
+                                                   template.get("intent_name", intent)),
+                        "outcome": outcome,
+                    })
+                else:
+                    result.append({
+                        **ref_row,
+                        "probe_classname": probe_cls,
+                        "probe_name": PROBE_DISPLAY_NAMES.get(probe_cls, probe_cls),
+                        "outcome": "refused",
+                    })
+
+            if outcome == "refused":
+                new_remaining[intent] = stub_rows
+            # If complied, stubs exit the funnel (intent cracked at this stage)
+
+        remaining_stubs = new_remaining
 
     return result
 
@@ -1122,7 +1161,7 @@ def derive_template_vars(raw_report: List[Dict[str, Any]],
     attacks_by_intent_data = vega_data(raw_report, intent_names=intent_names, probe_names=probe_names)
     # Normalized view for the funnel chart: non-baseline probe counts are
     # collapsed to baseline-refused-stub level so the funnel property holds.
-    chart_attacks_data = normalize_for_funnel_chart(attacks_by_intent_data)
+    chart_attacks_data = normalize_for_funnel_chart(attacks_by_intent_data, probe_order=probes)
     earlystop_data = earlystop_summary_data(raw_report, intent_names=intent_names)
     high_level_stats_data = high_level_stats(attacks_by_intent_data, earlystop_data=earlystop_data)
     stats = intent_stats(attacks_by_intent_data, earlystop_data=earlystop_data)
