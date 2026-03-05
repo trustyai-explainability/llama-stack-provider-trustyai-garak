@@ -1,7 +1,7 @@
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
   "title": {
-    "text": "Model Behavior By Attack Strategy",
+    "text": "Model Behavior By Probe",
     "dy": -20
   },
   "width": "container",
@@ -16,7 +16,7 @@
           "aggregate": [
             {
               "op": "count",
-              "as": "scenario_count"
+              "as": "intent_count"
             }
           ],
           "groupby": [
@@ -31,7 +31,7 @@
           "aggregate": [
             {
               "op": "count",
-              "as": "unique_scenarios"
+              "as": "unique_intents"
             }
           ],
           "groupby": [
@@ -57,11 +57,11 @@
             "field": "run-iter",
             "op": "min"
           },
-          "title": "Attack Strategy",
+          "title": "Probe",
           "legend": null
         },
         "y": {
-          "field": "unique_scenarios",
+          "field": "unique_intents",
           "scale": {
             "type": "point"
           },
@@ -124,7 +124,7 @@
       "encoding": {
         "x": {
           "field": "probe_name",
-          "title": "Attack Strategy",
+          "title": "Probe",
           "axis": {
             "labelAngle": 45,
             "labelAlign": "left"
@@ -136,7 +136,7 @@
         },
         "y": {
           "aggregate": "count",
-          "title": "Unique Scenarios"
+          "title": "Unique Intents"
         },
         "stroke": {
           "field": "outcome",
@@ -179,7 +179,7 @@
         "tooltip": [
           {
             "field": "probe_name",
-            "title": "Attack Strategy"
+            "title": "Probe"
           },
           {
             "field": "baseline_stubs",
@@ -188,7 +188,7 @@
           },
           {
             "field": "intent_name",
-            "title": "Scenario"
+            "title": "Intent"
           },
           {
             "field": "stub",

@@ -6,10 +6,9 @@ Pure functions that work with string content - used by both inline and remote im
 import json
 import re
 import logging
-from functools import reduce
 from collections import defaultdict
 from typing import List, Dict, Any, Optional, Tuple
-from jinja2 import Environment, PackageLoader, select_autoescape
+from jinja2 import Environment, PackageLoader
 import importlib.resources
 
 logger = logging.getLogger(__name__)
@@ -42,8 +41,8 @@ def parse_generations_from_report_content(
         - raw_entries_by_probe: Dict mapping probe_name → list of full attempt entry dicts
     """
     generations = []
-    score_rows_by_probe = {}
-    raw_entries_by_probe = {}
+    score_rows_by_probe = defaultdict(list)
+    raw_entries_by_probe = defaultdict(list)
 
     for line in report_content.split("\n"):
         if not line.strip():
@@ -82,14 +81,7 @@ def parse_generations_from_report_content(
                 }
                 generations.append(generation)
 
-                # Collect score row for this attempt
-                if probe_name not in score_rows_by_probe:
-                    score_rows_by_probe[probe_name] = []
                 score_rows_by_probe[probe_name].append(detector_results)
-
-                # Collect raw entry for intents-style aggregation
-                if probe_name not in raw_entries_by_probe:
-                    raw_entries_by_probe[probe_name] = []
                 raw_entries_by_probe[probe_name].append(entry)
 
         except json.JSONDecodeError as e:
@@ -104,28 +96,16 @@ def parse_generations_from_report_content(
 
 def parse_digest_from_report_content(report_content: str) -> Dict[str, Any]:
     """Parse digest entry from report.jsonl content.
-    
+
     Args:
         report_content: String content of report.jsonl file
-        
+
     Returns:
         Dict with digest data including group and probe summaries, or empty dict if not found
     """
-    for line in report_content.split("\n"):
-        if not line.strip():
-            continue
-
-        try:
-            entry = json.loads(line)
-
-            if entry.get("entry_type") == "digest":
-                return entry
-
-        except json.JSONDecodeError:
-            continue
-        except Exception:
-            continue
-
+    for entry in parse_jsonl(report_content):
+        if entry.get("entry_type") == "digest":
+            return entry
     return {}
 
 
@@ -304,14 +284,15 @@ def calculate_intents_aggregates(
                     successful_attacks += 1
                     break
 
-    all_prompts = set(e.get("stub", "") for e in enriched)
+    by_stub: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for e in enriched:
+        by_stub[e.get("stub", "")].append(e)
+    all_prompts = set(by_stub.keys())
     total_prompts = len(all_prompts) if all_prompts != {""} else 0
-    unsafe_prompts = 0
-    for prompt in all_prompts:
-        for attempt in (e for e in enriched if e.get("stub") == prompt):
-            if attempt["outcome"] == "complied":
-                unsafe_prompts += 1
-                break
+    unsafe_prompts = sum(
+        1 for stub in all_prompts
+        if any(e["outcome"] == "complied" for e in by_stub[stub])
+    )
     safe_prompts = total_prompts - unsafe_prompts
     attack_success_rate = round(unsafe_prompts / total_prompts * 100, 2) if total_prompts > 0 else 0
 
@@ -591,7 +572,7 @@ def earlystop_summary_data(raw_report: List[Dict[str, Any]],
     result for each baseline stub across ALL probes (baseline + all attack methods).
 
     Returns a list with one entry per baseline stub, containing:
-    - intent: The intent/scenario ID
+    - intent: The intent ID
     - intent_name: Human-readable intent name
     - stub_content: The original baseline stub text
     - outcome: "complied" if jailbroken by any probe, "refused" if all probes failed
@@ -635,7 +616,27 @@ def earlystop_summary_data(raw_report: List[Dict[str, Any]],
     return result
 
 
-def heatmap_data(attacks_by_scenario_data: List[Dict[str, Any]],
+def _count_outcomes(
+        rows: List[Dict[str, Any]],
+        key_fn,
+) -> Dict[tuple, Dict[str, int]]:
+    """Group rows by key_fn and count total/complied outcomes.
+
+    Returns {key: {"total": int, "complied": int}} for each unique key.
+    Rows where key_fn returns None are skipped.
+    """
+    groups: Dict[tuple, Dict[str, int]] = defaultdict(lambda: {"total": 0, "complied": 0})
+    for row in rows:
+        key = key_fn(row)
+        if key is None:
+            continue
+        groups[key]["total"] += 1
+        if row["outcome"] == "complied":
+            groups[key]["complied"] += 1
+    return groups
+
+
+def heatmap_data(attacks_by_intent_data: List[Dict[str, Any]],
                  probe_names: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
     """Aggregate attacks data into heatmap cells (probe_classname x intent).
 
@@ -648,17 +649,14 @@ def heatmap_data(attacks_by_scenario_data: List[Dict[str, Any]],
     all_probes = dict(probe_names) if probe_names else {}
     all_intents = {}  # intent -> intent_name
     # Also pick up any probes/intents that appear in the data
-    for row in attacks_by_scenario_data:
+    for row in attacks_by_intent_data:
         all_probes.setdefault(row["probe_classname"], row.get("probe_name", row["probe_classname"]))
         all_intents[row["intent"]] = row.get("intent_name", row["intent"])
 
-    groups = defaultdict(lambda: {"total": 0, "complied": 0})
-
-    for row in attacks_by_scenario_data:
-        key = (row["probe_classname"], row["intent"])
-        groups[key]["total"] += 1
-        if row["outcome"] == "complied":
-            groups[key]["complied"] += 1
+    groups = _count_outcomes(
+        attacks_by_intent_data,
+        lambda r: (r["probe_classname"], r["intent"]),
+    )
 
     # Build complete grid: every probe x intent combination
     result = []
@@ -681,12 +679,17 @@ def heatmap_data(attacks_by_scenario_data: List[Dict[str, Any]],
     return result
 
 
-def strategy_heatmap_records(probe_data: List[Dict[str, Any]],
-                             intent_names: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
-    """Build heatmap records for a single probe: DAN variant × scenario.
+def _probe_variant_grid(
+        probe_data: List[Dict[str, Any]],
+        intent_names: Optional[Dict[str, str]] = None,
+        sort_intents: bool = False,
+        row_builder=None,
+) -> List[Dict[str, Any]]:
+    """Shared implementation for variant × intent grids.
 
-    Groups by (dan_variant, intent) and computes attempt-based success_rate.
-    Returns a complete grid including -1 for missing combinations.
+    Collects all (dan_variant, intent) combinations from *probe_data*,
+    groups them with ``_count_outcomes``, and builds result rows via
+    *row_builder(variant, intent_name, total, complied)*.
     """
     names = intent_names or {}
 
@@ -703,97 +706,76 @@ def strategy_heatmap_records(probe_data: List[Dict[str, Any]],
     if not all_variants:
         return []
 
-    groups: Dict[tuple, Dict[str, int]] = defaultdict(lambda: {"total": 0, "complied": 0})
-    for row in probe_data:
-        variant = row.get("dan_variant")
-        if not variant:
-            continue
-        key = (variant, row["intent"])
-        groups[key]["total"] += 1
-        if row["outcome"] == "complied":
-            groups[key]["complied"] += 1
+    groups = _count_outcomes(
+        probe_data,
+        lambda r: (r.get("dan_variant"), r["intent"]) if r.get("dan_variant") else None,
+    )
 
+    intents = sorted(all_intents.items()) if sort_intents else all_intents.items()
     result = []
     for variant in sorted(all_variants.keys()):
-        for intent, intent_name in all_intents.items():
+        for intent, intent_name in intents:
             counts = groups.get((variant, intent), {"total": 0, "complied": 0})
-            total = counts["total"]
-            complied = counts["complied"]
-            rate = complied / total if total > 0 else -1
-            result.append({
-                "attack": variant,
-                "scenario": intent_name,
-                "total_questions": total,
-                "complied": complied,
-                "success_rate": round(rate, 4),
-            })
+            result.append(row_builder(variant, intent_name, counts["total"], counts["complied"]))
 
     return result
 
 
-def strategy_variant_table(probe_data: List[Dict[str, Any]],
-                           variant_label: str = "Variant") -> List[Dict[str, Any]]:
-    """Build a variant × scenario breakdown table for probes without heatmap.
+def probe_heatmap_records(probe_data: List[Dict[str, Any]],
+                          intent_names: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
+    """Build heatmap records for a single probe: DAN variant × intent.
 
-    Similar to strategy_heatmap_records() but intended for tabular rendering
+    Groups by (dan_variant, intent) and computes attempt-based success_rate.
+    Returns a complete grid including -1 for missing combinations.
+    """
+    return _probe_variant_grid(
+        probe_data,
+        intent_names=intent_names,
+        row_builder=lambda variant, intent_name, total, complied: {
+            "attack": variant,
+            "intent": intent_name,
+            "total_questions": total,
+            "complied": complied,
+            "success_rate": round(complied / total, 4) if total > 0 else -1,
+        },
+    )
+
+
+def probe_variant_table(probe_data: List[Dict[str, Any]],
+                        variant_label: str = "Variant") -> List[Dict[str, Any]]:
+    """Build a variant × intent breakdown table for probes without heatmap.
+
+    Similar to probe_heatmap_records() but intended for tabular rendering
     (e.g. translation probes with a small number of language variants).
 
     Returns a list of dicts with:
-    - variant, variant_label, scenario, total_questions, complied, success_rate
+    - variant, variant_label, intent, total_questions, complied, success_rate
     """
-    all_variants: Dict[str, str] = {}
-    all_intents: Dict[str, str] = {}
-
-    for row in probe_data:
-        variant = row.get("dan_variant")
-        if variant:
-            all_variants[variant] = variant
-        intent = row["intent"]
-        all_intents[intent] = row.get("intent_name", intent)
-
-    if not all_variants:
-        return []
-
-    groups: Dict[tuple, Dict[str, int]] = defaultdict(lambda: {"total": 0, "complied": 0})
-    for row in probe_data:
-        variant = row.get("dan_variant")
-        if not variant:
-            continue
-        key = (variant, row["intent"])
-        groups[key]["total"] += 1
-        if row["outcome"] == "complied":
-            groups[key]["complied"] += 1
-
-    result = []
-    for variant in sorted(all_variants.keys()):
-        for intent, intent_name in sorted(all_intents.items()):
-            counts = groups.get((variant, intent), {"total": 0, "complied": 0})
-            total = counts["total"]
-            complied = counts["complied"]
-            rate = round(complied / total * 100, 1) if total > 0 else 0.0
-            result.append({
-                "variant": variant,
-                "variant_label": variant_label,
-                "scenario": intent_name,
-                "total_questions": total,
-                "complied": complied,
-                "success_rate": rate,
-            })
-
-    return result
+    return _probe_variant_grid(
+        probe_data,
+        sort_intents=True,
+        row_builder=lambda variant, intent_name, total, complied: {
+            "variant": variant,
+            "variant_label": variant_label,
+            "intent": intent_name,
+            "total_questions": total,
+            "complied": complied,
+            "success_rate": round(complied / total * 100, 1) if total > 0 else 0.0,
+        },
+    )
 
 
-def strategy_details_data(attacks_by_scenario_data: List[Dict[str, Any]],
-                          earlystop_data: Optional[List[Dict[str, Any]]] = None,
-                          probe_order: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+def probe_details_data(attacks_by_intent_data: List[Dict[str, Any]],
+                       earlystop_data: Optional[List[Dict[str, Any]]] = None,
+                       probe_order: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     """Compute per-strategy breakdown for the Strategy Details section.
 
     Returns an ordered list of dicts (one per strategy/probe), each with:
     - probe_name: display name
     - is_baseline: True for base.IntentProbe
-    - table: list of per-scenario rows with counts and ASR
-    - heatmap_data: list of DAN variant × scenario records, or None
-    - variant_table: list of variant × scenario rows for tabular display, or None
+    - table: list of per-intent rows with counts and ASR
+    - heatmap_data: list of DAN variant × intent records, or None
+    - variant_table: list of variant × intent rows for tabular display, or None
     - heatmap_id: DOM element ID for Vega chart embedding
     """
     # Determine baseline stubs per intent from earlystop or baseline data
@@ -804,14 +786,14 @@ def strategy_details_data(attacks_by_scenario_data: List[Dict[str, Any]],
     else:
         # Fall back to counting unique baseline stubs
         baseline_stubs: Dict[str, set] = defaultdict(set)
-        for row in attacks_by_scenario_data:
+        for row in attacks_by_intent_data:
             if row.get("probe_classname") == "base.IntentProbe":
                 baseline_stubs[row["intent"]].add(row.get("stub", ""))
         baseline_stubs_per_intent = {k: len(v) for k, v in baseline_stubs.items()}
 
     # Group data by probe_classname
     by_probe: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-    for row in attacks_by_scenario_data:
+    for row in attacks_by_intent_data:
         by_probe[row["probe_classname"]].append(row)
 
     # Determine probe ordering
@@ -869,12 +851,12 @@ def strategy_details_data(attacks_by_scenario_data: List[Dict[str, Any]],
             variant_sources.discard(None)
 
             if "dan_variant" in variant_sources:
-                heatmap = strategy_heatmap_records(probe_rows) or None
+                heatmap = probe_heatmap_records(probe_rows) or None
             elif variant_sources:
                 # Non-DAN variant (e.g. translation_lang) — render as table
                 label_map = {"translation_lang": "Language"}
                 source = next(iter(variant_sources))
-                variant_table = strategy_variant_table(
+                variant_table = probe_variant_table(
                     probe_rows, variant_label=label_map.get(source, "Variant")
                 ) or None
 
@@ -892,9 +874,9 @@ def strategy_details_data(attacks_by_scenario_data: List[Dict[str, Any]],
     return strategies
 
 
-def scenario_stats(attacks_by_scenario_data: List[Dict[str, Any]],
-                   earlystop_data: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
-    """Compute per-scenario (intent) statistics.
+def intent_stats(attacks_by_intent_data: List[Dict[str, Any]],
+                 earlystop_data: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    """Compute per-intent statistics.
 
     Uses EarlyStopHarness summary data (if available) to track full-pipeline outcomes.
     Intent stubs (baseline prompts) are the test questions. For each intent,
@@ -903,10 +885,10 @@ def scenario_stats(attacks_by_scenario_data: List[Dict[str, Any]],
 
     Falls back to baseline-only data if earlystop_data is not provided.
     """
-    # Count total attempts per intent from attacks_by_scenario_data
+    # Count total attempts per intent from attacks_by_intent_data
     total_attempts_per_intent = defaultdict(int)
     intent_names = {}
-    for row in attacks_by_scenario_data:
+    for row in attacks_by_intent_data:
         intent = row["intent"]
         total_attempts_per_intent[intent] += 1
         intent_names[intent] = row.get("intent_name", intent)
@@ -946,7 +928,7 @@ def scenario_stats(attacks_by_scenario_data: List[Dict[str, Any]],
         baseline_stubs_per_intent = defaultdict(set)
         jailbroken_baseline_stubs_per_intent = defaultdict(set)
 
-        for row in attacks_by_scenario_data:
+        for row in attacks_by_intent_data:
             intent = row["intent"]
 
             # Track baseline stubs (unique prompts from base.IntentProbe)
@@ -979,38 +961,103 @@ def scenario_stats(attacks_by_scenario_data: List[Dict[str, Any]],
     return result
 
 
-def high_level_stats(attacks_by_scenario_data,
+def normalize_for_funnel_chart(attacks_by_intent_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Normalize attack data so the funnel chart enforces stage constraints.
+
+    The EarlyStop pipeline sends only baseline-refused stubs (or their intents)
+    to subsequent attack probes.  SPO and other probes may generate *new*
+    prompts for those intents, inflating the stub count beyond the number of
+    baseline-refused stubs.  They may also include intents that baseline never
+    evaluated (all skipped / status != 2).
+
+    This function:
+    1. Keeps baseline rows unchanged.
+    2. For every non-baseline probe, computes a per-intent outcome
+       (``complied`` if *any* attempt for that intent complied, ``refused``
+       otherwise).
+    3. Emits one synthetic row per *baseline-refused stub* (not per
+       SPO-generated stub), carrying the per-intent outcome.  Stubs whose
+       intent was never refused by baseline are dropped.
+
+    The result is suitable for the "Model Behavior By Probe" Vega
+    chart where the funnel property must hold:
+    ``count(non-baseline stubs) <= count(baseline refused stubs)``.
+    """
+    # --- 1. Identify baseline-refused stubs per intent ----------------------
+    baseline_refused: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    baseline_rows = []
+    for row in attacks_by_intent_data:
+        if row["probe_classname"] == "base.IntentProbe":
+            baseline_rows.append(row)
+            if row["outcome"] == "refused":
+                baseline_refused[row["intent"]].append(row)
+
+    # --- 2. Per-intent max outcome for non-baseline probes ------------------
+    # {(probe_classname, intent): "complied" | "refused"}
+    non_baseline_outcomes: Dict[tuple, str] = {}
+    # Keep one template row per (probe, intent) to copy display fields from
+    non_baseline_templates: Dict[tuple, Dict[str, Any]] = {}
+    for row in attacks_by_intent_data:
+        if row["probe_classname"] == "base.IntentProbe":
+            continue
+        key = (row["probe_classname"], row["intent"])
+        if key not in non_baseline_outcomes:
+            non_baseline_outcomes[key] = row["outcome"]
+            non_baseline_templates[key] = row
+        elif row["outcome"] == "complied":
+            non_baseline_outcomes[key] = "complied"
+
+    # --- 3. Build normalised result -----------------------------------------
+    result = list(baseline_rows)
+
+    for (probe_cls, intent), outcome in non_baseline_outcomes.items():
+        if intent not in baseline_refused:
+            continue  # intent was never refused at baseline — skip
+        template = non_baseline_templates[(probe_cls, intent)]
+        for ref_row in baseline_refused[intent]:
+            result.append({
+                **template,
+                "stub": ref_row["stub"],  # original baseline stub
+                "intent": intent,
+                "intent_name": ref_row.get("intent_name", template.get("intent_name", intent)),
+                "outcome": outcome,
+            })
+
+    return result
+
+
+def high_level_stats(attacks_by_intent_data,
                      earlystop_data: Optional[List[Dict[str, Any]]] = None):
     """Compute high-level overview statistics at the intent stub (question) level.
 
     Uses EarlyStopHarness summary data (if available) to track full-pipeline outcomes.
     Intent stub = test question (matching original CLJS 'question' semantics):
-    - Total questions = count of test stubs
-    - Jailbroken questions = count of stubs jailbroken across ALL probes
-    - Safe questions = count of stubs never jailbroken
-    - ASR = percentage of stubs jailbroken across all probes
+    - Total stubs = count of test stubs
+    - Unsafe stubs = count of stubs complied across ALL probes
+    - Safe stubs = count of stubs never complied
+    - ASR = percentage of stubs complied across all probes
 
     Falls back to baseline-only data if earlystop_data is not provided.
     """
-    total_attacks = sum(a["generations"] for a in attacks_by_scenario_data)
+    total_attempts = sum(a["generations"] for a in attacks_by_intent_data)
 
     if earlystop_data:
         # Use EarlyStopHarness summary data for full-pipeline outcomes
-        total_questions = len(earlystop_data)
-        jailbroken_count = sum(1 for entry in earlystop_data if entry["outcome"] == "complied")
-        safe_count = total_questions - jailbroken_count
+        total_stubs = len(earlystop_data)
+        unsafe_count = sum(1 for entry in earlystop_data if entry["outcome"] == "complied")
+        safe_count = total_stubs - unsafe_count
 
         # ASR across all probes: what % of test stubs were jailbroken?
         success_rate = (
-            jailbroken_count / total_questions * 100
-            if total_questions > 0 else 0
+            unsafe_count / total_stubs * 100
+            if total_stubs > 0 else 0
         )
     else:
         # Fallback: use baseline-only data
         baseline_stubs = set()
-        jailbroken_baseline_stubs = set()
+        unsafe_baseline_stubs = set()
 
-        for attempt in attacks_by_scenario_data:
+        for attempt in attacks_by_intent_data:
             # Only count baseline attempts (base.IntentProbe)
             if attempt.get("probe_classname") == "base.IntentProbe":
                 stub = attempt.get("stub", "")
@@ -1018,24 +1065,24 @@ def high_level_stats(attacks_by_scenario_data,
 
                 # If this baseline stub was jailbroken, track it
                 if attempt.get("outcome") == "complied":
-                    jailbroken_baseline_stubs.add(stub)
+                    unsafe_baseline_stubs.add(stub)
 
-        total_questions = len(baseline_stubs)
-        jailbroken_count = len(jailbroken_baseline_stubs)
-        safe_count = total_questions - jailbroken_count
+        total_stubs = len(baseline_stubs)
+        unsafe_count = len(unsafe_baseline_stubs)
+        safe_count = total_stubs - unsafe_count
 
         # ASR at question level: what % of baseline test prompts were jailbroken?
         success_rate = (
-            jailbroken_count / total_questions * 100
-            if total_questions > 0 else 0
+            unsafe_count / total_stubs * 100
+            if total_stubs > 0 else 0
         )
 
     return [
-        {"label": "Total attacks",
-         "value": total_attacks},
-        {"label": "Jailbroken questions",
-         "value": jailbroken_count},
-        {"label": "Safe questions",
+        {"label": "Total attempts",
+         "value": total_attempts},
+        {"label": "Unsafe stubs",
+         "value": unsafe_count},
+        {"label": "Safe stubs",
          "value": safe_count},
         {"label": "Attack success rate",
          "value": format(success_rate, '.0f') + "%"},
@@ -1060,24 +1107,27 @@ def derive_template_vars(raw_report: List[Dict[str, Any]],
 
     resources = importlib.resources.files('llama_stack_provider_trustyai_garak.resources')
 
-    # Load vega_chart_attacks_by_scenario.json from resources folder
-    with resources.joinpath('vega_chart_attacks_by_scenario.json').open('r') as f:
-        vega_chart_attacks_by_scenario = json.load(f)
-        vega_chart_attacks_by_scenario["layer"][0]["encoding"]["x"]["scale"] = {"domain": probe_display}
+    # Load vega_chart_behaviour_by_probe.json from resources folder
+    with resources.joinpath('vega_chart_behaviour_by_probe.json').open('r') as f:
+        vega_chart_behaviour_by_probe = json.load(f)
+        vega_chart_behaviour_by_probe["layer"][0]["encoding"]["x"]["scale"] = {"domain": probe_display}
 
-    with resources.joinpath('vega_chart_strategy_vs_scenario.json').open('r') as f:
-        vega_chart_strategy_vs_scenario = json.load(f)
-        vega_chart_strategy_vs_scenario["encoding"]["x"]["scale"] = {"domain": probe_display}
+    with resources.joinpath('vega_chart_behaviour_by_intent.json').open('r') as f:
+        vega_chart_behaviour_by_intent = json.load(f)
+        vega_chart_behaviour_by_intent["encoding"]["x"]["scale"] = {"domain": probe_display}
 
-    with resources.joinpath('vega_chart_strategy_heatmap.json').open('r') as f:
-        vega_chart_strategy_heatmap = json.load(f)
+    with resources.joinpath('vega_chart_spo_probe_details.json').open('r') as f:
+        vega_chart_spo_probe_details = json.load(f)
 
-    attacks_by_scenario_data = vega_data(raw_report, intent_names=intent_names, probe_names=probe_names)
+    attacks_by_intent_data = vega_data(raw_report, intent_names=intent_names, probe_names=probe_names)
+    # Normalized view for the funnel chart: non-baseline probe counts are
+    # collapsed to baseline-refused-stub level so the funnel property holds.
+    chart_attacks_data = normalize_for_funnel_chart(attacks_by_intent_data)
     earlystop_data = earlystop_summary_data(raw_report, intent_names=intent_names)
-    high_level_stats_data = high_level_stats(attacks_by_scenario_data, earlystop_data=earlystop_data)
-    stats = scenario_stats(attacks_by_scenario_data, earlystop_data=earlystop_data)
-    strategy_details = strategy_details_data(
-        attacks_by_scenario_data,
+    high_level_stats_data = high_level_stats(attacks_by_intent_data, earlystop_data=earlystop_data)
+    stats = intent_stats(attacks_by_intent_data, earlystop_data=earlystop_data)
+    probe_details = probe_details_data(
+        attacks_by_intent_data,
         earlystop_data=earlystop_data,
         probe_order=probes,
     )
@@ -1085,12 +1135,12 @@ def derive_template_vars(raw_report: List[Dict[str, Any]],
     return dict(
         raw_report=raw_report,
         report_name=report_names[0] if report_names else "unknown",
-        vega_chart_attacks_by_scenario=vega_chart_attacks_by_scenario,
-        vega_chart_strategy_vs_scenario=vega_chart_strategy_vs_scenario,
-        vega_chart_strategy_heatmap=vega_chart_strategy_heatmap,
-        attacks_by_scenario_data=attacks_by_scenario_data,
-        strategy_details=strategy_details,
-        scenario_stats=stats,
+        vega_chart_behaviour_by_probe=vega_chart_behaviour_by_probe,
+        vega_chart_behaviour_by_intent=vega_chart_behaviour_by_intent,
+        vega_chart_spo_probe_details=vega_chart_spo_probe_details,
+        chart_attacks_data=chart_attacks_data,
+        probe_details=probe_details,
+        intent_stats=stats,
         high_level_stats=high_level_stats_data
     )
 

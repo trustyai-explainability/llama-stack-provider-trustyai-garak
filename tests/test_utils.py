@@ -310,9 +310,9 @@ class TestResultUtils:
         assert cell_b_i2["probe_name"] == "Probe B"
         assert cell_b_i2["intent_name"] == "Intent Two"
 
-    def test_scenario_stats(self):
-        """Test scenario_stats per-intent breakdown (baseline stub level)"""
-        from llama_stack_provider_trustyai_garak.result_utils import scenario_stats
+    def test_intent_stats(self):
+        """Test intent_stats per-intent breakdown (baseline stub level)"""
+        from llama_stack_provider_trustyai_garak.result_utils import intent_stats
 
         sample = [
             # Intent i1: 2 baseline stubs, 1 jailbroken in baseline
@@ -327,7 +327,7 @@ class TestResultUtils:
              "outcome": "refused", "stub": "stub_d"},
         ]
 
-        result = scenario_stats(sample)
+        result = intent_stats(sample)
 
         assert len(result) == 2
         # Sorted by intent key
@@ -606,9 +606,9 @@ class TestResultUtils:
         result = high_level_stats(sample)
 
         stats = {s["label"]: s["value"] for s in result}
-        assert stats["Total attacks"] == 5  # 1+1+1+2
-        assert stats["Jailbroken questions"] == 1  # Only stub_a was jailbroken in baseline
-        assert stats["Safe questions"] == 2  # stub_b and stub_c were not jailbroken
+        assert stats["Total attempts"] == 5  # 1+1+1+2
+        assert stats["Unsafe stubs"] == 1  # Only stub_a was jailbroken in baseline
+        assert stats["Safe stubs"] == 2  # stub_b and stub_c were not jailbroken
         assert stats["Attack success rate"] == "33%"  # 1/3 baseline stubs jailbroken
 
     def test_vega_data_includes_intent_name(self):
@@ -644,7 +644,7 @@ class TestResultUtils:
                 "status": 2,
                 "probe_classname": "probeA",
                 "intent": "raw_id_123",
-                "notes": {"stub": {"_content": "Human-readable scenario"}},
+                "notes": {"stub": {"_content": "Human-readable intent"}},
                 "detector_results": {"det1": [[0.9]]},
                 "conversations": [{}],
             }
@@ -688,7 +688,7 @@ class TestResultUtils:
                 "status": 2,
                 "probe_classname": "base.IntentProbe",
                 "intent": "S001",
-                "notes": {"stub": {"_content": "some scenario"}},
+                "notes": {"stub": {"_content": "some intent"}},
                 "detector_results": {"det1": [[0.9]]},
                 "conversations": [{}],
             },
@@ -697,7 +697,7 @@ class TestResultUtils:
                 "status": 2,
                 "probe_classname": "spo.SPOIntentBothAugmented",
                 "intent": "S001",
-                "notes": {"stub": {"_content": "some scenario"}},
+                "notes": {"stub": {"_content": "some intent"}},
                 "detector_results": {"det1": [[0.9]]},
                 "conversations": [{}],
             },
@@ -749,12 +749,11 @@ class TestIntentsAggregation:
         all_raw = [e for entries in raw_entries_by_probe.values() for e in entries]
         intents_metrics = calculate_intents_aggregates(all_raw)
 
-        assert intents_metrics["total_attacks"] == art_dict["Total attacks"]
-        # Compare stub-level jailbroken counts (new high_level_stats uses
-        # "Jailbroken questions" instead of generation-level "Successful attacks")
+        assert intents_metrics["total_attacks"] == art_dict["Total attempts"]
+        # Compare stub-level jailbroken counts
         unsafe_prompts = intents_metrics["total_prompts"] - intents_metrics["safe_prompts"]
-        assert unsafe_prompts == art_dict["Jailbroken questions"]
-        assert intents_metrics["safe_prompts"] == art_dict["Safe questions"]
+        assert unsafe_prompts == art_dict["Unsafe stubs"]
+        assert intents_metrics["safe_prompts"] == art_dict["Safe stubs"]
         expected_rate = art_dict["Attack success rate"].replace("%", "")
         assert format(intents_metrics["attack_success_rate"], '.0f') == expected_rate
 

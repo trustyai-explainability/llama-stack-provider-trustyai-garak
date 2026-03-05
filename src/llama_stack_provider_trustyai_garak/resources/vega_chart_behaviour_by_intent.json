@@ -1,10 +1,10 @@
 {
-  "description": "Refined two-bubble-per-cell plot: outcome vs count per strategy/scenario.",
+  "description": "Refined two-bubble-per-cell plot: outcome vs count per intent.",
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
   "width": "container",
   "height": 300,
   "title": {
-    "text": "Model Behavior by Scenario",
+    "text": "Model Behavior by Intent",
     "dy": -20
   },
   "data": {
@@ -68,7 +68,7 @@
           "expr": "bandwidth('x')"
         },
         "labelAngle": 45,
-        "title": "Attack Strategy"
+        "title": "Probe"
       }
     },
     "y": {
@@ -76,7 +76,7 @@
       "type": "ordinal",
       "axis": {
         "grid": false,
-        "title": "Scenario"
+        "title": "Intent"
       }
     },
     "xOffset": {
@@ -115,15 +115,15 @@
     "tooltip": [
       {
         "field": "intent_name",
-        "title": "Scenario"
+        "title": "Intent"
       },
       {
         "field": "stub",
-        "title": "Scenario"
+        "title": "Stub"
       },
       {
         "field": "probe_name",
-        "title": "Attack Strategy"
+        "title": "Probe"
       },
       {
         "field": "outcome",

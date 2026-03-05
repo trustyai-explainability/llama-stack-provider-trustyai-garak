@@ -29,17 +29,17 @@
       "axis": {
         "labelAngle": 45,
         "labelAlign": "left",
-        "title": "DAN Variant"
+        "title": "SPO Variant"
       },
       "scale": {
         "paddingInner": 0.03
       }
     },
     "y": {
-      "field": "scenario",
+      "field": "intent",
       "type": "nominal",
       "axis": {
-        "title": "Scenario",
+        "title": "Intent",
         "labelLimit": 200
       },
       "scale": {
@@ -74,11 +74,11 @@
     "tooltip": [
       {
         "field": "attack",
-        "title": "DAN Variant"
+        "title": "SPO Variant"
       },
       {
-        "field": "scenario",
-        "title": "Scenario"
+        "field": "intent",
+        "title": "Intent"
       },
       {
         "field": "total_questions",
