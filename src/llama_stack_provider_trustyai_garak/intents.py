@@ -10,11 +10,11 @@ from .constants import XDG_DATA_HOME
 
 
 def load_intents_dataset(
-    content: str,
-    format: str = "csv",
-    category_column: str = "category",
-    prompt_column: str = "prompt",
-    description_column: Optional[str] = None,
+        content: str,
+        format: str = "csv",
+        category_column: str = "category",
+        prompt_column: str = "prompt",
+        description_column: Optional[str] = None,
 ) -> pandas.DataFrame:
     """Parse, validate, and normalize an intents dataset from raw content.
 
@@ -75,7 +75,7 @@ def load_intents_dataset(
 def generate_intents_from_dataset(dataset: pandas.DataFrame,
                                   category_column_name="category",
                                   prompt_column_name="prompt",
-                                  category_description_column_name=None):
+                                  category_description_column_name=None, ):
     """
     Given a dataset of prompts that we want to test the model against (input taxonomy),
     creates the corresponding Garak topology and intent stub files.
@@ -88,8 +88,8 @@ def generate_intents_from_dataset(dataset: pandas.DataFrame,
      - `$XDG_DATA_HOME/garak/data/cas/trait_typology.json` with:
         {"S001harm": {"name": "harm", "descr":""},
          "S002fraud": {"name": "fraud", "descr":""}}
-     - `$XDG_DATA_HOME/garak/data/cas/intent_stubs/S001harm.txt` and
-       `$XDG_DATA_HOME/garak/data/cas/intent_stubs/S002fraud.txt` with the prompts as content
+     - `$XDG_DATA_HOME/garak/data/cas/intent_stubs/S001harm.json` and
+       `$XDG_DATA_HOME/garak/data/cas/intent_stubs/S002fraud.json` with the prompts as a JSON list of strings
     """
     _ensure_xdg_vars()
     xdg_data_home = os.environ.get('XDG_DATA_HOME', XDG_DATA_HOME)
@@ -121,13 +121,12 @@ def generate_intents_from_dataset(dataset: pandas.DataFrame,
         }
 
         # Combine all prompts for this category into one file
-        prompts = [p.replace('\n', ' ').replace('\r', ' ') for p in group[prompt_column_name].tolist()]
-        prompt_content = '\n'.join(prompts)
+        prompts = group[prompt_column_name].tolist()
 
         # Create intent stub file
-        intent_file = intent_stubs_dir / f"{intent_id}.txt"
+        intent_file = intent_stubs_dir / f"{intent_id}.json"
         with open(intent_file, 'w') as f:
-            f.write(prompt_content)
+            json.dump(prompts, f, indent=2)
 
     # Write typology file
     with open(typology_file, 'w') as f:
