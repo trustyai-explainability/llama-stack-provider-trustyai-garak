@@ -43,6 +43,7 @@ ENV XDG_CONFIG_HOME=/tmp/.config
 # UBI9 uses 1001
 USER 1001
 
-# Default CMD for eval-hub (runs as K8s Job)
-# Note: KFP components override this via @dsl.component, so this shouldn't affect KFP usage
+# Default CMD for eval-hub (runs as K8s Job, simple mode — garak in same pod)
+# For KFP mode (garak in a separate KFP pod), use:
+#   CMD ["python", "-m", "llama_stack_provider_trustyai_garak.evalhub.kfp_adapter"]
 CMD ["python", "-m", "llama_stack_provider_trustyai_garak.evalhub"]

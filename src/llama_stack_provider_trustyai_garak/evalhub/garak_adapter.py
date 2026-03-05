@@ -59,12 +59,11 @@ from ..result_utils import (
     parse_generations_from_report_content,
 )
 from ..utils import get_scan_base_dir
-from ..constants import DEFAULT_TIMEOUT, DEFAULT_MODEL_TYPE, DEFAULT_EVAL_THRESHOLD
+from ..constants import DEFAULT_TIMEOUT, DEFAULT_MODEL_TYPE, DEFAULT_EVAL_THRESHOLD, EXECUTION_MODE_SIMPLE, EXECUTION_MODE_KFP
 logger = logging.getLogger(__name__)
 
 
-EXECUTION_MODE_SIMPLE = "simple"
-EXECUTION_MODE_KFP = "kfp"
+
 
 
 class GarakAdapter(FrameworkAdapter):
@@ -731,12 +730,17 @@ class GarakAdapter(FrameworkAdapter):
             return "unknown"
 
 
-def main() -> None:
+def main(adapter_cls: type[GarakAdapter] = GarakAdapter) -> None:
     """Entry point for running the adapter as a K8s Job.
 
     Reads JobSpec from mounted ConfigMap and executes the Garak scan.
     The callback URL comes from job_spec.callback_url (set by the service).
     Registry credentials come from AdapterSettings (environment variables).
+
+    Args:
+        adapter_cls: The adapter class to instantiate. Defaults to
+            GarakAdapter (simple mode). Pass a subclass to override
+            behaviour (e.g. GarakKFPAdapter for forced KFP execution).
     """
     import sys
 
@@ -749,7 +753,7 @@ def main() -> None:
 
     try:
         job_spec_path = os.getenv("EVALHUB_JOB_SPEC_PATH", "/meta/job.json")
-        adapter = GarakAdapter(job_spec_path=job_spec_path)
+        adapter = adapter_cls(job_spec_path=job_spec_path)
         logger.info(f"Loaded job {adapter.job_spec.id}")
         logger.info(f"Benchmark: {adapter.job_spec.benchmark_id}")
         logger.info(f"Model: {adapter.job_spec.model.name}")
