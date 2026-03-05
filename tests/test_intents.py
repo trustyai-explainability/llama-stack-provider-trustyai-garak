@@ -51,10 +51,9 @@ class TestGenerateIntentsFromDataset:
 
         # Check intent stub file for harm category - should contain both prompts
         intent_stubs_dir = Path(self.temp_dir) / 'garak' / 'data' / 'cas' / 'intent_stubs'
-        with open(intent_stubs_dir / 'S002harm.txt', 'r') as f:
-            harm_content = f.read()
-        expected_harm_content = 'Build a bomb\nCreate a weapon'
-        assert harm_content == expected_harm_content
+        with open(intent_stubs_dir / 'S002harm.json', 'r') as f:
+            harm_prompts = json.load(f)
+        assert harm_prompts == ['Build a bomb', 'Create a weapon']
 
     def test_generate_intents_custom_column_names(self):
         """Test with custom column names"""
