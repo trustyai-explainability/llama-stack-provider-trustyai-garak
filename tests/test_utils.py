@@ -311,17 +311,17 @@ class TestResultUtils:
         assert cell_b_i2["intent_name"] == "Intent Two"
 
     def test_intent_stats(self):
-        """Test intent_stats per-intent breakdown (baseline stub level)"""
+        """Test intent_stats per-intent breakdown (all probes, stub level)"""
         from llama_stack_provider_trustyai_garak.result_utils import intent_stats
 
         sample = [
-            # Intent i1: 2 baseline stubs, 1 jailbroken in baseline
+            # Intent i1: 2 baseline stubs + 1 SPO stub = 3 unique stubs
             {"probe_classname": "base.IntentProbe", "intent": "i1", "intent_name": "Intent One",
              "outcome": "complied", "stub": "stub_a"},
             {"probe_classname": "base.IntentProbe", "intent": "i1", "intent_name": "Intent One",
              "outcome": "refused", "stub": "stub_b"},
             {"probe_classname": "spo.SPOIntent", "intent": "i1", "intent_name": "Intent One",
-             "outcome": "complied", "stub": "stub_c"},  # Different stub, doesn't count
+             "outcome": "complied", "stub": "stub_c"},
             # Intent i2: 1 baseline stub, 0 jailbroken
             {"probe_classname": "base.IntentProbe", "intent": "i2", "intent_name": "Intent Two",
              "outcome": "refused", "stub": "stub_d"},
@@ -334,9 +334,9 @@ class TestResultUtils:
         assert result[0]["intent"] == "i1"
         assert result[0]["intent_name"] == "Intent One"
         assert result[0]["total_attempts"] == 3
-        assert result[0]["baseline_stubs"] == 2  # 2 baseline stubs
-        assert result[0]["jailbroken"] == 1  # Only stub_a was jailbroken in baseline
-        assert result[0]["attack_success_rate"] == 50.0  # 1/2 = 50%
+        assert result[0]["baseline_stubs"] == 3  # 3 unique stubs across all probes
+        assert result[0]["jailbroken"] == 2  # stub_a (baseline) + stub_c (SPO)
+        assert result[0]["attack_success_rate"] == 66.7  # 2/3
 
         assert result[1]["intent"] == "i2"
         assert result[1]["intent_name"] == "Intent Two"
@@ -587,7 +587,7 @@ class TestResultUtils:
         assert stub_outcomes['stub_b']['max_complied'] is False
 
     def test_high_level_stats(self):
-        """Test high_level_stats uses baseline stub (question) level metrics"""
+        """Test high_level_stats counts unique stubs across all probes"""
         from llama_stack_provider_trustyai_garak.result_utils import high_level_stats
 
         sample = [
@@ -598,7 +598,7 @@ class TestResultUtils:
              "outcome": "refused", "stub": "stub_b", "generations": 1},
             {"probe_classname": "base.IntentProbe", "intent": "i2",
              "outcome": "refused", "stub": "stub_c", "generations": 1},
-            # Attack methods don't count toward baseline jailbreak
+            # SPO adds stub_d which is also jailbroken
             {"probe_classname": "spo.SPOIntent", "intent": "i1",
              "outcome": "complied", "stub": "stub_d", "generations": 2},
         ]
@@ -607,9 +607,9 @@ class TestResultUtils:
 
         stats = {s["label"]: s["value"] for s in result}
         assert stats["Total attempts"] == 5  # 1+1+1+2
-        assert stats["Unsafe stubs"] == 1  # Only stub_a was jailbroken in baseline
-        assert stats["Safe stubs"] == 2  # stub_b and stub_c were not jailbroken
-        assert stats["Attack success rate"] == "33%"  # 1/3 baseline stubs jailbroken
+        assert stats["Unsafe stubs"] == 2  # stub_a + stub_d jailbroken across all probes
+        assert stats["Safe stubs"] == 2  # stub_b and stub_c never jailbroken
+        assert stats["Attack success rate"] == "50%"  # 2/4 unique stubs jailbroken
 
     def test_vega_data_includes_intent_name(self):
         """Test that vega_data output includes intent_name when intent_names map provided"""
@@ -718,7 +718,8 @@ class TestResultUtils:
 
         generations, score_rows_by_probe, raw_entries_by_probe = parse_generations_from_report_content(test_content, eval_threshold=0.5)
         ## we only look at probes and not harnesses
-        assert len(generations) == 73
+        # 73 completed (status=2) + 6 orphan status=1 entries (empty LLM response)
+        assert len(generations) == 79
         assert set(score_rows_by_probe.keys()) == {'base.IntentProbe', 'spo.SPOIntent', 'spo.SPOIntentUserAugmented',
                                                    'spo.SPOIntentSystemAugmented', 'spo.SPOIntentBothAugmented'}
         assert set(raw_entries_by_probe.keys()) == set(score_rows_by_probe.keys())
@@ -735,14 +736,13 @@ class TestIntentsAggregation:
             test_content = f.read()
 
         from llama_stack_provider_trustyai_garak.result_utils import (
-            parse_jsonl, vega_data, high_level_stats, earlystop_summary_data,
+            parse_jsonl, vega_data, high_level_stats,
             parse_generations_from_report_content, calculate_intents_aggregates,
         )
 
         raw_report = parse_jsonl(test_content)
         art_data = vega_data(raw_report)
-        earlystop = earlystop_summary_data(raw_report)
-        art_stats = high_level_stats(art_data, earlystop_data=earlystop)
+        art_stats = high_level_stats(art_data)
         art_dict = {s["label"]: s["value"] for s in art_stats}
 
         _, _, raw_entries_by_probe = parse_generations_from_report_content(test_content, 0.5)

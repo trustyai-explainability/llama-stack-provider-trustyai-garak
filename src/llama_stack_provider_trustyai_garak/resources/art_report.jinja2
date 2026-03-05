@@ -189,7 +189,11 @@
                                     </table>
                                 </div>
                             </div>
-                            {% if probe.heatmap_data %}
+                            {% if probe.tap_chart_data %}
+                                <div class="pf-v6-c-card">
+                                    <div id="{{ probe.heatmap_id }}" class="pf-v6-c-card__body"></div>
+                                </div>
+                            {% elif probe.heatmap_data %}
                                 <div class="pf-v6-c-card">
                                     <div id="{{ probe.heatmap_id }}" class="pf-v6-c-card__body"></div>
                                 </div>
@@ -269,8 +273,18 @@
 
     // Per-probe heatmaps
     const probe_heatmap_spec = {{ vega_chart_spo_probe_details | tojson }};
+    const tap_heatmap_spec = {{ vega_chart_tap_probe_details | tojson }};
     {% for probe in probe_details %}
-        {% if probe.heatmap_data %}
+        {% if probe.tap_chart_data %}
+            (function () {
+                var spec = JSON.parse(JSON.stringify(tap_heatmap_spec));
+                spec.data = {"values": {{ probe.tap_chart_data | tojson }}};
+                vegaEmbed('#{{ probe.heatmap_id }}', spec)
+                    .then(function (result) {
+                    })
+                    .catch(console.error);
+            })();
+        {% elif probe.heatmap_data %}
             (function () {
                 var spec = JSON.parse(JSON.stringify(probe_heatmap_spec));
                 spec.data = {"values": {{ probe.heatmap_data | tojson }}};

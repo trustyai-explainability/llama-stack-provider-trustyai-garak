@@ -1,0 +1,83 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "description": "Heatmap of jailbreak scores by scenario.",
+  "title": {
+    "text": "Jailbreak Score Overview",
+    "dy": -30
+  },
+  "data": {
+    "name": "data"
+  },
+  "width": "container",
+  "height": {
+    "step": 40
+  },
+  "mark": "rect",
+  "encoding": {
+    "x": {
+      "field": "score",
+      "type": "ordinal",
+      "title": "Score",
+      "scale": {
+        "domain": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "paddingInner": 0.03
+      },
+      "axis": {
+        "labelAngle": 0
+      }
+    },
+    "y": {
+      "field": "intent",
+      "type": "nominal",
+      "title": "Intent",
+      "scale": {
+        "paddingInner": 0.03
+      }
+    },
+    "color": {
+      "aggregate": "count",
+      "type": "quantitative",
+      "title": "Count",
+      "legend": {
+        "titleOrient": "bottom"
+      }
+    },
+    "tooltip": [
+      {
+        "field": "intent",
+        "type": "nominal",
+        "title": "Intent"
+      },
+      {
+        "field": "score",
+        "type": "ordinal",
+        "title": "Score"
+      },
+      {
+        "aggregate": "count",
+        "type": "quantitative",
+        "title": "Attempts"
+      }
+    ]
+  },
+  "config": {
+    "axis": {
+      "grid": false
+    },
+    "view": {
+      "stroke": null
+    }
+  }
+}
