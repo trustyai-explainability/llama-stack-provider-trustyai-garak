@@ -12,3 +12,10 @@ DEFAULT_EVAL_THRESHOLD = 0.5
 # evalhub adapter
 EXECUTION_MODE_SIMPLE = "simple"
 EXECUTION_MODE_KFP = "kfp"
+# XDG variables
+XDG_CACHE_HOME = "/tmp/.cache"
+XDG_DATA_HOME = "/tmp/.local/share"
+XDG_CONFIG_HOME = "/tmp/.config"
+
+# SDG variables
+DEFAULT_SDG_FLOW_ID = "major-sage-742"
