@@ -14,6 +14,13 @@ Usage:
 """
 
 from .garak_adapter import GarakAdapter
-from .kfp_adapter import GarakKFPAdapter
+
+
+def __getattr__(name: str):
+    if name == "GarakKFPAdapter":
+        from .kfp_adapter import GarakKFPAdapter
+        return GarakKFPAdapter
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = ["GarakAdapter", "GarakKFPAdapter"]

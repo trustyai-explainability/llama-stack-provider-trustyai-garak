@@ -144,7 +144,7 @@ def test_run_benchmark_job_uses_garak_config_file(monkeypatch, tmp_path):
     monkeypatch.setattr(
         module.GarakAdapter,
         "_parse_results",
-        lambda self, result, eval_threshold: ([], None, 0, {"total_attempts": 0}),
+        lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
     )
 
     class _Callbacks:
@@ -188,7 +188,7 @@ def test_parse_results_uses_overall_without_double_count(monkeypatch, tmp_path):
     monkeypatch.setattr(
         module,
         "parse_generations_from_report_content",
-        lambda _content, _threshold: ([], {"probe.alpha": [{}]}),
+        lambda _content, _threshold: ([], {"probe.alpha": [{}]}, {"probe.alpha": [{}]}),
     )
     monkeypatch.setattr(
         module,
@@ -376,10 +376,12 @@ class TestKFPModeExecution:
         report_prefix = tmp_path / "scan"
         report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
 
-        def _fake_run_via_kfp(self, config, callbacks, garak_config_dict, timeout):
+        def _fake_run_via_kfp(self, config, callbacks, garak_config_dict, timeout, intents_params=None, eval_threshold=0.5):
             captured["called"] = True
             captured["timeout"] = timeout
             captured["config_json"] = garak_config_dict
+            captured["intents_params"] = intents_params
+            captured["eval_threshold"] = eval_threshold
             return module.GarakScanResult(
                 returncode=0, stdout="", stderr="", report_prefix=report_prefix,
             ), tmp_path
@@ -388,7 +390,7 @@ class TestKFPModeExecution:
         monkeypatch.setattr(
             module.GarakAdapter,
             "_parse_results",
-            lambda self, result, eval_threshold: ([], None, 0, {"total_attempts": 0}),
+            lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
         )
 
         class _Callbacks:
@@ -409,6 +411,7 @@ class TestKFPModeExecution:
         result = adapter.run_benchmark_job(job, _Callbacks())
         assert captured["called"] is True
         assert captured["timeout"] == 99
+        assert captured["eval_threshold"] == 0.5
         assert result.evaluation_metadata["execution_mode"] == "kfp"
 
     def test_simple_mode_does_not_call_kfp(self, monkeypatch, tmp_path):
@@ -438,7 +441,7 @@ class TestKFPModeExecution:
         monkeypatch.setattr(
             module.GarakAdapter,
             "_parse_results",
-            lambda self, result, eval_threshold: ([], None, 0, {"total_attempts": 0}),
+            lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
         )
 
         class _Callbacks:
@@ -679,3 +682,496 @@ class TestKFPMissingS3Secret:
 
         with pytest.raises(ValueError, match="S3 data-connection secret name is required"):
             adapter.run_benchmark_job(job, _Callbacks())
+
+
+# ---------------------------------------------------------------------------
+# Intents tests
+# ---------------------------------------------------------------------------
+
+_INTENTS_MODELS_SINGLE = {
+    "intents_models": {
+        "judge": {"url": "http://judge:8000/v1", "name": "judge-model"},
+    }
+}
+
+_INTENTS_MODELS_ALL_ROLES = {
+    "intents_models": {
+        "judge": {"url": "http://judge:8000/v1", "name": "judge-model", "api_key": "jk"},
+        "attacker": {"url": "http://attacker:9000/v1", "name": "atk-model", "api_key": "ak"},
+        "evaluator": {"url": "http://evaluator:9001/v1", "name": "eval-model", "api_key": "ek"},
+        "sdg": {"url": "http://sdg:7000/v1", "name": "sdg-model", "api_key": "sk"},
+    }
+}
+
+
+class TestBuildConfigIntentsOverrides:
+    """Tests for intents-specific config overrides in _build_config_from_spec."""
+
+    def test_intents_profile_returns_art_intents_true(self, monkeypatch, tmp_path):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="intents-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://model:8000", name="my-llm"),
+            benchmark_config={**_INTENTS_MODELS_SINGLE},
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        _, _, intents_params = adapter._build_config_from_spec(job, report_prefix)
+
+        assert intents_params["art_intents"] is True
+        assert intents_params["sdg_flow_id"] == "major-sage-742"
+
+    def test_single_role_fills_all_three(self, monkeypatch, tmp_path):
+        """When only one of judge/attacker/evaluator is provided, all roles use it."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="intents-single-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            benchmark_config={**_INTENTS_MODELS_SINGLE},
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        judge = config_dict["plugins"]["detectors"]["judge"]
+        assert judge["detector_model_name"] == "judge-model"
+        assert judge["detector_model_config"]["uri"] == "http://judge:8000/v1"
+
+        tap_cfg = config_dict["plugins"]["probes"]["tap"]["TAPIntent"]
+        assert tap_cfg["attack_model_name"] == "judge-model"
+        assert tap_cfg["attack_model_config"]["uri"] == "http://judge:8000/v1"
+        assert tap_cfg["evaluator_model_name"] == "judge-model"
+        assert tap_cfg["evaluator_model_config"]["uri"] == "http://judge:8000/v1"
+
+    def test_single_attacker_fills_all_three(self, monkeypatch, tmp_path):
+        """Providing only 'attacker' should populate judge and evaluator too."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="intents-atk-only-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            benchmark_config={
+                "intents_models": {
+                    "attacker": {"url": "http://atk-model:9000/v1", "name": "atk-model"},
+                }
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        judge = config_dict["plugins"]["detectors"]["judge"]
+        assert judge["detector_model_name"] == "atk-model"
+        assert judge["detector_model_config"]["uri"] == "http://atk-model:9000/v1"
+
+        tap_cfg = config_dict["plugins"]["probes"]["tap"]["TAPIntent"]
+        assert tap_cfg["attack_model_name"] == "atk-model"
+        assert tap_cfg["evaluator_model_name"] == "atk-model"
+
+    def test_separate_models_per_role(self, monkeypatch, tmp_path):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="multi-model-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            benchmark_config={**_INTENTS_MODELS_ALL_ROLES},
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, intents_params = adapter._build_config_from_spec(job, report_prefix)
+
+        judge = config_dict["plugins"]["detectors"]["judge"]
+        assert judge["detector_model_name"] == "judge-model"
+        assert judge["detector_model_config"]["uri"] == "http://judge:8000/v1"
+        assert judge["detector_model_config"]["api_key"] == "jk"
+
+        tap_cfg = config_dict["plugins"]["probes"]["tap"]["TAPIntent"]
+        assert tap_cfg["attack_model_name"] == "atk-model"
+        assert tap_cfg["attack_model_config"]["uri"] == "http://attacker:9000/v1"
+        assert tap_cfg["attack_model_config"]["api_key"] == "ak"
+        assert tap_cfg["evaluator_model_name"] == "eval-model"
+        assert tap_cfg["evaluator_model_config"]["uri"] == "http://evaluator:9001/v1"
+        assert tap_cfg["evaluator_model_config"]["api_key"] == "ek"
+
+        assert intents_params["sdg_model"] == "sdg-model"
+        assert intents_params["sdg_api_base"] == "http://sdg:7000/v1"
+        assert intents_params["sdg_api_key"] == "sk"
+
+    def test_no_roles_raises_clear_error(self, monkeypatch, tmp_path):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="no-roles-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://model:8000", name="my-llm"),
+            benchmark_config={},
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        with pytest.raises(ValueError, match="at least one of"):
+            adapter._build_config_from_spec(job, report_prefix)
+
+    def test_two_roles_raises_ambiguous_error(self, monkeypatch, tmp_path):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="two-roles-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://model:8000", name="my-llm"),
+            benchmark_config={
+                "intents_models": {
+                    "judge": {"url": "http://judge:8000/v1", "name": "judge-m"},
+                    "attacker": {"url": "http://atk:9000/v1", "name": "atk-m"},
+                }
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        with pytest.raises(ValueError, match="Ambiguous"):
+            adapter._build_config_from_spec(job, report_prefix)
+
+    def test_missing_name_raises_clear_error(self, monkeypatch, tmp_path):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="no-name-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://model:8000", name="my-llm"),
+            benchmark_config={
+                "intents_models": {"judge": {"url": "http://judge:8000/v1"}},
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        with pytest.raises(ValueError, match="intents_models.judge.name"):
+            adapter._build_config_from_spec(job, report_prefix)
+
+    def test_non_intents_profile_returns_art_intents_false(self, monkeypatch, tmp_path):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="native-job",
+            benchmark_id="trustyai_garak::quick",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://model:8000", name="my-llm"),
+            benchmark_config={},
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        _, _, intents_params = adapter._build_config_from_spec(job, report_prefix)
+
+        assert intents_params["art_intents"] is False
+
+    def test_sdg_params_from_intents_models(self, monkeypatch, tmp_path):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="sdg-intents-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://model:8000", name="my-llm"),
+            benchmark_config={
+                **_INTENTS_MODELS_SINGLE,
+                "intents_models": {
+                    **_INTENTS_MODELS_SINGLE["intents_models"],
+                    "sdg": {"url": "http://sdg:7000/v1", "name": "sdg-model", "api_key": "sdg-key"},
+                },
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        _, _, intents_params = adapter._build_config_from_spec(job, report_prefix)
+
+        assert intents_params["sdg_model"] == "sdg-model"
+        assert intents_params["sdg_api_base"] == "http://sdg:7000/v1"
+        assert intents_params["sdg_api_key"] == "sdg-key"
+
+    def test_sdg_fallback_to_flat_keys(self, monkeypatch, tmp_path):
+        """When intents_models.sdg is absent, fall back to flat sdg_model/sdg_api_base."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="sdg-flat-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://model:8000", name="my-llm"),
+            benchmark_config={
+                **_INTENTS_MODELS_SINGLE,
+                "sdg_model": "legacy-sdg",
+                "sdg_api_base": "http://legacy-sdg:5000",
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        _, _, intents_params = adapter._build_config_from_spec(job, report_prefix)
+
+        assert intents_params["sdg_model"] == "legacy-sdg"
+        assert intents_params["sdg_api_base"] == "http://legacy-sdg:5000"
+
+
+class TestResolveIntentsApiKey:
+    """Tests for _resolve_intents_api_key static method."""
+
+    def test_direct_api_key_takes_priority(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        monkeypatch.setenv("JUDGE_API_KEY", "from-env")
+
+        result = module.GarakAdapter._resolve_intents_api_key(
+            "judge", {"api_key": "direct-key"},
+        )
+        assert result == "direct-key"
+
+    def test_api_key_env_from_config(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        monkeypatch.setenv("MY_CUSTOM_KEY", "custom-val")
+
+        result = module.GarakAdapter._resolve_intents_api_key(
+            "judge", {"api_key_env": "MY_CUSTOM_KEY"},
+        )
+        assert result == "custom-val"
+
+    def test_convention_env_var(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        monkeypatch.setenv("JUDGE_API_KEY", "conv-key")
+
+        result = module.GarakAdapter._resolve_intents_api_key("judge", {})
+        assert result == "conv-key"
+
+    def test_generic_env_fallback(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.setenv("OPENAICOMPATIBLE_API_KEY", "generic-key")
+
+        result = module.GarakAdapter._resolve_intents_api_key("judge", {})
+        assert result == "generic-key"
+
+    def test_returns_dummy_when_nothing_found(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAICOMPATIBLE_API_KEY", raising=False)
+
+        result = module.GarakAdapter._resolve_intents_api_key("judge", {})
+        assert result == "DUMMY"
+
+
+class TestKFPIntentsMode:
+    """Tests for intents mode through run_benchmark_job with KFP."""
+
+    def test_kfp_intents_passes_params_to_pipeline(self, monkeypatch, tmp_path):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        captured: dict[str, object] = {}
+        report_prefix = tmp_path / "scan"
+        report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+
+        def _fake_run_via_kfp(self, config, callbacks, garak_config_dict, timeout, intents_params=None, eval_threshold=0.5):
+            captured["intents_params"] = intents_params
+            captured["eval_threshold"] = eval_threshold
+            return module.GarakScanResult(
+                returncode=0, stdout="", stderr="", report_prefix=report_prefix,
+            ), tmp_path
+
+        monkeypatch.setattr(module.GarakAdapter, "_run_via_kfp", _fake_run_via_kfp)
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_parse_results",
+            lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
+        )
+
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+            def create_oci_artifact(self, _spec):
+                return SimpleNamespace(reference="oci://ref", digest="sha256:test")
+
+        job = SimpleNamespace(
+            id="kfp-intents-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://model:8000", name="my-llm"),
+            benchmark_config={
+                "execution_mode": "kfp",
+                **_INTENTS_MODELS_ALL_ROLES,
+            },
+            exports=None,
+        )
+
+        result = adapter.run_benchmark_job(job, _Callbacks())
+
+        assert captured["intents_params"]["art_intents"] is True
+        assert captured["intents_params"]["sdg_model"] == "sdg-model"
+        assert captured["intents_params"]["sdg_api_key"] == "sk"
+        assert result.evaluation_metadata["art_intents"] is True
+
+    def test_art_html_generated_for_intents(self, monkeypatch, tmp_path):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        report_prefix = tmp_path / "intents-html-job" / "scan"
+        report_prefix.parent.mkdir(parents=True)
+        report_prefix.with_suffix(".report.jsonl").write_text(
+            '{"entry_type":"attempt","status":2}\n',
+            encoding="utf-8",
+        )
+
+        def _fake_run_garak_scan(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
+            report_prefix.with_suffix(".report.jsonl").write_text(
+                '{"entry_type":"attempt","status":2}\n',
+                encoding="utf-8",
+            )
+            return module.GarakScanResult(
+                returncode=0, stdout="", stderr="", report_prefix=report_prefix,
+            )
+
+        monkeypatch.setattr(module, "run_garak_scan", _fake_run_garak_scan)
+        monkeypatch.setattr(module, "convert_to_avid_report", lambda _path: True)
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_parse_results",
+            lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
+        )
+
+        html_generated = {"called": False}
+
+        def _fake_generate_art_report(content, **kwargs):
+            html_generated["called"] = True
+            return "<html><body>ART Report</body></html>"
+
+        monkeypatch.setattr(module, "generate_art_report", _fake_generate_art_report)
+
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+            def create_oci_artifact(self, _spec):
+                return SimpleNamespace(reference="oci://ref", digest="sha256:test")
+
+        job = SimpleNamespace(
+            id="intents-html-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://model:8000", name="my-llm"),
+            benchmark_config={**_INTENTS_MODELS_SINGLE},
+            exports=None,
+        )
+
+        adapter.run_benchmark_job(job, _Callbacks())
+
+        assert html_generated["called"] is True
+        html_path = tmp_path / "intents-html-job" / "scan.intents.html"
+        assert html_path.exists()
+        assert "ART Report" in html_path.read_text()
+
+
+class TestParseResultsIntentsMode:
+    """Tests for _parse_results with art_intents=True."""
+
+    def test_parse_results_with_art_intents(self, monkeypatch, tmp_path):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+
+        report_prefix = tmp_path / "scan"
+        report_prefix.with_suffix(".report.jsonl").write_text(
+            '{"entry_type":"attempt","status":2}\n',
+            encoding="utf-8",
+        )
+        report_prefix.with_suffix(".avid.jsonl").write_text("", encoding="utf-8")
+
+        monkeypatch.setattr(
+            module,
+            "parse_generations_from_report_content",
+            lambda _content, _threshold: (
+                [],
+                {"spo.SPOIntent": [{}]},
+                {"spo.SPOIntent": [{"detector_results": {}, "notes": {}}]},
+            ),
+        )
+        monkeypatch.setattr(
+            module, "parse_aggregated_from_avid_content", lambda _content: {},
+        )
+        monkeypatch.setattr(
+            module, "parse_digest_from_report_content", lambda _content: {},
+        )
+        monkeypatch.setattr(
+            module,
+            "combine_parsed_results",
+            lambda *_args, **kwargs: {
+                "scores": {
+                    "spo.SPOIntent": {
+                        "aggregated_results": {
+                            "total_attacks": 20,
+                            "successful_attacks": 5,
+                            "total_prompts": 10,
+                            "safe_prompts": 7,
+                            "attack_success_rate": 30.0,
+                            "metadata": {},
+                        }
+                    },
+                    "_overall": {
+                        "aggregated_results": {
+                            "total_attacks": 20,
+                            "attack_success_rate": 30.0,
+                        }
+                    },
+                }
+            },
+        )
+
+        result = module.GarakScanResult(
+            returncode=0, stdout="", stderr="", report_prefix=report_prefix,
+        )
+        metrics, overall_score, num_examples, _ = adapter._parse_results(
+            result, 0.5, art_intents=True,
+        )
+
+        assert len(metrics) == 1
+        assert metrics[0].metric_name == "spo.SPOIntent_asr"
+        assert metrics[0].metric_value == 30.0
+        assert metrics[0].metadata["total_prompts"] == 10
+        assert metrics[0].metadata["safe_prompts"] == 7
+        assert overall_score == 30.0

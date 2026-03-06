@@ -118,6 +118,7 @@ def generate_sdg_dataset(
     model: str,
     api_base: str,
     flow_id: str = DEFAULT_SDG_FLOW_ID,
+    api_key: str = "dummy",
 ) -> pandas.DataFrame:
     """Generate a red-team prompt dataset using sdg_hub.
 
@@ -129,7 +130,7 @@ def generate_sdg_dataset(
         model: LLM model identifier (e.g. ``"hosted_vllm/gemma-2-9b-it-abliterated"``).
         api_base: Model serving endpoint URL.
         flow_id: sdg_hub flow identifier.
-
+        api_key: API key for the model.
     Returns:
         DataFrame with columns ``(category, prompt, description)``.
     """
@@ -147,7 +148,7 @@ def generate_sdg_dataset(
     FlowRegistry.discover_flows()
     flow_path = FlowRegistry.get_flow_path(flow_id)
     flow = Flow.from_yaml(flow_path)
-    flow.set_model_config(model=model, api_base=api_base)
+    flow.set_model_config(model=model, api_base=api_base, api_key=api_key)
 
     result = flow.generate(df)
 

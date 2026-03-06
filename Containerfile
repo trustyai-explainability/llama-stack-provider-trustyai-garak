@@ -15,24 +15,27 @@ COPY . .
 # Build argument to specify architecture
 ARG TARGETARCH=x86_64
 
-# Install dependencies
-RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "x86_64" ]; then \
-        echo "Installing x86_64 dependencies ..."; \
-        pip install --no-cache-dir -r requirements-x86_64.txt; \
-    elif [ "$TARGETARCH" = "arm64" ] || [ "$TARGETARCH" = "aarch64" ]; then \
-        echo "Installing ARM64 dependencies ..."; \
-        pip install --no-cache-dir -r requirements-aarch64.txt; \
-    else \
-        echo "ERROR: Unsupported architecture: $TARGETARCH"; \
-        exit 1; \
-    fi
+# # Install dependencies
+# RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "x86_64" ]; then \
+#         echo "Installing x86_64 dependencies ..."; \
+#         pip install --no-cache-dir -r requirements-x86_64.txt; \
+#     elif [ "$TARGETARCH" = "arm64" ] || [ "$TARGETARCH" = "aarch64" ]; then \
+#         echo "Installing ARM64 dependencies ..."; \
+#         pip install --no-cache-dir -r requirements-aarch64.txt; \
+#     else \
+#         echo "ERROR: Unsupported architecture: $TARGETARCH"; \
+#         exit 1; \
+#     fi
+
+# Install cpu torch to reduce image size
+RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 # Install eval-hub SDK (separate step — git source can't be hash-pinned in requirements)
 RUN pip install --no-cache-dir "eval-hub-sdk[adapter] @ git+https://github.com/eval-hub/eval-hub-sdk.git@main"
 
-# Install the package itself (--no-deps since dependencies already installed)
+# Install the package itself
 # Use [inline] to get garak dependency
-RUN pip install --no-cache-dir --no-deps -e ".[inline]"
+RUN pip install --no-cache-dir ".[inline]"
 
 # Set XDG environment variables to use /tmp (always writable) for garak to write to
 ENV XDG_CACHE_HOME=/tmp/.cache
