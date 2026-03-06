@@ -1366,7 +1366,7 @@ class TestEvalhubValidateComponent:
             return client
 
         monkeypatch.setattr(
-            "llama_stack_provider_trustyai_garak.s3_utils.create_s3_client",
+            "llama_stack_provider_trustyai_garak.evalhub.s3_utils.create_s3_client",
             _fake_create_s3_client,
         )
 
@@ -1386,7 +1386,7 @@ class TestEvalhubValidateComponent:
             return SimpleNamespace(head_bucket=lambda Bucket: None)
 
         monkeypatch.setattr(
-            "llama_stack_provider_trustyai_garak.s3_utils.create_s3_client",
+            "llama_stack_provider_trustyai_garak.evalhub.s3_utils.create_s3_client",
             _fake_create_s3_client,
         )
 
@@ -1404,7 +1404,7 @@ class TestEvalhubValidateComponent:
             return SimpleNamespace(head_bucket=lambda Bucket: None)
 
         monkeypatch.setattr(
-            "llama_stack_provider_trustyai_garak.s3_utils.create_s3_client",
+            "llama_stack_provider_trustyai_garak.evalhub.s3_utils.create_s3_client",
             _fake_create_s3_client,
         )
 
@@ -1434,7 +1434,7 @@ class TestEvalhubValidateComponent:
             return SimpleNamespace(head_bucket=_fail)
 
         monkeypatch.setattr(
-            "llama_stack_provider_trustyai_garak.s3_utils.create_s3_client",
+            "llama_stack_provider_trustyai_garak.evalhub.s3_utils.create_s3_client",
             _fake_create_s3_client,
         )
 
@@ -1569,7 +1569,7 @@ class TestEvalhubWriteKfpOutputsComponent:
             return SimpleNamespace(get_object=_get_object)
 
         monkeypatch.setattr(
-            "llama_stack_provider_trustyai_garak.s3_utils.create_s3_client",
+            "llama_stack_provider_trustyai_garak.evalhub.s3_utils.create_s3_client",
             _fake_create_s3_client,
         )
 
@@ -1607,7 +1607,7 @@ class TestEvalhubWriteKfpOutputsComponent:
             return SimpleNamespace(get_object=_get_object)
 
         monkeypatch.setattr(
-            "llama_stack_provider_trustyai_garak.s3_utils.create_s3_client",
+            "llama_stack_provider_trustyai_garak.evalhub.s3_utils.create_s3_client",
             _fake_create_s3_client,
         )
 
@@ -1670,7 +1670,7 @@ class TestEvalhubWriteKfpOutputsComponent:
             return SimpleNamespace(get_object=_get_object)
 
         monkeypatch.setattr(
-            "llama_stack_provider_trustyai_garak.s3_utils.create_s3_client",
+            "llama_stack_provider_trustyai_garak.evalhub.s3_utils.create_s3_client",
             _fake_create_s3_client,
         )
         monkeypatch.setattr(
@@ -1731,7 +1731,7 @@ class TestEvalhubWriteKfpOutputsComponent:
             return SimpleNamespace(get_object=_get_object)
 
         monkeypatch.setattr(
-            "llama_stack_provider_trustyai_garak.s3_utils.create_s3_client",
+            "llama_stack_provider_trustyai_garak.evalhub.s3_utils.create_s3_client",
             _fake_create_s3_client,
         )
         monkeypatch.setattr(
