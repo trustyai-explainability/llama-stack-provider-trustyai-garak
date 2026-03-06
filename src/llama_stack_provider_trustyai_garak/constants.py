@@ -9,6 +9,9 @@ DEFAULT_TIMEOUT = 600
 DEFAULT_MODEL_TYPE = "openai.OpenAICompatible"
 DEFAULT_EVAL_THRESHOLD = 0.5
 
+# evalhub adapter
+EXECUTION_MODE_SIMPLE = "simple"
+EXECUTION_MODE_KFP = "kfp"
 # XDG variables
 XDG_CACHE_HOME = "/tmp/.cache"
 XDG_DATA_HOME = "/tmp/.local/share"
