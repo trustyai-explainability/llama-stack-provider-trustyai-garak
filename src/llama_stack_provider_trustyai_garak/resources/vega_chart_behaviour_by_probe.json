@@ -1,0 +1,205 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "title": {
+    "text": "Model Behavior By Probe",
+    "dy": -20
+  },
+  "width": "container",
+  "height": 300,
+  "data": {
+    "name": "data"
+  },
+  "layer": [
+    {
+      "transform": [
+        {
+          "aggregate": [
+            {
+              "op": "count",
+              "as": "intent_count"
+            }
+          ],
+          "groupby": [
+            "probe_classname",
+            "probe_name",
+            "intent",
+            "intent_name",
+            "stub"
+          ]
+        },
+        {
+          "aggregate": [
+            {
+              "op": "count",
+              "as": "unique_intents"
+            }
+          ],
+          "groupby": [
+            "probe_classname",
+            "probe_name"
+          ]
+        }
+      ],
+      "mark": {
+        "type": "bar",
+        "stroke": "#A4A4A4",
+        "strokeWidth": 1,
+        "strokeDash": [
+          2,
+          2
+        ],
+        "fill": "transparent"
+      },
+      "encoding": {
+        "x": {
+          "field": "probe_name",
+          "sort": {
+            "field": "run-iter",
+            "op": "min"
+          },
+          "title": "Probe",
+          "legend": null
+        },
+        "y": {
+          "field": "unique_intents",
+          "scale": {
+            "type": "point"
+          },
+          "aggregate": "max",
+          "title": null,
+          "legend": null
+        }
+      }
+    },
+    {
+      "transform": [
+        {
+          "calculate": "datum.outcome == 'complied' ? 1 : 0",
+          "as": "outcome_score"
+        },
+        {
+          "aggregate": [
+            {
+              "op": "max",
+              "field": "outcome_score",
+              "as": "max_outcome_score"
+            },
+            {
+              "op": "count",
+              "as": "attempt_count"
+            }
+          ],
+          "groupby": [
+            "probe_classname",
+            "probe_name",
+            "intent",
+            "intent_name",
+            "stub"
+          ]
+        },
+        {
+          "calculate": "datum.max_outcome_score == 1 ? 'complied' : 'refused'",
+          "as": "outcome"
+        },
+        {
+          "calculate": "indexof(['refused', 'complied'], datum.outcome)",
+          "as": "order"
+        },
+        {
+          "joinaggregate": [
+            {
+              "op": "count",
+              "as": "baseline_stubs"
+            }
+          ],
+          "groupby": [
+            "probe_name",
+            "outcome"
+          ]
+        }
+      ],
+      "mark": {
+        "type": "bar"
+      },
+      "encoding": {
+        "x": {
+          "field": "probe_name",
+          "title": "Probe",
+          "axis": {
+            "labelAngle": 45,
+            "labelAlign": "left"
+          },
+          "scale": {
+            "paddingOuter": 1,
+            "paddingInner": 0.5
+          }
+        },
+        "y": {
+          "aggregate": "count",
+          "title": "Unique Intents"
+        },
+        "stroke": {
+          "field": "outcome",
+          "scale": {
+            "domain": [
+              "complied",
+              "refused"
+            ],
+            "range": [
+              "#CA5050",
+              "#A4A4A4"
+            ]
+          },
+          "legend": null
+        },
+        "color": {
+          "field": "outcome",
+          "scale": {
+            "domain": [
+              "complied",
+              "refused"
+            ],
+            "range": [
+              "#CA5050",
+              "#A4A4A4"
+            ]
+          },
+          "sort": [
+            "complied",
+            "refused"
+          ],
+          "legend": {
+            "title": "Model Behavior"
+          }
+        },
+        "order": {
+          "field": "order",
+          "type": "ordinal"
+        },
+        "tooltip": [
+          {
+            "field": "probe_name",
+            "title": "Probe"
+          },
+          {
+            "field": "baseline_stubs",
+            "type": "quantitative",
+            "title": "Baseline Stubs"
+          },
+          {
+            "field": "intent_name",
+            "title": "Intent"
+          },
+          {
+            "field": "stub",
+            "title": "Stub"
+          },
+          {
+            "field": "outcome",
+            "title": "Model Behavior"
+          }
+        ]
+      }
+    }
+  ]
+}

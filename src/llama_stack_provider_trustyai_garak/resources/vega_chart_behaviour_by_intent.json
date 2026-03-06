@@ -1,0 +1,147 @@
+{
+  "description": "Refined two-bubble-per-cell plot: outcome vs count per intent.",
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "width": "container",
+  "height": 300,
+  "title": {
+    "text": "Model Behavior by Intent",
+    "dy": -20
+  },
+  "data": {
+    "name": "data"
+  },
+  "transform": [
+    {
+      "calculate": "datum.outcome == 'complied' ? 1 : 0",
+      "as": "outcome_score"
+    },
+    {
+      "aggregate": [
+        {
+          "op": "max",
+          "field": "outcome_score",
+          "as": "max_outcome_score"
+        },
+        {
+          "op": "count",
+          "as": "attempt_count"
+        }
+      ],
+      "groupby": [
+        "probe_classname",
+        "probe_name",
+        "intent",
+        "intent_name",
+        "stub"
+      ]
+    },
+    {
+      "calculate": "datum.max_outcome_score == 1 ? 'complied' : 'refused'",
+      "as": "outcome"
+    },
+    {
+      "joinaggregate": [
+        {
+          "op": "count",
+          "as": "baseline_stubs"
+        }
+      ],
+      "groupby": [
+        "probe_name",
+        "intent_name",
+        "outcome"
+      ]
+    }
+  ],
+  "encoding": {
+    "x": {
+      "field": "probe_name",
+      "type": "ordinal",
+      "sort": {
+        "field": "run-iter",
+        "op": "min"
+      },
+      "axis": {
+        "grid": true,
+        "gridColor": "#e0e0e02e",
+        "gridWidth": {
+          "expr": "bandwidth('x')"
+        },
+        "labelAngle": 45,
+        "title": "Probe"
+      }
+    },
+    "y": {
+      "field": "intent_name",
+      "type": "ordinal",
+      "axis": {
+        "grid": false,
+        "title": "Intent"
+      }
+    },
+    "xOffset": {
+      "field": "outcome",
+      "type": "nominal",
+      "scale": {
+        "paddingOuter": 1
+      }
+    },
+    "size": {
+      "field": "baseline_stubs",
+      "aggregate": "max",
+      "type": "quantitative",
+      "legend": {
+        "title": "Baseline Stubs",
+        "format": "d"
+      }
+    },
+    "color": {
+      "field": "outcome",
+      "type": "nominal",
+      "scale": {
+        "domain": [
+          "complied",
+          "refused"
+        ],
+        "range": [
+          "#B22222",
+          "gray"
+        ]
+      },
+      "legend": {
+        "title": "Model Behavior"
+      }
+    },
+    "tooltip": [
+      {
+        "field": "intent_name",
+        "title": "Intent"
+      },
+      {
+        "field": "stub",
+        "title": "Stub"
+      },
+      {
+        "field": "probe_name",
+        "title": "Probe"
+      },
+      {
+        "field": "outcome",
+        "title": "Model Behavior"
+      },
+      {
+        "field": "baseline_stubs",
+        "type": "quantitative",
+        "title": "Baseline Stubs"
+      }
+    ]
+  },
+  "config": {
+    "axis": {
+      "grid": false
+    }
+  },
+  "mark": {
+    "type": "circle"
+  }
+}
