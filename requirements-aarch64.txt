@@ -1174,9 +1174,9 @@ langgraph-checkpoint==4.0.0 \
     # via
     #   langgraph
     #   langgraph-prebuilt
-langgraph-prebuilt==1.0.7 \
-    --hash=sha256:38e097e06de810de4d0e028ffc0e432bb56d1fb417620fb1dfdc76c5e03e4bf9 \
-    --hash=sha256:e14923516504405bb5edc3977085bc9622c35476b50c1808544490e13871fe7c
+langgraph-prebuilt==1.0.8 \
+    --hash=sha256:0cd3cf5473ced8a6cd687cc5294e08d3de57529d8dd14fdc6ae4899549efcf69 \
+    --hash=sha256:d16a731e591ba4470f3e313a319c7eee7dbc40895bcf15c821f985a3522a7ce0
     # via langgraph
 langgraph-sdk==0.3.3 \
     --hash=sha256:a52ebaf09d91143e55378bb2d0b033ed98f57f48c9ad35c8f81493b88705fc7b \
