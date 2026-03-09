@@ -54,17 +54,21 @@ from ..core.garak_runner import convert_to_avid_report, GarakScanResult, run_gar
 from ..garak_command_config import GarakCommandConfig
 from ..result_utils import (
     combine_parsed_results,
+    generate_art_report,
     parse_aggregated_from_avid_content,
     parse_digest_from_report_content,
     parse_generations_from_report_content,
 )
 from ..utils import get_scan_base_dir
-from ..constants import DEFAULT_TIMEOUT, DEFAULT_MODEL_TYPE, DEFAULT_EVAL_THRESHOLD
+from ..constants import (
+    DEFAULT_TIMEOUT,
+    DEFAULT_MODEL_TYPE,
+    DEFAULT_EVAL_THRESHOLD, 
+    EXECUTION_MODE_SIMPLE, 
+    EXECUTION_MODE_KFP, 
+    DEFAULT_SDG_FLOW_ID,
+)
 logger = logging.getLogger(__name__)
-
-
-EXECUTION_MODE_SIMPLE = "simple"
-EXECUTION_MODE_KFP = "kfp"
 
 
 class GarakAdapter(FrameworkAdapter):
@@ -125,9 +129,11 @@ class GarakAdapter(FrameworkAdapter):
             scan_dir.mkdir(parents=True, exist_ok=True)
             report_prefix = scan_dir / "scan"
 
-            garak_config_dict, profile = self._build_config_from_spec(config, report_prefix)
+            garak_config_dict, profile, intents_params = self._build_config_from_spec(config, report_prefix)
             if not garak_config_dict:
                 raise ValueError("Garak command config is empty")
+
+            art_intents = intents_params.get("art_intents", False)
 
             timeout = resolve_timeout_seconds(
                 benchmark_config, profile, default_timeout=DEFAULT_TIMEOUT,
@@ -145,6 +151,8 @@ class GarakAdapter(FrameworkAdapter):
                     callbacks=callbacks,
                     garak_config_dict=garak_config_dict,
                     timeout=timeout,
+                    intents_params=intents_params,
+                    eval_threshold=eval_threshold,
                 )
             else:
                 result = self._run_simple(
@@ -178,9 +186,21 @@ class GarakAdapter(FrameworkAdapter):
             ))
 
             metrics, overall_score, num_examples, overall_summary = self._parse_results(
-                result, eval_threshold,
+                result, eval_threshold, art_intents=art_intents,
             )
             logger.info(f"Parsed {len(metrics)} probe metrics, overall score: {overall_score}")
+
+            # Phase 3b: Generate ART HTML report for intents scans
+            if art_intents and result.report_jsonl.exists():
+                try:
+                    report_content = result.report_jsonl.read_text()
+                    if report_content.strip():
+                        art_html = generate_art_report(report_content)
+                        art_html_path = scan_dir / "scan.intents.html"
+                        art_html_path.write_text(art_html)
+                        logger.info("Generated ART HTML report: %s", art_html_path)
+                except Exception as e:
+                    logger.warning("Failed to generate ART HTML report: %s", e)
 
             # Phase 4: Persist artifacts
             oci_artifact = None
@@ -210,6 +230,7 @@ class GarakAdapter(FrameworkAdapter):
                     "eval_threshold": eval_threshold,
                     "timed_out": result.timed_out,
                     "execution_mode": execution_mode,
+                    "art_intents": art_intents,
                     "overall": overall_summary,
                 },
                 oci_artifact=oci_artifact,
@@ -307,6 +328,8 @@ class GarakAdapter(FrameworkAdapter):
         callbacks: JobCallbacks,
         garak_config_dict: dict,
         timeout: int,
+        intents_params: dict[str, Any] | None = None,
+        eval_threshold: float = DEFAULT_EVAL_THRESHOLD,
     ) -> tuple[GarakScanResult, Path]:
         """Submit a KFP pipeline, poll until done, download results from S3.
 
@@ -341,6 +364,15 @@ class GarakAdapter(FrameworkAdapter):
 
         config_json = json.dumps(garak_config_dict)
 
+        ip = intents_params or {}
+
+        if ip.get("art_intents") and not ip.get("intents_s3_key") and not ip.get("sdg_model"):
+            raise ValueError(
+                "Intents benchmark (art_intents=True) requires either "
+                "intents_s3_key (S3-hosted dataset) or "
+                "sdg_model + sdg_api_base (for synthetic data generation)."
+            )
+
         callbacks.report_status(JobStatusUpdate(
             status=JobStatus.RUNNING,
             phase=JobPhase.RUNNING_EVALUATION,
@@ -354,9 +386,6 @@ class GarakAdapter(FrameworkAdapter):
 
         kfp_client = self._create_kfp_client(kfp_config)
 
-        base_image = _resolve_base_image(kfp_config)
-        logger.info("Using base image for KFP: %s", base_image)
-
         run = kfp_client.create_run_from_pipeline_func(
             evalhub_garak_pipeline,
             arguments={
@@ -364,6 +393,17 @@ class GarakAdapter(FrameworkAdapter):
                 "s3_prefix": s3_prefix,
                 "timeout_seconds": timeout,
                 "s3_secret_name": kfp_config.s3_secret_name,
+                "eval_threshold": eval_threshold,
+                "art_intents": ip.get("art_intents", False),
+                "intents_s3_key": ip.get("intents_s3_key", ""),
+                "intents_format": ip.get("intents_format", "csv"),
+                "category_column": ip.get("category_column", "category"),
+                "prompt_column": ip.get("prompt_column", "prompt"),
+                "description_column": ip.get("description_column", ""),
+                "sdg_model": ip.get("sdg_model", ""),
+                "sdg_api_base": ip.get("sdg_api_base", ""),
+                "sdg_api_key": ip.get("sdg_api_key", ""),
+                "sdg_flow_id": ip.get("sdg_flow_id", DEFAULT_SDG_FLOW_ID),
             },
             run_name=f"evalhub-garak-{config.id}",
             namespace=kfp_config.namespace,
@@ -480,24 +520,11 @@ class GarakAdapter(FrameworkAdapter):
     def _create_s3_client():
         """Create a boto3 S3 client from Data Connection environment variables.
 
-        Expects standard Data Connection env vars (``AWS_ACCESS_KEY_ID``,
-        ``AWS_SECRET_ACCESS_KEY``, ``AWS_S3_ENDPOINT``, etc.) injected from
-        the same secret that the KFP component uses.
+        Delegates to the shared ``s3_utils.create_s3_client`` factory so the
+        credential-resolution logic lives in one place.
         """
-        import boto3
-        from botocore.config import Config as BotoConfig
-
-        s3_endpoint = os.getenv("AWS_S3_ENDPOINT", "")
-        client_kwargs: dict = {
-            "aws_access_key_id": os.getenv("AWS_ACCESS_KEY_ID"),
-            "aws_secret_access_key": os.getenv("AWS_SECRET_ACCESS_KEY"),
-            "region_name": os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
-        }
-        if s3_endpoint:
-            client_kwargs["endpoint_url"] = s3_endpoint
-            client_kwargs["config"] = BotoConfig(s3={"addressing_style": "path"})
-
-        return boto3.client("s3", **client_kwargs)
+        from .s3_utils import create_s3_client
+        return create_s3_client()
 
     @staticmethod
     def _download_results_from_s3(bucket: str, prefix: str, local_dir: Path) -> None:
@@ -575,8 +602,14 @@ class GarakAdapter(FrameworkAdapter):
 
     def _build_config_from_spec(
         self, config: JobSpec, report_prefix: Path
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Build Garak command config dict from JobSpec."""
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        """Build Garak command config dict from JobSpec.
+
+        Returns:
+            Tuple of (garak_config_dict, profile, intents_params) where
+            intents_params contains art_intents and related settings
+            extracted from the profile and benchmark_config.
+        """
         benchmark_config = config.benchmark_config or {}
         profile = self._resolve_profile(config.benchmark_id)
         garak_config: GarakCommandConfig = build_effective_garak_config(
@@ -607,7 +640,226 @@ class GarakAdapter(FrameworkAdapter):
         garak_config.plugins.target_name = config.model.name
         garak_config.reporting.report_prefix = str(report_prefix)
 
-        return garak_config.to_dict(exclude_none=True), profile
+        art_intents = bool(benchmark_config.get("art_intents")) if "art_intents" in benchmark_config else bool(profile.get("art_intents", False))
+        intents_params: dict[str, Any] = {
+            "art_intents": art_intents,
+            "intents_s3_key": benchmark_config.get("intents_s3_key", profile.get("intents_s3_key", "")),
+            "intents_format": benchmark_config.get("intents_format", profile.get("intents_format", "csv")),
+            "category_column": benchmark_config.get("category_column", profile.get("category_column", "category")),
+            "prompt_column": benchmark_config.get("prompt_column", profile.get("prompt_column", "prompt")),
+            "description_column": benchmark_config.get("description_column", profile.get("description_column", "")),
+            "sdg_flow_id": benchmark_config.get("sdg_flow_id", profile.get("sdg_flow_id", DEFAULT_SDG_FLOW_ID)),
+        }
+
+        if art_intents:
+            sdg_params = self._apply_intents_model_config(garak_config, benchmark_config, profile)
+            intents_params.update(sdg_params)
+
+        return garak_config.to_dict(exclude_none=True), profile, intents_params
+
+    # ------------------------------------------------------------------
+    # Intents model configuration
+    # ------------------------------------------------------------------
+
+    def _apply_intents_model_config(
+        self,
+        garak_config: GarakCommandConfig,
+        benchmark_config: dict,
+        profile: dict,
+    ) -> dict[str, Any]:
+        """Configure judge/attacker/evaluator/SDG models from ``intents_models``.
+
+        Users provide per-role model endpoints in ``benchmark_config``:
+
+        .. code-block:: json
+
+            {
+                "intents_models": {
+                    "judge":     {"url": "...", "name": "..."},
+                    "attacker":  {"url": "...", "name": "..."},
+                    "evaluator": {"url": "...", "name": "..."},
+                    "sdg":       {"url": "...", "name": "..."}
+                }
+            }
+
+        Exactly 1 or all 3 of judge/attacker/evaluator must have a ``url``:
+
+        - **1 provided**: the configured role is used for all three.
+        - **3 provided**: each role uses its own config.
+        - **0 provided**: raises ``ValueError`` — the target model cannot be
+          used as judge/attacker/evaluator.
+        - **2 provided**: raises ``ValueError`` — ambiguous which should fill
+          the missing role.
+
+        ``sdg`` has no fallback — it must be provided explicitly if SDG
+        generation is needed.
+
+        API keys are resolved per role via :meth:`_resolve_intents_api_key`.
+
+        Returns:
+            Dict with SDG-related keys (``sdg_model``, ``sdg_api_base``,
+            ``sdg_api_key``) extracted from the ``sdg`` role, or empty strings
+            if SDG is not configured.
+        """
+        intents_models = benchmark_config.get("intents_models", {})
+        if not isinstance(intents_models, dict):
+            intents_models = {}
+
+        judge_cfg = intents_models.get("judge") or {}
+        attacker_cfg = intents_models.get("attacker") or {}
+        evaluator_cfg = intents_models.get("evaluator") or {}
+        sdg_cfg = intents_models.get("sdg") or {}
+
+        provided = {
+            role: cfg
+            for role, cfg in [("judge", judge_cfg), ("attacker", attacker_cfg), ("evaluator", evaluator_cfg)]
+            if cfg.get("url")
+        }
+
+        if len(provided) == 0:
+            raise ValueError(
+                "Intents benchmark requires at least one of "
+                "intents_models.judge, intents_models.attacker, or "
+                "intents_models.evaluator with a 'url' and 'name'. "
+                "The target model (config.model) cannot be used as "
+                "judge/attacker/evaluator."
+            )
+        if len(provided) == 2:
+            missing = {"judge", "attacker", "evaluator"} - set(provided)
+            raise ValueError(
+                f"Ambiguous intents_models config: {', '.join(sorted(provided))} "
+                f"are configured but {', '.join(sorted(missing))} is missing. "
+                f"Provide all three, or provide exactly one to use for all roles."
+            )
+
+        if len(provided) == 1:
+            base_cfg = next(iter(provided.values()))
+            judge_cfg = {**base_cfg, **judge_cfg}
+            attacker_cfg = {**base_cfg, **attacker_cfg}
+            evaluator_cfg = {**base_cfg, **evaluator_cfg}
+
+        for role, cfg in [("judge", judge_cfg), ("attacker", attacker_cfg), ("evaluator", evaluator_cfg)]:
+            if not cfg.get("name"):
+                raise ValueError(
+                    f"intents_models.{role}.name is required. "
+                    f"Provide a model identifier for the {role}."
+                )
+
+        judge_url = judge_cfg["url"]
+        judge_name = judge_cfg["name"]
+        judge_api_key = self._resolve_intents_api_key("judge", judge_cfg)
+
+        attacker_url = attacker_cfg["url"]
+        attacker_name = attacker_cfg["name"]
+        attacker_api_key = self._resolve_intents_api_key("attacker", attacker_cfg)
+
+        evaluator_url = evaluator_cfg["url"]
+        evaluator_name = evaluator_cfg["name"]
+        evaluator_api_key = self._resolve_intents_api_key("evaluator", evaluator_cfg)
+
+        plugins = garak_config.plugins
+
+        plugins.detectors = plugins.detectors or {}
+        plugins.detectors["judge"] = {
+            "detector_model_type": "openai.OpenAICompatible",
+            "detector_model_name": judge_name,
+            "detector_model_config": {
+                "uri": judge_url,
+                "api_key": judge_api_key,
+            },
+        }
+
+        if plugins.probes and plugins.probes.get("tap"):
+            tap_cfg = plugins.probes["tap"].get("TAPIntent", {})
+            if isinstance(tap_cfg, dict):
+                tap_cfg["attack_model_name"] = attacker_name
+                tap_cfg["attack_model_config"] = {
+                    "uri": attacker_url,
+                    "api_key": attacker_api_key,
+                    "max_tokens": tap_cfg.get("attack_model_config", {}).get("max_tokens", 500),
+                }
+                tap_cfg["evaluator_model_name"] = evaluator_name
+                tap_cfg["evaluator_model_config"] = {
+                    "uri": evaluator_url,
+                    "api_key": evaluator_api_key,
+                    "max_tokens": tap_cfg.get("evaluator_model_config", {}).get("max_tokens", 10),
+                    "temperature": tap_cfg.get("evaluator_model_config", {}).get("temperature", 0.0),
+                }
+                plugins.probes["tap"]["TAPIntent"] = tap_cfg
+
+        sdg_params: dict[str, str] = {
+            "sdg_model": "",
+            "sdg_api_base": "",
+            "sdg_api_key": "",
+        }
+        if sdg_cfg.get("url") and sdg_cfg.get("name"):
+            sdg_params["sdg_model"] = sdg_cfg["name"]
+            sdg_params["sdg_api_base"] = sdg_cfg["url"]
+            sdg_params["sdg_api_key"] = self._resolve_intents_api_key("sdg", sdg_cfg)
+        else:
+            sdg_model = benchmark_config.get("sdg_model", profile.get("sdg_model", ""))
+            sdg_api_base = benchmark_config.get("sdg_api_base", profile.get("sdg_api_base", ""))
+            if sdg_model and sdg_api_base:
+                sdg_params["sdg_model"] = sdg_model
+                sdg_params["sdg_api_base"] = sdg_api_base
+                sdg_params["sdg_api_key"] = self._resolve_intents_api_key("sdg", {})
+
+        return sdg_params
+
+    @staticmethod
+    def _resolve_intents_api_key(role: str, model_cfg: dict) -> str:
+        """Resolve API key for an intents model role.
+
+        Resolution order:
+
+        1. Direct ``api_key`` value in ``model_cfg``
+        2. ``api_key_name`` -> read from mounted model auth secret
+        3. ``api_key_env`` -> read from named environment variable
+        4. Convention: ``{role}-api-key`` from mounted secret
+        5. Convention: ``{ROLE}_API_KEY`` from environment
+        6. Generic: ``api-key`` from mounted secret
+        7. Generic: ``OPENAICOMPATIBLE_API_KEY`` from environment
+        8. ``"DUMMY"``
+        """
+        if model_cfg.get("api_key"):
+            return model_cfg["api_key"]
+
+        _read_secret: Any = None
+        try:
+            from evalhub.adapter.auth import read_model_auth_key
+            _read_secret = read_model_auth_key
+        except ImportError:
+            pass
+
+        if _read_secret and model_cfg.get("api_key_name"):
+            key = _read_secret(model_cfg["api_key_name"])
+            if key:
+                return key
+
+        if model_cfg.get("api_key_env"):
+            key = os.getenv(model_cfg["api_key_env"])
+            if key:
+                return key
+
+        if _read_secret:
+            key = _read_secret(f"{role}-api-key")
+            if key:
+                return key
+
+        key = os.getenv(f"{role.upper()}_API_KEY")
+        if key:
+            return key
+
+        if _read_secret:
+            key = _read_secret("api-key")
+            if key:
+                return key
+
+        key = os.getenv("OPENAICOMPATIBLE_API_KEY")
+        if key:
+            return key
+
+        return "DUMMY"
 
     def _normalize_url(self, url: str) -> str:
         """Normalize model URL to include /v1 suffix if needed."""
@@ -631,10 +883,19 @@ class GarakAdapter(FrameworkAdapter):
     #     return env
 
     def _parse_results(
-        self, result: GarakScanResult, eval_threshold: float
+        self,
+        result: GarakScanResult,
+        eval_threshold: float,
+        art_intents: bool = False,
     ) -> tuple[list[EvaluationResult], float | None, int, dict[str, Any]]:
         """Parse Garak results into EvaluationResult metrics.
-        
+
+        Args:
+            result: Scan result with report file paths.
+            eval_threshold: Threshold for vulnerability detection (0-1).
+            art_intents: When True, use prompt-level intents aggregation
+                instead of AVID-based aggregation.
+
         Returns:
             Tuple of (metrics list, overall_score, num_examples, overall summary)
         """
@@ -652,9 +913,8 @@ class GarakAdapter(FrameworkAdapter):
         avid_content = ""
         if result.avid_jsonl.exists():
             avid_content = result.avid_jsonl.read_text()
-        
-        # Use shared parsing utilities
-        generations, score_rows_by_probe = parse_generations_from_report_content(
+
+        generations, score_rows_by_probe, raw_entries_by_probe = parse_generations_from_report_content(
             report_content, eval_threshold
         )
         aggregated_by_probe = parse_aggregated_from_avid_content(avid_content)
@@ -662,7 +922,13 @@ class GarakAdapter(FrameworkAdapter):
         
         # Combine results
         combined = combine_parsed_results(
-            generations, score_rows_by_probe, aggregated_by_probe, eval_threshold, digest
+            generations,
+            score_rows_by_probe,
+            aggregated_by_probe,
+            eval_threshold,
+            digest,
+            art_intents=art_intents,
+            raw_entries_by_probe=raw_entries_by_probe,
         )
         overall_summary = (
             combined.get("scores", {})
@@ -676,26 +942,33 @@ class GarakAdapter(FrameworkAdapter):
                 continue
 
             agg = score_data["aggregated_results"]
-            
-            probe_attempts = agg.get("total_attempts", 0)
-            probe_vulnerable = agg.get("vulnerable_responses", 0)
+
+            probe_attempts = agg.get("total_attempts", agg.get("total_attacks", 0))
             attack_success_rate = agg.get("attack_success_rate", 0.0)
             
             total_attempts += probe_attempts
-            
-            # Create metric for this probe
+
+            probe_metadata: dict[str, Any] = {"probe": probe_name}
+            if art_intents:
+                probe_metadata.update({
+                    "total_prompts": agg.get("total_prompts", 0),
+                    "safe_prompts": agg.get("safe_prompts", 0),
+                    "successful_attacks": agg.get("successful_attacks", 0),
+                })
+            else:
+                probe_metadata.update({
+                    "vulnerable_responses": agg.get("vulnerable_responses", 0),
+                    "benign_responses": agg.get("benign_responses", 0),
+                    "detector_scores": agg.get("detector_scores", {}),
+                    "avid_taxonomy": agg.get("metadata", {}).get("avid_taxonomy", {}),
+                })
+
             metrics.append(EvaluationResult(
                 metric_name=f"{probe_name}_asr",
                 metric_value=attack_success_rate,
                 metric_type="percentage",
                 num_samples=probe_attempts,
-                metadata={
-                    "probe": probe_name,
-                    "vulnerable_responses": probe_vulnerable,
-                    "benign_responses": agg.get("benign_responses", 0),
-                    "detector_scores": agg.get("detector_scores", {}),
-                    "avid_taxonomy": agg.get("metadata", {}).get("avid_taxonomy", {}),
-                },
+                metadata=probe_metadata,
             ))
         
         overall_score = overall_summary.get("attack_success_rate")
@@ -731,12 +1004,17 @@ class GarakAdapter(FrameworkAdapter):
             return "unknown"
 
 
-def main() -> None:
+def main(adapter_cls: type[GarakAdapter] = GarakAdapter) -> None:
     """Entry point for running the adapter as a K8s Job.
 
     Reads JobSpec from mounted ConfigMap and executes the Garak scan.
     The callback URL comes from job_spec.callback_url (set by the service).
     Registry credentials come from AdapterSettings (environment variables).
+
+    Args:
+        adapter_cls: The adapter class to instantiate. Defaults to
+            GarakAdapter (simple mode). Pass a subclass to override
+            behaviour (e.g. GarakKFPAdapter for forced KFP execution).
     """
     import sys
 
@@ -749,7 +1027,7 @@ def main() -> None:
 
     try:
         job_spec_path = os.getenv("EVALHUB_JOB_SPEC_PATH", "/meta/job.json")
-        adapter = GarakAdapter(job_spec_path=job_spec_path)
+        adapter = adapter_cls(job_spec_path=job_spec_path)
         logger.info(f"Loaded job {adapter.job_spec.id}")
         logger.info(f"Benchmark: {adapter.job_spec.benchmark_id}")
         logger.info(f"Model: {adapter.job_spec.model.name}")

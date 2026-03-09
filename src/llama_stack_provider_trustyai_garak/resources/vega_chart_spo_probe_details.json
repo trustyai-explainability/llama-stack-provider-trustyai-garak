@@ -1,0 +1,105 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "width": "container",
+  "height": {
+    "step": 30
+  },
+  "autosize": {
+    "type": "fit",
+    "contains": "padding"
+  },
+  "data": {
+    "name": "data"
+  },
+  "transform": [
+    {
+      "calculate": "datum.success_rate < 0 ? 'N/A' : format(datum.success_rate, '.2%')",
+      "as": "success_rate_display"
+    }
+  ],
+  "mark": {
+    "type": "rect",
+    "stroke": "#fff",
+    "strokeWidth": 1
+  },
+  "encoding": {
+    "x": {
+      "field": "attack",
+      "type": "nominal",
+      "axis": {
+        "labelAngle": 45,
+        "labelAlign": "left",
+        "title": "SPO Variant"
+      },
+      "scale": {
+        "paddingInner": 0.03
+      }
+    },
+    "y": {
+      "field": "intent",
+      "type": "nominal",
+      "axis": {
+        "title": "Intent",
+        "labelLimit": 200
+      },
+      "scale": {
+        "paddingInner": 0.03
+      }
+    },
+    "color": {
+      "condition": [
+        {
+          "test": "datum.success_rate < 0",
+          "value": "white"
+        },
+        {
+          "test": "datum.success_rate === 0",
+          "value": "#d7ee8e"
+        }
+      ],
+      "field": "success_rate",
+      "type": "quantitative",
+      "scale": {
+        "scheme": "yelloworangered",
+        "domain": [
+          0,
+          1
+        ]
+      },
+      "legend": {
+        "title": "Success Rate",
+        "format": ".0%"
+      }
+    },
+    "tooltip": [
+      {
+        "field": "attack",
+        "title": "SPO Variant"
+      },
+      {
+        "field": "intent",
+        "title": "Intent"
+      },
+      {
+        "field": "total_questions",
+        "title": "Total Questions"
+      },
+      {
+        "field": "complied",
+        "title": "Complied"
+      },
+      {
+        "field": "success_rate_display",
+        "title": "Success Rate"
+      }
+    ]
+  },
+  "config": {
+    "axis": {
+      "grid": false
+    },
+    "view": {
+      "stroke": null
+    }
+  }
+}

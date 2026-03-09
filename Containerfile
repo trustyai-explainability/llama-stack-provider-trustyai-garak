@@ -38,6 +38,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 COPY pyproject.toml ./
 COPY src src
 
+# Install CPU-only PyTorch to reduce image size
+RUN /opt/app-root/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+
 # Install to UBI9's native venv at /opt/app-root (auto-created by base image)
 # This ensures proper Python path resolution and follows Red Hat's standard pattern
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -93,6 +96,3 @@ LABEL org.opencontainers.image.title="TrustyAI Garak Provider for Llama Stack" \
       org.opencontainers.image.source="https://github.com/trustyai-explainability/llama-stack-provider-trustyai-garak" \
       org.opencontainers.image.vendor="TrustyAI" \
       org.opencontainers.image.version="${VERSION}"
-
-# Default entrypoint for EvalHub K8s Job execution
-CMD ["python", "-m", "llama_stack_provider_trustyai_garak.evalhub"]
