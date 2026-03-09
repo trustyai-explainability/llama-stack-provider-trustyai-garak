@@ -55,6 +55,9 @@ RUN rm -rf /opt/app-root/src \
 # ============================================================================
 FROM registry.access.redhat.com/ubi9/python-312-minimal:latest AS runtime
 
+# Build argument for dynamic version label
+ARG VERSION="0.1.0-dev"
+
 WORKDIR /opt/app-root
 USER root
 
@@ -89,7 +92,7 @@ LABEL org.opencontainers.image.title="TrustyAI Garak Provider for Llama Stack" \
       org.opencontainers.image.description="Out-of-tree Llama Stack provider for Garak red-teaming with EvalHub integration" \
       org.opencontainers.image.source="https://github.com/trustyai-explainability/llama-stack-provider-trustyai-garak" \
       org.opencontainers.image.vendor="TrustyAI" \
-      org.opencontainers.image.version="0.2.0"
+      org.opencontainers.image.version="${VERSION}"
 
 # Default entrypoint for EvalHub K8s Job execution
 CMD ["python", "-m", "llama_stack_provider_trustyai_garak.evalhub"]
