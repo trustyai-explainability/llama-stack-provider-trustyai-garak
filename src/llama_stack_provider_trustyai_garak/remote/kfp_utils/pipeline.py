@@ -2,6 +2,8 @@ from kfp import dsl, kubernetes
 from .components import validate_inputs, resolve_intents_dataset, garak_scan, parse_results
 from dotenv import load_dotenv
 import logging
+from typing import Optional
+from ...constants import DEFAULT_SDG_FLOW_ID
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -24,9 +26,9 @@ def garak_scan_pipeline(
     category_column: str = "category",
     prompt_column: str = "prompt",
     description_column: str = "",
-    sdg_model: str = "",
-    sdg_api_base: str = "",
-    sdg_flow_id: str = "major-sage-742",
+    sdg_model: Optional[str] = None,
+    sdg_api_base: Optional[str] = None,
+    sdg_flow_id: str = DEFAULT_SDG_FLOW_ID,
 ):
 
     # Step 1: Validate inputs (raises on failure, short-circuiting the pipeline)
