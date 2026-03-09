@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, field_validator, SecretStr, AliasChoices
 from pathlib import Path
 from .utils import get_scan_base_dir
 from .garak_command_config import GarakCASConfig, GarakCommandConfig, GarakRunConfig, GarakReportingConfig, GarakPluginsConfig
+from .constants import DEFAULT_SDG_FLOW_ID
 
 @json_schema_type
 class GarakProviderBaseConfig(BaseModel):
@@ -367,9 +368,9 @@ class GarakScanConfig(BaseModel):
             ).to_dict(),
             "timeout": 60*60*12,  # 12 hours
             "art_intents": True,
-            "sdg_model": "",
-            "sdg_api_base": "",
-            "sdg_flow_id": "major-sage-742",
+            "sdg_model": None,
+            "sdg_api_base": None,
+            "sdg_flow_id": DEFAULT_SDG_FLOW_ID,
         },
     }
 

@@ -187,6 +187,7 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
         
         if benchmark.metadata.get("art_intents", False):
             benchmark.metadata["garak_config"] = self._override_intents_benchmark_config(benchmark.metadata["garak_config"]).to_dict()
+            benchmark.metadata["sdg_api_base"] = benchmark.metadata.get("sdg_api_base") if benchmark.metadata.get("sdg_api_base") else self._get_llama_stack_url()
 
 
         async with self._benchmarks_lock:
