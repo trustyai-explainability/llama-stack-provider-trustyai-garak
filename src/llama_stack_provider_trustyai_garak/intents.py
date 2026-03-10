@@ -33,39 +33,21 @@ def load_taxonomy_dataset(
     """Parse, validate, and clean a user-provided policy taxonomy.
 
     The returned DataFrame is suitable as the ``taxonomy`` argument to
-    :func:`~.sdg.generate_sdg_dataset`.  It contains at least
-    ``policy_concept`` and ``concept_definition`` plus any recognised
-    ``*_pool`` columns the user provided.
-
-    Validation steps:
-      1. Parse *content* as CSV or JSON.
-      2. Ensure mandatory columns (``policy_concept``, ``concept_definition``)
-         are present and coerce them to ``str``.
-      3. Strip whitespace and drop rows where either mandatory field is
-         null or empty.
-      4. Drop exact duplicate ``(policy_concept, concept_definition)`` rows.
-      5. Reject any ``*_pool`` column not in :data:`ALLOWED_POOL_COLUMNS`.
-      6. Warn (but continue) when fewer than
-         :data:`_MIN_RECOMMENDED_POOLS` pool columns are present.
-      7. Validate that each non-null pool cell is a JSON ``dict``,
-         ``list`` or ``set`` (sets as deduplicated lists).
-      8. Drop columns that are neither mandatory nor recognised pool
-         columns.
-      9. Add any missing pool columns as ``None`` so that the output
-         always contains all 8 pool columns that SDG expects.
+    :func:`~.sdg.generate_sdg_dataset`.  It contains ``policy_concept``
+    and ``concept_definition`` plus all 8 recognised ``*_pool`` columns
+    (missing ones filled with ``None``).
 
     Args:
         content: Raw file content (CSV or JSON) as a string.
         format: Content format -- ``"csv"`` or ``"json"``.
 
     Returns:
-        Cleaned ``DataFrame`` with ``policy_concept``,
-        ``concept_definition`` and any valid ``*_pool`` columns.
+        Cleaned ``DataFrame`` ready for SDG consumption.
 
     Raises:
         ValueError: On unsupported format, missing mandatory columns,
-            disallowed pool column names, invalid pool cell values, or
-            an empty dataset after cleaning.
+            disallowed pool column names, unparseable pool cell values,
+            or an empty dataset after cleaning.
     """
     fmt = format.lower()
     if fmt == "csv":
@@ -116,63 +98,84 @@ def load_taxonomy_dataset(
             _MIN_RECOMMENDED_POOLS,
         )
 
-    for col in recognized_pools:
-        _validate_pool_column(df, col)
+    # --- convert to list-of-dicts, parse pool values, rebuild ----------------
+    # Working with plain dicts avoids pandas cell-assignment issues when
+    # storing list/dict objects (PyArrow / pandas broadcasting quirks).
+    records = df.to_dict("records")
+    for row_idx, row in enumerate(records):
+        for col in recognized_pools:
+            row[col] = _parse_pool_value(row.get(col), col, row_idx)
 
-    # --- ensure all pool columns are present (SDG expects them) ---------------
-    keep = list(_MANDATORY_COLUMNS) + sorted(ALLOWED_POOL_COLUMNS)
-    for pool_col in ALLOWED_POOL_COLUMNS:
-        if pool_col not in df.columns:
-            df[pool_col] = None
-    df = df[keep].reset_index(drop=True)
+        # keep only mandatory + recognised pool columns, add missing pools
+        cleaned = {
+            mc: row[mc] for mc in _MANDATORY_COLUMNS
+        }
+        for pool_col in sorted(ALLOWED_POOL_COLUMNS):
+            cleaned[pool_col] = row.get(pool_col)
+        records[row_idx] = cleaned
+
+    result = pandas.DataFrame(records)
 
     logger.info(
         "Loaded taxonomy: %d entries, user-provided pools: %s, "
         "empty pools (defaults): %s",
-        len(df),
+        len(result),
         sorted(recognized_pools) or "(none)",
         sorted(ALLOWED_POOL_COLUMNS - recognized_pools) or "(none)",
     )
-    return df
+    return result
 
 
-def _validate_pool_column(df: pandas.DataFrame, col: str) -> None:
-    """Validate that every non-null cell in *col* is a dict, list, or set.
+def _parse_pool_value(value, col: str, row_idx: int):
+    """Parse a single pool cell into a native ``dict`` or ``list``.
 
-    String cells are first tried with ``json.loads()`` (canonical JSON)
-    then with ``ast.literal_eval()`` (handles Python-repr strings that
-    pandas produces when writing native lists/dicts to CSV, e.g. single
-    quotes).  Native ``dict``, ``list`` and ``set`` values are accepted
-    directly.
-
-    Raises:
-        ValueError: If any cell cannot be parsed or has an unsupported type.
+    Strings are tried with``json.loads`` first, 
+    then ``ast.literal_eval`` (for Python-repr strings that pandas 
+    produces when writing lists/dicts to CSV).
+    Sets are normalised to sorted lists.  Returns ``None`` for
+    null / empty values.
     """
     import ast
 
-    for idx, value in df[col].items():
-        if pandas.isna(value) or (isinstance(value, str) and not value.strip()):
-            continue
-
-        parsed = value
-        if isinstance(value, str):
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, set):
+        return sorted(value)
+    if isinstance(value, str):
+        if not value.strip():
+            return None
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
             try:
-                parsed = json.loads(value)
-            except (json.JSONDecodeError, TypeError):
-                try:
-                    parsed = ast.literal_eval(value)
-                except (ValueError, SyntaxError) as exc:
-                    raise ValueError(
-                        f"Cannot parse pool column '{col}' at row {idx}: "
-                        f"{exc}. Value must be a JSON or Python-literal "
-                        f"dict, list, or set."
-                    ) from exc
-
-        if not isinstance(parsed, (dict, list, set)):
+                parsed = ast.literal_eval(value)
+            except (ValueError, SyntaxError) as exc:
+                raise ValueError(
+                    f"Cannot parse pool column '{col}' at row {row_idx}: "
+                    f"{exc}. Value must be a JSON or Python-literal "
+                    f"dict, list, or set."
+                ) from exc
+        if isinstance(parsed, set):
+            parsed = sorted(parsed)
+        if not isinstance(parsed, (dict, list)):
             raise ValueError(
-                f"Pool column '{col}' at row {idx} must be a dict, list, "
+                f"Pool column '{col}' at row {row_idx} must be a dict, list, "
                 f"or set, got {type(parsed).__name__}"
             )
+        return parsed
+
+    # Scalar NaN -- treat as empty
+    try:
+        if pandas.isna(value):
+            return None
+    except (ValueError, TypeError):
+        pass
+    raise ValueError(
+        f"Pool column '{col}' at row {row_idx} must be a dict, list, "
+        f"or set, got {type(value).__name__}"
+    )
 
 
 def generate_intents_from_dataset(dataset: pandas.DataFrame,

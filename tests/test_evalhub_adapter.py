@@ -1524,6 +1524,70 @@ class TestEvalhubResolvePolicyComponent:
             )
 
 
+    def test_sdg_called_with_custom_taxonomy(self, monkeypatch, tmp_path):
+        """Positive path: S3 taxonomy is loaded and passed to SDG as the taxonomy argument."""
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_resolve_policy
+        import pandas as pd
+
+        artifact = _FakeArtifact(str(tmp_path / "dataset.csv"))
+
+        taxonomy_df = pd.DataFrame([
+            {"policy_concept": "Custom Policy", "concept_definition": "Custom definition"},
+        ])
+        taxonomy_csv = taxonomy_df.to_csv(index=False)
+
+        sdg_output = pd.DataFrame({
+            "category": ["custompolicy"],
+            "prompt": ["generated prompt"],
+            "description": ["Custom definition"],
+        })
+
+        captured: dict[str, object] = {}
+
+        def _fake_create_s3_client():
+            def _get_object(Bucket, Key):
+                return {"Body": SimpleNamespace(read=lambda: taxonomy_csv.encode())}
+            return SimpleNamespace(get_object=_get_object)
+
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.evalhub.s3_utils.create_s3_client",
+            _fake_create_s3_client,
+        )
+
+        def _fake_generate_sdg(model, api_base, flow_id, api_key="dummy", taxonomy=None):
+            captured["taxonomy"] = taxonomy
+            captured["model"] = model
+            return sdg_output
+
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.sdg.generate_sdg_dataset",
+            _fake_generate_sdg,
+        )
+
+        monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
+
+        fn = _get_component_fn(evalhub_resolve_policy)
+        fn(
+            art_intents=True,
+            policy_s3_key="evalhub-garak/custom_policy.csv",
+            policy_format="csv",
+            sdg_model="test-model",
+            sdg_api_base="http://sdg:8000",
+            sdg_api_key="",
+            sdg_flow_id="test-flow",
+            policy_dataset=artifact,
+        )
+
+        assert captured["model"] == "test-model"
+        assert captured["taxonomy"] is not None
+        assert list(captured["taxonomy"].columns[:2]) == ["policy_concept", "concept_definition"]
+        assert captured["taxonomy"]["policy_concept"].iloc[0] == "Custom Policy"
+
+        result_df = pd.read_csv(artifact.path)
+        assert len(result_df) == 1
+        assert result_df["prompt"].iloc[0] == "generated prompt"
+
+
 class TestEvalhubWriteKfpOutputsComponent:
     """Targeted tests for the evalhub_write_kfp_outputs KFP component."""
 

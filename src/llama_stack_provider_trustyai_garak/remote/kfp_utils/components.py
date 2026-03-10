@@ -207,12 +207,17 @@ def resolve_policy_dataset(
                 pass
 
     from llama_stack_provider_trustyai_garak.sdg import generate_sdg_dataset
+    from llama_stack_provider_trustyai_garak.constants import DEFAULT_SDG_FLOW_ID
 
-    logger.info("Running SDG: model=%s, api_base=%s, flow=%s", sdg_model, sdg_api_base, sdg_flow_id)
+    effective_flow_id = sdg_flow_id.strip() if sdg_flow_id else ""
+    if not effective_flow_id:
+        effective_flow_id = DEFAULT_SDG_FLOW_ID
+
+    logger.info("Running SDG: model=%s, api_base=%s, flow=%s", sdg_model, sdg_api_base, effective_flow_id)
     normalized = generate_sdg_dataset(
         model=sdg_model,
         api_base=sdg_api_base,
-        flow_id=sdg_flow_id,
+        flow_id=effective_flow_id,
         taxonomy=taxonomy,
     )
     normalized.to_csv(policy_dataset.path, index=False)

@@ -296,15 +296,20 @@ def evalhub_resolve_policy(
         )
 
     from llama_stack_provider_trustyai_garak.sdg import generate_sdg_dataset
+    from llama_stack_provider_trustyai_garak.constants import DEFAULT_SDG_FLOW_ID as _DEFAULT_FLOW
 
     if sdg_api_key and sdg_api_key.strip():
         os.environ["OPENAI_API_KEY"] = sdg_api_key
 
-    log.info("Running SDG: model=%s, api_base=%s, flow=%s", sdg_model, sdg_api_base, sdg_flow_id)
+    effective_flow_id = sdg_flow_id.strip() if sdg_flow_id else ""
+    if not effective_flow_id:
+        effective_flow_id = _DEFAULT_FLOW
+
+    log.info("Running SDG: model=%s, api_base=%s, flow=%s", sdg_model, sdg_api_base, effective_flow_id)
     normalized = generate_sdg_dataset(
         model=sdg_model,
         api_base=sdg_api_base,
-        flow_id=sdg_flow_id,
+        flow_id=effective_flow_id,
         api_key=sdg_api_key if sdg_api_key and sdg_api_key.strip() else "dummy",
         taxonomy=taxonomy,
     )

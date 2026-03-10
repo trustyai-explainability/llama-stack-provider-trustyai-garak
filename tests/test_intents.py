@@ -166,6 +166,52 @@ Harm,Definition,"[]"
         with pytest.raises(ValueError, match="Unsupported policy file format"):
             load_taxonomy_dataset(content, format="xml")
 
+    def test_native_list_pool_values(self):
+        """Native Python list pool values (from JSON or in-memory DataFrames) are accepted."""
+        content = json.dumps([
+            {
+                "policy_concept": "Harm",
+                "concept_definition": "Harm definition",
+                "demographics_pool": ["Teenagers", "Adults"],
+                "expertise_pool": ["Beginner"],
+            }
+        ])
+        df = load_taxonomy_dataset(content, format="json")
+        assert len(df) == 1
+        assert df["demographics_pool"].iloc[0] == ["Teenagers", "Adults"]
+
+    def test_native_dict_pool_values(self):
+        """Native Python dict pool values are accepted."""
+        content = json.dumps([
+            {
+                "policy_concept": "Harm",
+                "concept_definition": "Harm definition",
+                "geography_pool": {"US": 0.5, "EU": 0.5},
+            }
+        ])
+        df = load_taxonomy_dataset(content, format="json")
+        assert len(df) == 1
+        assert df["geography_pool"].iloc[0] == {"US": 0.5, "EU": 0.5}
+
+    def test_set_pool_values_normalized_to_sorted_list(self):
+        """Set pool values are converted to sorted lists."""
+        content = """policy_concept,concept_definition,demographics_pool
+Harm,Definition,"{'python', 'java', 'go'}"
+"""
+        df = load_taxonomy_dataset(content, format="csv")
+        assert df["demographics_pool"].iloc[0] == ["go", "java", "python"]
+
+    def test_pool_values_written_back_as_native_objects(self):
+        """String pool values from CSV are parsed and written back as native objects."""
+        content = """policy_concept,concept_definition,demographics_pool,geography_pool
+Harm,Definition,"[""A"",""B""]","{""US"": 0.5}"
+"""
+        df = load_taxonomy_dataset(content, format="csv")
+        assert isinstance(df["demographics_pool"].iloc[0], list)
+        assert isinstance(df["geography_pool"].iloc[0], dict)
+        assert df["demographics_pool"].iloc[0] == ["A", "B"]
+        assert df["geography_pool"].iloc[0] == {"US": 0.5}
+
 
 class TestGenerateIntentsFromDataset:
 

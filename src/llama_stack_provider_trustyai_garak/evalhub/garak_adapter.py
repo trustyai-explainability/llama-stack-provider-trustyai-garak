@@ -366,11 +366,17 @@ class GarakAdapter(FrameworkAdapter):
 
         ip = intents_params or {}
 
-        if ip.get("art_intents") and not ip.get("sdg_model"):
-            raise ValueError(
-                "Intents benchmark (art_intents=True) requires "
-                "sdg_model + sdg_api_base for prompt generation."
-            )
+        if ip.get("art_intents"):
+            if not ip.get("sdg_model"):
+                raise ValueError(
+                    "Intents benchmark (art_intents=True) requires "
+                    "sdg_model for prompt generation."
+                )
+            if not ip.get("sdg_api_base"):
+                raise ValueError(
+                    "Intents benchmark (art_intents=True) requires "
+                    "sdg_api_base for prompt generation."
+                )
 
         callbacks.report_status(JobStatusUpdate(
             status=JobStatus.RUNNING,
