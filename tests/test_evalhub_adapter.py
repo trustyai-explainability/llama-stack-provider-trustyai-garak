@@ -496,7 +496,7 @@ class TestS3Download:
 
         monkeypatch.setattr(
             module.GarakAdapter, "_create_s3_client",
-            staticmethod(lambda: _FakeS3Client()),
+            staticmethod(lambda **kw: _FakeS3Client()),
         )
 
         local_dir = tmp_path / "results"
@@ -536,7 +536,7 @@ class TestS3Download:
 
         monkeypatch.setattr(
             module.GarakAdapter, "_create_s3_client",
-            staticmethod(lambda: _FakeS3Client()),
+            staticmethod(lambda **kw: _FakeS3Client()),
         )
 
         local_dir = tmp_path / "results"
