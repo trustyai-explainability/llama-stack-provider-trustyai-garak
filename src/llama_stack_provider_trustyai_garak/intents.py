@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -8,39 +9,63 @@ import pandas
 from .utils import _ensure_xdg_vars
 from .constants import XDG_DATA_HOME
 
+logger = logging.getLogger(__name__)
 
-def load_intents_dataset(
-        content: str,
-        format: str = "csv",
-        category_column: str = "category",
-        prompt_column: str = "prompt",
-        description_column: Optional[str] = None,
+ALLOWED_POOL_COLUMNS = frozenset({
+    "demographics_pool",
+    "expertise_pool",
+    "geography_pool",
+    "language_styles_pool",
+    "exploit_stages_pool",
+    "task_medium_pool",
+    "temporal_pool",
+    "trust_signals_pool",
+})
+
+_MANDATORY_COLUMNS = ("policy_concept", "concept_definition")
+_MIN_RECOMMENDED_POOLS = 2
+
+
+def load_taxonomy_dataset(
+    content: str,
+    format: str = "csv",
 ) -> pandas.DataFrame:
-    """Parse, validate, and normalize an intents dataset from raw content.
+    """Parse, validate, and clean a user-provided policy taxonomy.
 
-    Accepts CSV or JSON content as a string, validates that required columns
-    are present and the dataset is non-empty, then returns a normalized
-    DataFrame with standard column names (category, prompt, and optionally
-    description).
+    The returned DataFrame is suitable as the ``taxonomy`` argument to
+    :func:`~.sdg.generate_sdg_dataset`.  It contains at least
+    ``policy_concept`` and ``concept_definition`` plus any recognised
+    ``*_pool`` columns the user provided.
 
-    This function is framework-agnostic — it can be called from KFP
-    components, Llama Stack providers, EvalHub integrations, or standalone
-    scripts.
+    Validation steps:
+      1. Parse *content* as CSV or JSON.
+      2. Ensure mandatory columns (``policy_concept``, ``concept_definition``)
+         are present and coerce them to ``str``.
+      3. Strip whitespace and drop rows where either mandatory field is
+         null or empty.
+      4. Drop exact duplicate ``(policy_concept, concept_definition)`` rows.
+      5. Reject any ``*_pool`` column not in :data:`ALLOWED_POOL_COLUMNS`.
+      6. Warn (but continue) when fewer than
+         :data:`_MIN_RECOMMENDED_POOLS` pool columns are present.
+      7. Validate that each non-null pool cell is a JSON ``dict``,
+         ``list`` or ``set`` (sets as deduplicated lists).
+      8. Drop columns that are neither mandatory nor recognised pool
+         columns.
+      9. Add any missing pool columns as ``None`` so that the output
+         always contains all 8 pool columns that SDG expects.
 
     Args:
         content: Raw file content (CSV or JSON) as a string.
-        format: Content format — ``"csv"`` or ``"json"``.
-        category_column: Name of the column containing intent categories.
-        prompt_column: Name of the column containing prompts.
-        description_column: Optional column with category descriptions.
+        format: Content format -- ``"csv"`` or ``"json"``.
 
     Returns:
-        A normalized ``DataFrame`` with columns ``category``, ``prompt``,
-        and optionally ``description``.
+        Cleaned ``DataFrame`` with ``policy_concept``,
+        ``concept_definition`` and any valid ``*_pool`` columns.
 
     Raises:
-        ValueError: If format is unsupported, required columns are missing,
-            or the dataset is empty.
+        ValueError: On unsupported format, missing mandatory columns,
+            disallowed pool column names, invalid pool cell values, or
+            an empty dataset after cleaning.
     """
     fmt = format.lower()
     if fmt == "csv":
@@ -49,27 +74,105 @@ def load_intents_dataset(
         df = pandas.read_json(io.StringIO(content))
     else:
         raise ValueError(
-            f"Unsupported intents format: '{format}'. Use 'csv' or 'json'."
+            f"Unsupported policy file format: '{format}'. Use 'csv' or 'json'."
         )
 
-    required = {category_column, prompt_column}
-    missing = required - set(df.columns)
+    # --- mandatory columns ---------------------------------------------------
+    missing = set(_MANDATORY_COLUMNS) - set(df.columns)
     if missing:
         raise ValueError(
-            f"Dataset missing required columns: {sorted(missing)}. "
+            f"Taxonomy missing required columns: {sorted(missing)}. "
             f"Found columns: {sorted(df.columns)}"
         )
+
+    for col in _MANDATORY_COLUMNS:
+        df[col] = df[col].astype(str).str.strip()
+
+    df = df[~df[list(_MANDATORY_COLUMNS)].isin(["", "nan", "None"]).any(axis=1)]
+    df = df.dropna(subset=list(_MANDATORY_COLUMNS))
+    df = df.drop_duplicates(subset=list(_MANDATORY_COLUMNS))
+
     if df.empty:
-        raise ValueError("Intents dataset is empty")
+        raise ValueError(
+            "Taxonomy dataset is empty after removing null, empty, and "
+            "duplicate rows."
+        )
 
-    normalized = pandas.DataFrame({
-        "category": df[category_column].astype(str),
-        "prompt": df[prompt_column].astype(str),
-    })
-    if description_column and description_column in df.columns:
-        normalized["description"] = df[description_column].astype(str)
+    # --- pool columns ---------------------------------------------------------
+    user_pool_cols = {c for c in df.columns if c.endswith("_pool")}
+    disallowed = user_pool_cols - ALLOWED_POOL_COLUMNS
+    if disallowed:
+        raise ValueError(
+            f"Unrecognised pool columns: {sorted(disallowed)}. "
+            f"Allowed pool columns: {sorted(ALLOWED_POOL_COLUMNS)}"
+        )
 
-    return normalized
+    recognized_pools = user_pool_cols & ALLOWED_POOL_COLUMNS
+    if len(recognized_pools) < _MIN_RECOMMENDED_POOLS:
+        logger.warning(
+            "Only %d pool column(s) provided; recommend at least %d for "
+            "diverse SDG output.",
+            len(recognized_pools),
+            _MIN_RECOMMENDED_POOLS,
+        )
+
+    for col in recognized_pools:
+        _validate_pool_column(df, col)
+
+    # --- ensure all pool columns are present (SDG expects them) ---------------
+    keep = list(_MANDATORY_COLUMNS) + sorted(ALLOWED_POOL_COLUMNS)
+    for pool_col in ALLOWED_POOL_COLUMNS:
+        if pool_col not in df.columns:
+            df[pool_col] = None
+    df = df[keep].reset_index(drop=True)
+
+    logger.info(
+        "Loaded taxonomy: %d entries, user-provided pools: %s, "
+        "empty pools (defaults): %s",
+        len(df),
+        sorted(recognized_pools) or "(none)",
+        sorted(ALLOWED_POOL_COLUMNS - recognized_pools) or "(none)",
+    )
+    return df
+
+
+def _validate_pool_column(df: pandas.DataFrame, col: str) -> None:
+    """Validate that every non-null cell in *col* is a dict, list, or set.
+
+    String cells are first tried with ``json.loads()`` (canonical JSON)
+    then with ``ast.literal_eval()`` (handles Python-repr strings that
+    pandas produces when writing native lists/dicts to CSV, e.g. single
+    quotes).  Native ``dict``, ``list`` and ``set`` values are accepted
+    directly.
+
+    Raises:
+        ValueError: If any cell cannot be parsed or has an unsupported type.
+    """
+    import ast
+
+    for idx, value in df[col].items():
+        if pandas.isna(value) or (isinstance(value, str) and not value.strip()):
+            continue
+
+        parsed = value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                try:
+                    parsed = ast.literal_eval(value)
+                except (ValueError, SyntaxError) as exc:
+                    raise ValueError(
+                        f"Cannot parse pool column '{col}' at row {idx}: "
+                        f"{exc}. Value must be a JSON or Python-literal "
+                        f"dict, list, or set."
+                    ) from exc
+
+        if not isinstance(parsed, (dict, list, set)):
+            raise ValueError(
+                f"Pool column '{col}' at row {idx} must be a dict, list, "
+                f"or set, got {type(parsed).__name__}"
+            )
 
 
 def generate_intents_from_dataset(dataset: pandas.DataFrame,

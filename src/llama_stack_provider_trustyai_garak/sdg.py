@@ -1,13 +1,14 @@
 """Synthetic Data Generation (SDG) for red-team prompt generation.
 
-Wraps the sdg_hub library to generate adversarial prompts from a fixed
-base taxonomy of harm categories.  Framework-agnostic — can be called
+Wraps the sdg_hub library to generate adversarial prompts from a
+taxonomy of harm categories.  When no custom taxonomy is provided the
+built-in ``BASE_TAXONOMY`` is used.  Framework-agnostic -- can be called
 from KFP components, EvalHub integrations, or standalone scripts.
 """
 
 import re
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from .constants import DEFAULT_SDG_FLOW_ID
 
 import pandas
@@ -119,18 +120,28 @@ def generate_sdg_dataset(
     api_base: str,
     flow_id: str = DEFAULT_SDG_FLOW_ID,
     api_key: str = "dummy",
+    taxonomy: Optional[pandas.DataFrame] = None,
 ) -> pandas.DataFrame:
     """Generate a red-team prompt dataset using sdg_hub.
 
-    Loads the base taxonomy, runs the specified sdg_hub flow against the
-    given model endpoint, and returns a normalized DataFrame ready for
-    Garak intents consumption.
+    Runs the specified sdg_hub flow against the given model endpoint and
+    returns a normalized DataFrame ready for Garak intents consumption.
+
+    When *taxonomy* is ``None`` the built-in :data:`BASE_TAXONOMY` is
+    used.  Callers may supply a custom taxonomy (validated by
+    :func:`~.intents.load_taxonomy_dataset`) to override the default
+    harm categories.
 
     Args:
         model: LLM model identifier (e.g. ``"hosted_vllm/gemma-2-9b-it-abliterated"``).
         api_base: Model serving endpoint URL.
         flow_id: sdg_hub flow identifier.
         api_key: API key for the model.
+        taxonomy: Optional user-provided taxonomy DataFrame with at least
+            ``policy_concept`` and ``concept_definition`` columns plus
+            optional ``*_pool`` columns.  When ``None``, ``BASE_TAXONOMY``
+            is used.
+
     Returns:
         DataFrame with columns ``(category, prompt, description)``.
     """
@@ -139,11 +150,18 @@ def generate_sdg_dataset(
 
     nest_asyncio.apply()
 
-    df = pandas.DataFrame(BASE_TAXONOMY)
-    logger.info(
-        "Starting SDG generation: model=%s, flow=%s, %d taxonomy entries",
-        model, flow_id, len(df),
-    )
+    if taxonomy is not None:
+        df = taxonomy.copy()
+        logger.info(
+            "Starting SDG generation with custom taxonomy: model=%s, flow=%s, %d entries",
+            model, flow_id, len(df),
+        )
+    else:
+        df = pandas.DataFrame(BASE_TAXONOMY)
+        logger.info(
+            "Starting SDG generation with BASE_TAXONOMY: model=%s, flow=%s, %d entries",
+            model, flow_id, len(df),
+        )
 
     FlowRegistry.discover_flows()
     flow_path = FlowRegistry.get_flow_path(flow_id)

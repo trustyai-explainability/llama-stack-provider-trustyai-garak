@@ -366,11 +366,10 @@ class GarakAdapter(FrameworkAdapter):
 
         ip = intents_params or {}
 
-        if ip.get("art_intents") and not ip.get("intents_s3_key") and not ip.get("sdg_model"):
+        if ip.get("art_intents") and not ip.get("sdg_model"):
             raise ValueError(
-                "Intents benchmark (art_intents=True) requires either "
-                "intents_s3_key (S3-hosted dataset) or "
-                "sdg_model + sdg_api_base (for synthetic data generation)."
+                "Intents benchmark (art_intents=True) requires "
+                "sdg_model + sdg_api_base for prompt generation."
             )
 
         callbacks.report_status(JobStatusUpdate(
@@ -395,11 +394,8 @@ class GarakAdapter(FrameworkAdapter):
                 "s3_secret_name": kfp_config.s3_secret_name,
                 "eval_threshold": eval_threshold,
                 "art_intents": ip.get("art_intents", False),
-                "intents_s3_key": ip.get("intents_s3_key", ""),
-                "intents_format": ip.get("intents_format", "csv"),
-                "category_column": ip.get("category_column", "category"),
-                "prompt_column": ip.get("prompt_column", "prompt"),
-                "description_column": ip.get("description_column", ""),
+                "policy_s3_key": ip.get("policy_s3_key", ""),
+                "policy_format": ip.get("policy_format", "csv"),
                 "sdg_model": ip.get("sdg_model", ""),
                 "sdg_api_base": ip.get("sdg_api_base", ""),
                 "sdg_api_key": ip.get("sdg_api_key", ""),
@@ -707,11 +703,8 @@ class GarakAdapter(FrameworkAdapter):
         art_intents = bool(benchmark_config.get("art_intents")) if "art_intents" in benchmark_config else bool(profile.get("art_intents", False))
         intents_params: dict[str, Any] = {
             "art_intents": art_intents,
-            "intents_s3_key": benchmark_config.get("intents_s3_key", profile.get("intents_s3_key", "")),
-            "intents_format": benchmark_config.get("intents_format", profile.get("intents_format", "csv")),
-            "category_column": benchmark_config.get("category_column", profile.get("category_column", "category")),
-            "prompt_column": benchmark_config.get("prompt_column", profile.get("prompt_column", "prompt")),
-            "description_column": benchmark_config.get("description_column", profile.get("description_column", "")),
+            "policy_s3_key": benchmark_config.get("policy_s3_key", profile.get("policy_s3_key", "")),
+            "policy_format": benchmark_config.get("policy_format", profile.get("policy_format", "csv")),
             "sdg_flow_id": benchmark_config.get("sdg_flow_id", profile.get("sdg_flow_id", DEFAULT_SDG_FLOW_ID)),
         }
 

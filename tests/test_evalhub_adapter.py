@@ -1223,8 +1223,8 @@ class TestKFPIntentsMode:
         assert html_path.exists()
         assert "ART Report" in html_path.read_text()
 
-    def test_kfp_raises_when_art_intents_but_no_data_source(self, monkeypatch, tmp_path):
-        """_run_via_kfp raises ValueError when art_intents=True with no intents_s3_key or sdg_model."""
+    def test_kfp_raises_when_art_intents_but_no_sdg_model(self, monkeypatch, tmp_path):
+        """_run_via_kfp raises ValueError when art_intents=True with no sdg_model (sdg_model always required)."""
         module = _load_evalhub_garak_adapter(monkeypatch)
         adapter = module.GarakAdapter()
         monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
@@ -1250,7 +1250,7 @@ class TestKFPIntentsMode:
             exports=None,
         )
 
-        with pytest.raises(ValueError, match="intents_s3_key"):
+        with pytest.raises(ValueError, match="sdg_model"):
             adapter.run_benchmark_job(job, _Callbacks())
 
 
@@ -1443,96 +1443,84 @@ class TestEvalhubValidateComponent:
             fn(config_json=json.dumps({"plugins": {}}))
 
 
-class TestEvalhubResolveIntentsComponent:
-    """Targeted tests for the evalhub_resolve_intents KFP component."""
+class TestEvalhubResolvePolicyComponent:
+    """Targeted tests for the evalhub_resolve_policy KFP component."""
 
     def test_non_intents_writes_empty_artifact(self, monkeypatch, tmp_path):
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_resolve_intents
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_resolve_policy
 
         artifact = _FakeArtifact(str(tmp_path / "dataset.csv"))
 
-        fn = _get_component_fn(evalhub_resolve_intents)
+        fn = _get_component_fn(evalhub_resolve_policy)
         fn(
             art_intents=False,
-            intents_s3_key="",
-            intents_format="csv",
-            category_column="category",
-            prompt_column="prompt",
-            description_column="",
+            policy_s3_key="",
+            policy_format="csv",
             sdg_model="",
             sdg_api_base="",
             sdg_api_key="",
             sdg_flow_id="",
-            intents_dataset=artifact,
+            policy_dataset=artifact,
         )
 
         content = Path(artifact.path).read_text()
         assert content == ""
 
-    def test_intents_no_source_raises(self, monkeypatch, tmp_path):
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_resolve_intents
+    def test_intents_no_sdg_model_raises(self, monkeypatch, tmp_path):
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_resolve_policy
         from llama_stack_provider_trustyai_garak.errors import GarakValidationError
 
         artifact = _FakeArtifact(str(tmp_path / "dataset.csv"))
 
-        fn = _get_component_fn(evalhub_resolve_intents)
-        with pytest.raises(GarakValidationError, match="intents_s3_key"):
+        fn = _get_component_fn(evalhub_resolve_policy)
+        with pytest.raises(GarakValidationError, match="sdg_model"):
             fn(
                 art_intents=True,
-                intents_s3_key="",
-                intents_format="csv",
-                category_column="category",
-                prompt_column="prompt",
-                description_column="",
+                policy_s3_key="",
+                policy_format="csv",
                 sdg_model="",
                 sdg_api_base="",
                 sdg_api_key="",
                 sdg_flow_id="",
-                intents_dataset=artifact,
+                policy_dataset=artifact,
             )
 
     def test_invalid_s3_uri_raises(self, monkeypatch, tmp_path):
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_resolve_intents
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_resolve_policy
         from llama_stack_provider_trustyai_garak.errors import GarakValidationError
 
         artifact = _FakeArtifact(str(tmp_path / "dataset.csv"))
 
-        fn = _get_component_fn(evalhub_resolve_intents)
-        with pytest.raises(GarakValidationError, match="Invalid intents_s3_key"):
+        fn = _get_component_fn(evalhub_resolve_policy)
+        with pytest.raises(GarakValidationError, match="Invalid policy_s3_key"):
             fn(
                 art_intents=True,
-                intents_s3_key="s3://bucket-only",
-                intents_format="csv",
-                category_column="category",
-                prompt_column="prompt",
-                description_column="",
-                sdg_model="",
-                sdg_api_base="",
+                policy_s3_key="s3://bucket-only",
+                policy_format="csv",
+                sdg_model="some-model",
+                sdg_api_base="http://sdg:8000",
                 sdg_api_key="",
                 sdg_flow_id="",
-                intents_dataset=artifact,
+                policy_dataset=artifact,
             )
 
     def test_sdg_missing_api_base_raises(self, monkeypatch, tmp_path):
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_resolve_intents
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_resolve_policy
         from llama_stack_provider_trustyai_garak.errors import GarakValidationError
 
         artifact = _FakeArtifact(str(tmp_path / "dataset.csv"))
 
-        fn = _get_component_fn(evalhub_resolve_intents)
+        fn = _get_component_fn(evalhub_resolve_policy)
         with pytest.raises(GarakValidationError, match="sdg_api_base"):
             fn(
                 art_intents=True,
-                intents_s3_key="",
-                intents_format="csv",
-                category_column="category",
-                prompt_column="prompt",
-                description_column="",
+                policy_s3_key="",
+                policy_format="csv",
                 sdg_model="some-model",
                 sdg_api_base="",
                 sdg_api_key="",
                 sdg_flow_id="",
-                intents_dataset=artifact,
+                policy_dataset=artifact,
             )
 
 

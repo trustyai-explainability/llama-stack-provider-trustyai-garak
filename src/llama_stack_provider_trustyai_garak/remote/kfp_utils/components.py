@@ -129,34 +129,30 @@ def validate_inputs(
         validation_errors
     )
 
-# Component 2: Resolve Intents Dataset
+# Component 2: Resolve Policy Dataset (taxonomy -> SDG -> prompts)
 @dsl.component(
     base_image=get_base_image(),
     install_kfp_package=False,
     packages_to_install=[]
 )
-def resolve_intents_dataset(
+def resolve_policy_dataset(
     art_intents: bool,
-    intents_file_id: str,
-    intents_format: str,
+    policy_file_id: str,
+    policy_format: str,
     llama_stack_url: str,
-    category_column: str,
-    prompt_column: str,
-    description_column: str,
     verify_ssl: str,
     sdg_model: str,
     sdg_api_base: str,
     sdg_flow_id: str,
-    intents_dataset: dsl.Output[dsl.Dataset],
+    policy_dataset: dsl.Output[dsl.Dataset],
 ):
-    """Resolve intents dataset for a Garak scan.
+    """Resolve the policy dataset for a Garak intents scan.
 
-    Three modes:
-      1. ``art_intents=False`` -- writes an empty marker (native probes).
-      2. ``art_intents=True`` + ``intents_file_id`` -- fetches a user-uploaded
-         dataset from the Llama Stack Files API.
-      3. ``art_intents=True`` + no file ID + ``sdg_model`` -- generates a
-         synthetic dataset via sdg_hub.
+    When ``art_intents=False`` writes an empty marker (native probes).
+    When ``art_intents=True`` SDG always runs to generate adversarial
+    prompts.  If ``policy_file_id`` is provided, the referenced file is
+    loaded as a custom taxonomy that replaces the built-in
+    ``BASE_TAXONOMY``; otherwise the default taxonomy is used.
     """
     import logging
     from llama_stack_provider_trustyai_garak.errors import GarakValidationError
@@ -166,69 +162,63 @@ def resolve_intents_dataset(
 
     if not art_intents:
         logger.info("Non-intents scan — writing empty dataset marker")
-        with open(intents_dataset.path, 'w') as f:
+        with open(policy_dataset.path, 'w') as f:
             f.write("")
         return
 
-    if intents_file_id:
+    if not sdg_model or not sdg_model.strip():
+        raise GarakValidationError(
+            "sdg_model is required for intents scans (art_intents=True)."
+        )
+    if not sdg_api_base or not sdg_api_base.strip():
+        raise GarakValidationError(
+            "sdg_api_base is required for intents scans (art_intents=True)."
+        )
+
+    taxonomy = None
+    if policy_file_id:
         from llama_stack_client import LlamaStackClient
         from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
-        from llama_stack_provider_trustyai_garak.intents import load_intents_dataset
+        from llama_stack_provider_trustyai_garak.intents import load_taxonomy_dataset
 
-        logger.info(f"Fetching intents dataset (file_id={intents_file_id}, format={intents_format})")
+        logger.info("Fetching policy taxonomy (file_id=%s, format=%s)", policy_file_id, policy_format)
         client = LlamaStackClient(
             base_url=llama_stack_url,
             http_client=get_http_client_with_tls(verify_ssl),
         )
-
         try:
-            file_content = client.files.content(intents_file_id)
+            file_content = client.files.content(policy_file_id)
             if isinstance(file_content, bytes):
                 file_content = file_content.decode("utf-8")
             file_content = str(file_content)
 
-            normalized = load_intents_dataset(
+            taxonomy = load_taxonomy_dataset(
                 content=file_content,
-                format=intents_format,
-                category_column=category_column,
-                prompt_column=prompt_column,
-                description_column=description_column or None,
+                format=policy_format,
             )
-
-            normalized.to_csv(intents_dataset.path, index=False)
             logger.info(
-                f"Resolved {len(normalized)} intent prompts across "
-                f"{normalized['category'].nunique()} categories"
+                "Loaded custom taxonomy: %d entries, columns: %s",
+                len(taxonomy), list(taxonomy.columns),
             )
         finally:
             try:
                 client.close()
             except Exception:
                 pass
-        return
 
-    if sdg_model:
-        from llama_stack_provider_trustyai_garak.sdg import generate_sdg_dataset
+    from llama_stack_provider_trustyai_garak.sdg import generate_sdg_dataset
 
-        if not sdg_api_base.strip() or not sdg_flow_id.strip():
-            raise GarakValidationError("sdg_api_base and sdg_flow_id are required for synthetic data generation")
-
-        logger.info(f"Running SDG: model={sdg_model}, api_base={sdg_api_base}, flow={sdg_flow_id}")
-        normalized = generate_sdg_dataset(
-            model=sdg_model,
-            api_base=sdg_api_base,
-            flow_id=sdg_flow_id,
-        )
-        normalized.to_csv(intents_dataset.path, index=False)
-        logger.info(
-            f"SDG produced {len(normalized)} intent prompts across "
-            f"{normalized['category'].nunique()} categories"
-        )
-        return
-
-    raise GarakValidationError(
-        "Intents scan requires either an intents_file_id (user-uploaded dataset) "
-        "or sdg_model + sdg_api_base (for synthetic data generation)."
+    logger.info("Running SDG: model=%s, api_base=%s, flow=%s", sdg_model, sdg_api_base, sdg_flow_id)
+    normalized = generate_sdg_dataset(
+        model=sdg_model,
+        api_base=sdg_api_base,
+        flow_id=sdg_flow_id,
+        taxonomy=taxonomy,
+    )
+    normalized.to_csv(policy_dataset.path, index=False)
+    logger.info(
+        "SDG produced %d prompts across %d categories",
+        len(normalized), normalized["category"].nunique(),
     )
 
 
@@ -245,13 +235,13 @@ def garak_scan(
     max_retries: int,
     timeout_seconds: int,
     verify_ssl: str,
-    intents_dataset: dsl.Input[dsl.Dataset],
+    policy_dataset: dsl.Input[dsl.Dataset],
 ) -> NamedTuple('outputs', [
     ('exit_code', int),
     ('success', bool),
     ('file_id_mapping', Dict[str, str])
 ]):
-    """Run a Garak scan. If the intents_dataset artifact contains data,
+    """Run a Garak scan. If the policy_dataset artifact contains data,
     intent stubs are generated from it before launching garak."""
     import subprocess
     import time
@@ -278,8 +268,8 @@ def garak_scan(
     scan_cmd_config = json.loads(command)
     scan_cmd_config['reporting']['report_prefix'] = str(scan_report_prefix)
 
-    if os.path.getsize(intents_dataset.path) > 0:
-        df = pd.read_csv(intents_dataset.path)
+    if os.path.getsize(policy_dataset.path) > 0:
+        df = pd.read_csv(policy_dataset.path)
         if not df.empty:
             desc_col = "description" if "description" in df.columns else None
             generate_intents_from_dataset(
@@ -291,7 +281,7 @@ def garak_scan(
                 f"across {df['category'].nunique()} categories"
             )
         else:
-            logger.info("Intents dataset artifact is empty — skipping intent generation")
+            logger.info("Policy dataset artifact is empty — skipping intent generation")
 
     with open(scan_cmd_config_file, 'w') as f:
         json.dump(scan_cmd_config, f)

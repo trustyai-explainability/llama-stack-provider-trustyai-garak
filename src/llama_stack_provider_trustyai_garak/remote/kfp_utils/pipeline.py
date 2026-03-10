@@ -1,5 +1,5 @@
 from kfp import dsl, kubernetes
-from .components import validate_inputs, resolve_intents_dataset, garak_scan, parse_results
+from .components import validate_inputs, resolve_policy_dataset, garak_scan, parse_results
 from dotenv import load_dotenv
 import logging
 from typing import Optional
@@ -21,11 +21,8 @@ def garak_scan_pipeline(
     use_gpu: bool = False,
     verify_ssl: str = "True",
     art_intents: bool = False,
-    intents_file_id: str = "",
-    intents_format: str = "csv",
-    category_column: str = "category",
-    prompt_column: str = "prompt",
-    description_column: str = "",
+    policy_file_id: str = "",
+    policy_format: str = "csv",
     sdg_model: Optional[str] = None,
     sdg_api_base: Optional[str] = None,
     sdg_flow_id: str = DEFAULT_SDG_FLOW_ID,
@@ -39,15 +36,12 @@ def garak_scan_pipeline(
     )
     validate_task.set_caching_options(False)
 
-    # Step 2: Resolve intents dataset (writes empty file for native probe scans)
-    resolve_task = resolve_intents_dataset(
+    # Step 2: Resolve policy dataset (taxonomy -> SDG -> prompts, or empty for native probes)
+    resolve_task = resolve_policy_dataset(
         art_intents=art_intents,
-        intents_file_id=intents_file_id,
-        intents_format=intents_format,
+        policy_file_id=policy_file_id,
+        policy_format=policy_format,
         llama_stack_url=llama_stack_url,
-        category_column=category_column,
-        prompt_column=prompt_column,
-        description_column=description_column,
         verify_ssl=verify_ssl,
         sdg_model=sdg_model,
         sdg_api_base=sdg_api_base,
@@ -64,7 +58,7 @@ def garak_scan_pipeline(
         max_retries=max_retries,
         timeout_seconds=timeout_seconds,
         verify_ssl=verify_ssl,
-        intents_dataset=resolve_task.outputs['intents_dataset'],
+        policy_dataset=resolve_task.outputs['policy_dataset'],
     )
     parse_kwargs = dict(
         llama_stack_url=llama_stack_url,
