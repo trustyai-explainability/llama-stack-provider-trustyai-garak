@@ -299,9 +299,9 @@ class TestKFPConfig:
     """Tests for KFPConfig.from_env_and_config."""
 
     def test_from_env_vars(self, monkeypatch):
-        monkeypatch.setenv("EVALHUB_KFP_ENDPOINT", "https://kfp.example.com")
-        monkeypatch.setenv("EVALHUB_KFP_NAMESPACE", "test-ns")
-        monkeypatch.setenv("EVALHUB_KFP_S3_SECRET_NAME", "my-data-connection")
+        monkeypatch.setenv("KFP_ENDPOINT", "https://kfp.example.com")
+        monkeypatch.setenv("KFP_NAMESPACE", "test-ns")
+        monkeypatch.setenv("KFP_S3_SECRET_NAME", "my-data-connection")
         monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
 
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import KFPConfig
@@ -314,8 +314,8 @@ class TestKFPConfig:
         assert cfg.experiment_name == "evalhub-garak"
 
     def test_benchmark_config_overrides_env(self, monkeypatch):
-        monkeypatch.setenv("EVALHUB_KFP_ENDPOINT", "https://env.example.com")
-        monkeypatch.setenv("EVALHUB_KFP_NAMESPACE", "env-ns")
+        monkeypatch.setenv("KFP_ENDPOINT", "https://env.example.com")
+        monkeypatch.setenv("KFP_NAMESPACE", "env-ns")
 
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import KFPConfig
 
@@ -333,8 +333,8 @@ class TestKFPConfig:
         assert cfg.s3_bucket == "override-bucket"
 
     def test_missing_endpoint_raises(self, monkeypatch):
-        monkeypatch.delenv("EVALHUB_KFP_ENDPOINT", raising=False)
-        monkeypatch.setenv("EVALHUB_KFP_NAMESPACE", "ns")
+        monkeypatch.delenv("KFP_ENDPOINT", raising=False)
+        monkeypatch.setenv("KFP_NAMESPACE", "ns")
 
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import KFPConfig
         import pytest
@@ -343,8 +343,8 @@ class TestKFPConfig:
             KFPConfig.from_env_and_config()
 
     def test_missing_namespace_raises(self, monkeypatch):
-        monkeypatch.setenv("EVALHUB_KFP_ENDPOINT", "https://kfp.example.com")
-        monkeypatch.delenv("EVALHUB_KFP_NAMESPACE", raising=False)
+        monkeypatch.setenv("KFP_ENDPOINT", "https://kfp.example.com")
+        monkeypatch.delenv("KFP_NAMESPACE", raising=False)
 
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import KFPConfig
         import pytest
@@ -353,9 +353,9 @@ class TestKFPConfig:
             KFPConfig.from_env_and_config()
 
     def test_verify_ssl_false(self, monkeypatch):
-        monkeypatch.setenv("EVALHUB_KFP_ENDPOINT", "https://kfp.example.com")
-        monkeypatch.setenv("EVALHUB_KFP_NAMESPACE", "ns")
-        monkeypatch.setenv("EVALHUB_KFP_VERIFY_SSL", "false")
+        monkeypatch.setenv("KFP_ENDPOINT", "https://kfp.example.com")
+        monkeypatch.setenv("KFP_NAMESPACE", "ns")
+        monkeypatch.setenv("KFP_VERIFY_SSL", "false")
 
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import KFPConfig
 
@@ -663,9 +663,9 @@ class TestKFPMissingS3Secret:
         module = _load_evalhub_garak_adapter(monkeypatch)
         adapter = module.GarakAdapter()
         monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
-        monkeypatch.setenv("EVALHUB_KFP_ENDPOINT", "https://kfp.example.com")
-        monkeypatch.setenv("EVALHUB_KFP_NAMESPACE", "test-ns")
-        monkeypatch.delenv("EVALHUB_KFP_S3_SECRET_NAME", raising=False)
+        monkeypatch.setenv("KFP_ENDPOINT", "https://kfp.example.com")
+        monkeypatch.setenv("KFP_NAMESPACE", "test-ns")
+        monkeypatch.delenv("KFP_S3_SECRET_NAME", raising=False)
 
         class _Callbacks:
             def report_status(self, _update):

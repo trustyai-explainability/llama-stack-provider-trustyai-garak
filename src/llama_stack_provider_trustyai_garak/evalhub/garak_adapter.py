@@ -397,7 +397,7 @@ class GarakAdapter(FrameworkAdapter):
         if not kfp_config.s3_secret_name:
             raise ValueError(
                 "S3 data-connection secret name is required for KFP mode. "
-                "Set EVALHUB_KFP_S3_SECRET_NAME or provide "
+                "Set KFP_S3_SECRET_NAME or provide "
                 "kfp_config.s3_secret_name in benchmark_config."
             )
 
