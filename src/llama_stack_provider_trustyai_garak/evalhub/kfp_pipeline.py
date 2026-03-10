@@ -55,6 +55,7 @@ class KFPConfig:
     auth_token: str = ""
     s3_secret_name: str = ""
     s3_bucket: str = ""
+    s3_endpoint: str = ""
     experiment_name: str = DEFAULT_KFP_EXPERIMENT
     poll_interval_seconds: int = DEFAULT_POLL_INTERVAL
     base_image: str = ""
@@ -101,6 +102,7 @@ class KFPConfig:
             auth_token=_resolve("auth_token", "EVALHUB_KFP_AUTH_TOKEN"),
             s3_secret_name=_resolve("s3_secret_name", "EVALHUB_KFP_S3_SECRET_NAME"),
             s3_bucket=_resolve("s3_bucket", "AWS_S3_BUCKET"),
+            s3_endpoint=_resolve("s3_endpoint", "AWS_S3_ENDPOINT"),
             experiment_name=_resolve(
                 "experiment_name", "EVALHUB_KFP_EXPERIMENT", DEFAULT_KFP_EXPERIMENT,
             ),

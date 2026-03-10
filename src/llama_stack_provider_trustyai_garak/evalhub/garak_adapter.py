@@ -433,7 +433,14 @@ class GarakAdapter(FrameworkAdapter):
                 ),
             ))
             s3_bucket = kfp_config.s3_bucket or os.getenv("AWS_S3_BUCKET", "")
-            self._download_results_from_s3(s3_bucket, s3_prefix, scan_dir)
+            creds = self._read_s3_credentials_from_secret(
+                kfp_config.s3_secret_name, kfp_config.namespace,
+            ) if kfp_config.s3_secret_name else {}
+            self._download_results_from_s3(
+                s3_bucket, s3_prefix, scan_dir,
+                endpoint_url=kfp_config.s3_endpoint or None,
+                **creds,
+            )
 
         report_prefix = scan_dir / "scan"
 
@@ -517,26 +524,83 @@ class GarakAdapter(FrameworkAdapter):
             time.sleep(poll_interval)
 
     @staticmethod
-    def _create_s3_client():
-        """Create a boto3 S3 client from Data Connection environment variables.
+    def _read_s3_credentials_from_secret(secret_name: str, namespace: str) -> dict:
+        """Read S3 credentials from a Kubernetes secret.
 
-        Delegates to the shared ``s3_utils.create_s3_client`` factory so the
-        credential-resolution logic lives in one place.
+        Falls back gracefully if the secret cannot be read (e.g. outside a
+        cluster or missing RBAC), returning an empty dict so env-var fallback
+        in ``create_s3_client`` still applies.
         """
-        from .s3_utils import create_s3_client
-        return create_s3_client()
+        import base64
+        try:
+            from kubernetes import client as k8s_client, config as k8s_config
+            try:
+                k8s_config.load_incluster_config()
+            except Exception:
+                k8s_config.load_kube_config()
+            v1 = k8s_client.CoreV1Api()
+            secret = v1.read_namespaced_secret(secret_name, namespace)
+            data = secret.data or {}
+
+            def _decode(key: str) -> str:
+                val = data.get(key, "")
+                return base64.b64decode(val).decode() if val else ""
+
+            return {
+                "access_key": _decode("AWS_ACCESS_KEY_ID"),
+                "secret_key": _decode("AWS_SECRET_ACCESS_KEY"),
+                "region": _decode("AWS_DEFAULT_REGION"),
+            }
+        except Exception as exc:
+            logger.warning("Could not read S3 credentials from secret %s/%s: %s", namespace, secret_name, exc)
+            return {}
 
     @staticmethod
-    def _download_results_from_s3(bucket: str, prefix: str, local_dir: Path) -> None:
+    def _create_s3_client(
+        endpoint_url: str | None = None,
+        access_key: str | None = None,
+        secret_key: str | None = None,
+        region: str | None = None,
+    ):
+        """Create a boto3 S3 client.
+
+        Explicit parameters take precedence over environment variables, which
+        allows the adapter pod to supply credentials read from a k8s secret
+        when they are not present in its own environment.
+        """
+        from .s3_utils import create_s3_client
+        return create_s3_client(
+            endpoint_url=endpoint_url,
+            access_key=access_key,
+            secret_key=secret_key,
+            region=region,
+        )
+
+    @staticmethod
+    def _download_results_from_s3(
+        bucket: str,
+        prefix: str,
+        local_dir: Path,
+        endpoint_url: str | None = None,
+        access_key: str | None = None,
+        secret_key: str | None = None,
+        region: str | None = None,
+    ) -> None:
         """Download all scan result files from S3 to a local directory.
 
         Uses pagination to handle prefixes with many objects.
+        Explicit credential parameters take precedence over environment variables.
         """
         if not bucket:
             logger.warning("No S3 bucket configured; skipping result download")
             return
 
-        s3 = GarakAdapter._create_s3_client()
+        s3 = GarakAdapter._create_s3_client(
+            endpoint_url=endpoint_url,
+            access_key=access_key,
+            secret_key=secret_key,
+            region=region,
+        )
 
         paginator = s3.get_paginator("list_objects_v2")
         downloaded = 0
