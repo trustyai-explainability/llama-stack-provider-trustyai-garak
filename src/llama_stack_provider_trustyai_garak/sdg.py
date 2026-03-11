@@ -8,7 +8,7 @@ from KFP components, EvalHub integrations, or standalone scripts.
 
 import re
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, NamedTuple, Optional
 from .constants import DEFAULT_SDG_FLOW_ID
 
 import pandas
@@ -115,35 +115,34 @@ BASE_TAXONOMY: List[Dict[str, Any]] = [
 ]
 
 
+class SDGResult(NamedTuple):
+    """Return type for :func:`generate_sdg_dataset`."""
+    raw: pandas.DataFrame
+    normalized: pandas.DataFrame
+
+
 def generate_sdg_dataset(
     model: str,
     api_base: str,
     flow_id: str = DEFAULT_SDG_FLOW_ID,
     api_key: str = "dummy",
     taxonomy: Optional[pandas.DataFrame] = None,
-) -> pandas.DataFrame:
+) -> SDGResult:
     """Generate a red-team prompt dataset using sdg_hub.
 
     Runs the specified sdg_hub flow against the given model endpoint and
-    returns a normalized DataFrame ready for Garak intents consumption.
+    returns both the full SDG output and a normalised version ready for
+    Garak intents consumption.
 
     When *taxonomy* is ``None`` the built-in :data:`BASE_TAXONOMY` is
     used.  Callers may supply a custom taxonomy (validated by
     :func:`~.intents.load_taxonomy_dataset`) to override the default
     harm categories.
 
-    Args:
-        model: LLM model identifier (e.g. ``"hosted_vllm/gemma-2-9b-it-abliterated"``).
-        api_base: Model serving endpoint URL.
-        flow_id: sdg_hub flow identifier.
-        api_key: API key for the model.
-        taxonomy: Optional user-provided taxonomy DataFrame with at least
-            ``policy_concept`` and ``concept_definition`` columns plus
-            optional ``*_pool`` columns.  When ``None``, ``BASE_TAXONOMY``
-            is used.
-
     Returns:
-        DataFrame with columns ``(category, prompt, description)``.
+        :class:`SDGResult` with ``raw`` (all columns from SDG including
+        pools) and ``normalized`` (``category``, ``prompt``,
+        ``description`` only).
     """
     import nest_asyncio
     from sdg_hub import FlowRegistry, Flow
@@ -170,21 +169,18 @@ def generate_sdg_dataset(
 
     result = flow.generate(df)
 
-    pool_cols = [c for c in result.columns if c.endswith("_pool")]
-    result = result.drop(columns=pool_cols, errors="ignore")
-
-    result = result.dropna(subset=["prompt"])
+    raw = result.dropna(subset=["prompt"]).copy()
 
     normalized = pandas.DataFrame({
-        "category": result["policy_concept"].apply(
+        "category": raw["policy_concept"].apply(
             lambda v: re.sub(r"[^a-z]", "", str(v).lower())
         ),
-        "prompt": result["prompt"].astype(str),
-        "description": result["concept_definition"].astype(str),
+        "prompt": raw["prompt"].astype(str),
+        "description": raw["concept_definition"].astype(str),
     })
 
     logger.info(
         "SDG complete: %d prompts across %d categories",
         len(normalized), normalized["category"].nunique(),
     )
-    return normalized
+    return SDGResult(raw=raw, normalized=normalized)

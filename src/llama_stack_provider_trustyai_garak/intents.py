@@ -178,6 +178,89 @@ def _parse_pool_value(value, col: str, row_idx: int):
     )
 
 
+def load_intents_dataset(
+    content: str,
+    format: str = "csv",
+) -> pandas.DataFrame:
+    """Load a pre-generated prompts dataset for the SDG bypass path.
+
+    Auto-detects the schema and returns a normalised DataFrame with
+    ``(category, prompt, description)`` columns ready for
+    :func:`generate_intents_from_dataset`.
+
+    Two schemas are recognised:
+
+    * **Normalised** -- already has ``category`` and ``prompt`` columns
+      (optionally ``description``).  Returned as-is after cleaning.
+    * **Raw SDG output** -- has ``policy_concept``, ``concept_definition``
+      and ``prompt`` columns (plus optional pool columns).  Columns are
+      renamed / dropped to match the normalised schema.
+
+    Args:
+        content: Raw file content (CSV or JSON) as a string.
+        format:  ``"csv"`` or ``"json"``.
+
+    Raises:
+        ValueError: On unsupported format, missing ``prompt`` column, or
+            unrecognised schema.
+    """
+    fmt = format.lower()
+    if fmt == "csv":
+        df = pandas.read_csv(io.StringIO(content))
+    elif fmt == "json":
+        df = pandas.read_json(io.StringIO(content))
+    else:
+        raise ValueError(
+            f"Unsupported intents file format: '{format}'. Use 'csv' or 'json'."
+        )
+
+    if "prompt" not in df.columns:
+        raise ValueError(
+            f"Intents dataset must contain a 'prompt' column. "
+            f"Found columns: {sorted(df.columns)}"
+        )
+
+    if "category" in df.columns:
+        # Already-normalised schema
+        cols = ["category", "prompt"]
+        if "description" in df.columns:
+            cols.append("description")
+        df = df[cols].copy()
+        if "description" not in df.columns:
+            df["description"] = ""
+    elif "policy_concept" in df.columns:
+        # Raw SDG output schema -- normalise column names
+        df["category"] = df["policy_concept"].apply(
+            lambda v: re.sub(r"[^a-z]", "", str(v).lower())
+        )
+        df["prompt"] = df["prompt"].astype(str)
+        df["description"] = (
+            df["concept_definition"].astype(str)
+            if "concept_definition" in df.columns
+            else ""
+        )
+        df = df[["category", "prompt", "description"]]
+    else:
+        raise ValueError(
+            "Cannot detect intents dataset schema. Expected either "
+            "'category'+'prompt' (normalised) or 'policy_concept'+'prompt' "
+            f"(raw SDG output). Found columns: {sorted(df.columns)}"
+        )
+
+    df = df.dropna(subset=["prompt"])
+    df = df[df["prompt"].astype(str).str.strip() != ""]
+    df = df.reset_index(drop=True)
+
+    if df.empty:
+        raise ValueError("Intents dataset is empty after removing null/empty prompts.")
+
+    logger.info(
+        "Loaded intents dataset (bypass SDG): %d prompts across %d categories",
+        len(df), df["category"].nunique(),
+    )
+    return df
+
+
 def generate_intents_from_dataset(dataset: pandas.DataFrame,
                                   category_column_name="category",
                                   prompt_column_name="prompt",

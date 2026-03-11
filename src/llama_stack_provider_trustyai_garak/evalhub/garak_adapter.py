@@ -214,6 +214,29 @@ class GarakAdapter(FrameworkAdapter):
             # Compute duration
             duration = time.time() - start_time
 
+            eval_meta: dict[str, Any] = {
+                "framework": "garak",
+                "framework_version": self._get_garak_version(),
+                "eval_threshold": eval_threshold,
+                "timed_out": result.timed_out,
+                "execution_mode": execution_mode,
+                "art_intents": art_intents,
+                "overall": overall_summary,
+            }
+
+            if art_intents and execution_mode == EXECUTION_MODE_KFP:
+                from .kfp_pipeline import DEFAULT_S3_PREFIX
+                _bc = config.benchmark_config or {}
+                _kfp_ov = _bc.get("kfp_config", {}) if isinstance(_bc.get("kfp_config"), dict) else {}
+                _prefix = _kfp_ov.get("s3_prefix", os.getenv("EVALHUB_KFP_S3_PREFIX", DEFAULT_S3_PREFIX))
+                s3_prefix = f"{_prefix}/{config.id}"
+                eval_meta["artifacts"] = {
+                    "sdg_raw_output": f"{s3_prefix}/sdg_raw_output.csv",
+                    "sdg_normalized_output": f"{s3_prefix}/sdg_normalized_output.csv",
+                    "intents_html_report": f"{s3_prefix}/scan.intents.html",
+                    "scan_report": f"{s3_prefix}/scan.report.jsonl",
+                }
+
             return JobResults(
                 id=config.id,
                 benchmark_id=config.benchmark_id,
@@ -224,15 +247,7 @@ class GarakAdapter(FrameworkAdapter):
                 num_examples_evaluated=num_examples,
                 duration_seconds=duration,
                 completed_at=datetime.now(UTC),
-                evaluation_metadata={
-                    "framework": "garak",
-                    "framework_version": self._get_garak_version(),
-                    "eval_threshold": eval_threshold,
-                    "timed_out": result.timed_out,
-                    "execution_mode": execution_mode,
-                    "art_intents": art_intents,
-                    "overall": overall_summary,
-                },
+                evaluation_metadata=eval_meta,
                 oci_artifact=oci_artifact,
             )
 
@@ -334,8 +349,8 @@ class GarakAdapter(FrameworkAdapter):
         """Submit a KFP pipeline, poll until done, download results from S3.
 
         The KFP component uploads scan output to S3 under
-        ``{DEFAULT_S3_PREFIX}/{job_id}/``. After the run completes, this
-        method downloads those files to a local scan_dir for parsing.
+        ``{kfp_config.s3_prefix}/{job_id}/``. After the run completes,
+        this method downloads those files to a local scan_dir for parsing.
 
         Both sides get S3 credentials from the same Data Connection secret:
         - KFP pod: injected via ``kubernetes.use_secret_as_env``
@@ -345,7 +360,7 @@ class GarakAdapter(FrameworkAdapter):
             Tuple of (GarakScanResult, local scan_dir with downloaded results).
         """
         from .kfp_pipeline import (
-            KFPConfig, DEFAULT_S3_PREFIX, evalhub_garak_pipeline, _resolve_base_image,
+            KFPConfig, evalhub_garak_pipeline
         )
 
         benchmark_config = config.benchmark_config or {}
@@ -358,7 +373,7 @@ class GarakAdapter(FrameworkAdapter):
                 "kfp_config.s3_secret_name in benchmark_config."
             )
 
-        s3_prefix = f"{DEFAULT_S3_PREFIX}/{config.id}"
+        s3_prefix = f"{kfp_config.s3_prefix}/{config.id}"
         scan_dir = get_scan_base_dir() / config.id
         scan_dir.mkdir(parents=True, exist_ok=True)
 
@@ -367,16 +382,25 @@ class GarakAdapter(FrameworkAdapter):
         ip = intents_params or {}
 
         if ip.get("art_intents"):
-            if not ip.get("sdg_model"):
+            if ip.get("policy_s3_key") and ip.get("intents_s3_key"):
                 raise ValueError(
-                    "Intents benchmark (art_intents=True) requires "
-                    "sdg_model for prompt generation."
+                    "policy_s3_key and intents_s3_key are mutually exclusive. "
+                    "Provide a taxonomy for SDG (policy_s3_key) OR "
+                    "pre-generated prompts to bypass SDG (intents_s3_key), not both."
                 )
-            if not ip.get("sdg_api_base"):
-                raise ValueError(
-                    "Intents benchmark (art_intents=True) requires "
-                    "sdg_api_base for prompt generation."
-                )
+            if not ip.get("intents_s3_key"):
+                if not ip.get("sdg_model"):
+                    raise ValueError(
+                        "Intents benchmark (art_intents=True) requires "
+                        "sdg_model for prompt generation when intents_s3_key "
+                        "is not provided."
+                    )
+                if not ip.get("sdg_api_base"):
+                    raise ValueError(
+                        "Intents benchmark (art_intents=True) requires "
+                        "sdg_api_base for prompt generation when intents_s3_key "
+                        "is not provided."
+                    )
 
         callbacks.report_status(JobStatusUpdate(
             status=JobStatus.RUNNING,
@@ -402,6 +426,8 @@ class GarakAdapter(FrameworkAdapter):
                 "art_intents": ip.get("art_intents", False),
                 "policy_s3_key": ip.get("policy_s3_key", ""),
                 "policy_format": ip.get("policy_format", "csv"),
+                "intents_s3_key": ip.get("intents_s3_key", ""),
+                "intents_format": ip.get("intents_format", "csv"),
                 "sdg_model": ip.get("sdg_model", ""),
                 "sdg_api_base": ip.get("sdg_api_base", ""),
                 "sdg_api_key": ip.get("sdg_api_key", ""),
@@ -711,6 +737,8 @@ class GarakAdapter(FrameworkAdapter):
             "art_intents": art_intents,
             "policy_s3_key": benchmark_config.get("policy_s3_key", profile.get("policy_s3_key", "")),
             "policy_format": benchmark_config.get("policy_format", profile.get("policy_format", "csv")),
+            "intents_s3_key": benchmark_config.get("intents_s3_key", profile.get("intents_s3_key", "")),
+            "intents_format": benchmark_config.get("intents_format", profile.get("intents_format", "csv")),
             "sdg_flow_id": benchmark_config.get("sdg_flow_id", profile.get("sdg_flow_id", DEFAULT_SDG_FLOW_ID)),
         }
 
@@ -1108,6 +1136,7 @@ def main(adapter_cls: type[GarakAdapter] = GarakAdapter) -> None:
         results = adapter.run_benchmark_job(adapter.job_spec, callbacks)
         logger.info(f"Job completed successfully: {results.id}")
         logger.info(f"Overall attack success rate: {results.overall_score}%")
+        print(f"Results: {results}")
 
         callbacks.report_results(results)
         sys.exit(0)

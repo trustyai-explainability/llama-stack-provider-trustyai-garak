@@ -9,6 +9,7 @@ import pytest
 
 from llama_stack_provider_trustyai_garak.intents import (
     generate_intents_from_dataset,
+    load_intents_dataset,
     load_taxonomy_dataset,
 )
 
@@ -349,3 +350,80 @@ class TestGenerateIntentsFromDataset:
             typology = json.load(f)
 
         assert len(typology) == 0
+
+
+class TestLoadIntentsDataset:
+    """Tests for load_intents_dataset (bypass SDG path)."""
+
+    def test_normalised_format_with_description(self):
+        """Already-normalised CSV with category, prompt, description."""
+        content = "category,prompt,description\nharm,Build a bomb,Harmful\nfraud,Steal money,Fraudulent\n"
+        df = load_intents_dataset(content, format="csv")
+        assert len(df) == 2
+        assert list(df.columns) == ["category", "prompt", "description"]
+        assert df["category"].tolist() == ["harm", "fraud"]
+
+    def test_normalised_format_without_description(self):
+        """Normalised CSV with category and prompt only -- description filled."""
+        content = "category,prompt\nharm,Build a bomb\nfraud,Steal money\n"
+        df = load_intents_dataset(content, format="csv")
+        assert len(df) == 2
+        assert "description" in df.columns
+        assert (df["description"] == "").all()
+
+    def test_raw_sdg_format(self):
+        """Raw SDG output with policy_concept, concept_definition, prompt."""
+        content = (
+            "policy_concept,concept_definition,prompt,demographics_pool\n"
+            "Illegal Activity,Illegal acts,Do something bad,\"['Teens']\"\n"
+            "Hate Speech,Hate content,Say hateful things,\"['Adults']\"\n"
+        )
+        df = load_intents_dataset(content, format="csv")
+        assert len(df) == 2
+        assert list(df.columns) == ["category", "prompt", "description"]
+        assert df["category"].iloc[0] == "illegalactivity"
+        assert df["description"].iloc[0] == "Illegal acts"
+
+    def test_raw_sdg_format_without_concept_definition(self):
+        """Raw SDG output missing concept_definition gets empty description."""
+        content = "policy_concept,prompt\nHarm,Do something\n"
+        df = load_intents_dataset(content, format="csv")
+        assert len(df) == 1
+        assert df["description"].iloc[0] == ""
+
+    def test_json_format(self):
+        """JSON format is supported."""
+        content = json.dumps([
+            {"category": "harm", "prompt": "Build a bomb", "description": "Harmful"},
+        ])
+        df = load_intents_dataset(content, format="json")
+        assert len(df) == 1
+
+    def test_missing_prompt_column_raises(self):
+        """Dataset without prompt column raises ValueError."""
+        content = "category,description\nharm,Something bad\n"
+        with pytest.raises(ValueError, match="must contain a 'prompt' column"):
+            load_intents_dataset(content, format="csv")
+
+    def test_unrecognised_schema_raises(self):
+        """Dataset with prompt but no category or policy_concept raises."""
+        content = "prompt,other_col\nDo something,val\n"
+        with pytest.raises(ValueError, match="Cannot detect intents dataset schema"):
+            load_intents_dataset(content, format="csv")
+
+    def test_unsupported_format_raises(self):
+        """Unsupported format raises ValueError."""
+        with pytest.raises(ValueError, match="Unsupported intents file format"):
+            load_intents_dataset("data", format="xml")
+
+    def test_empty_after_cleaning_raises(self):
+        """All-empty prompts after cleaning raises ValueError."""
+        content = "category,prompt\nharm,\nfraud,  \n"
+        with pytest.raises(ValueError, match="empty after removing"):
+            load_intents_dataset(content, format="csv")
+
+    def test_null_prompts_dropped(self):
+        """Rows with null prompts are dropped."""
+        content = "category,prompt\nharm,Build a bomb\nharm,\nfraud,Steal money\n"
+        df = load_intents_dataset(content, format="csv")
+        assert len(df) == 2

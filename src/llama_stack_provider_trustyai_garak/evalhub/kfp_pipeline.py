@@ -10,12 +10,17 @@ Secret with standard S3 credential keys. The secret is injected into the
 KFP pods via ``kubernetes.use_secret_as_env``, and into the eval-hub Job
 pod via ``envFrom`` (configured by the eval-hub service).
 
-The pipeline has four steps:
+The pipeline has six steps:
 1. **validate** -- pre-flight checks (garak install, config, S3, model).
-2. **resolve_policy** -- resolve policy dataset (no-op for native probes,
-   optional S3 taxonomy download then SDG generation for intents scans).
-3. **garak_scan** -- run the scan and upload results to S3.
-4. **write_kfp_outputs** -- parse results from S3 and write KFP Metrics /
+2. **resolve_taxonomy** -- resolve the taxonomy input (custom from S3 or
+   default BASE_TAXONOMY).
+3. **sdg_generate** -- run SDG on the taxonomy to produce raw prompts,
+   or emit an empty marker for non-intents / bypass-sdg scans.
+4. **prepare_prompts** -- fetch bypass data from S3 as raw dataset (if applicable),
+   upload raw output (either from SDG or bypass data) to S3, normalise, upload normalised output to S3,
+   and emit the normalised prompts for garak.
+5. **garak_scan** -- run the scan and upload results to S3.
+6. **write_kfp_outputs** -- parse results from S3 and write KFP Metrics /
    HTML artifacts so results are visible in the KFP dashboard.
 """
 
@@ -32,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_KFP_EXPERIMENT = "evalhub-garak"
 DEFAULT_POLL_INTERVAL = 30
-DEFAULT_S3_PREFIX = "evalhub-garak"
+DEFAULT_S3_PREFIX = "evalhub-garak-kfp"
 
 S3_DATA_CONNECTION_KEYS = {
     "AWS_ACCESS_KEY_ID": "AWS_ACCESS_KEY_ID",
@@ -58,6 +63,7 @@ class KFPConfig:
     s3_endpoint: str = ""
     experiment_name: str = DEFAULT_KFP_EXPERIMENT
     poll_interval_seconds: int = DEFAULT_POLL_INTERVAL
+    s3_prefix: str = DEFAULT_S3_PREFIX
     base_image: str = ""
     verify_ssl: bool = True
     ssl_ca_cert: str = ""
@@ -109,6 +115,9 @@ class KFPConfig:
             poll_interval_seconds=int(
                 _resolve("poll_interval_seconds", "EVALHUB_KFP_POLL_INTERVAL", str(DEFAULT_POLL_INTERVAL))
             ),
+            s3_prefix=_resolve(
+                "s3_prefix", "EVALHUB_KFP_S3_PREFIX", DEFAULT_S3_PREFIX,
+            ),
             base_image=_resolve("base_image", "KUBEFLOW_GARAK_BASE_IMAGE"),
             verify_ssl=verify_ssl,
             ssl_ca_cert=_resolve("ssl_ca_cert", "EVALHUB_KFP_SSL_CA_CERT"),
@@ -136,7 +145,7 @@ def _resolve_base_image(kfp_config: KFPConfig | None = None) -> str:
     packages_to_install=[],
     base_image=_resolve_base_image(),
 )
-def evalhub_validate(
+def validate(
     config_json: str,
 ) -> NamedTuple("Outputs", [("valid", bool)]):
     """Pre-flight validation before running the scan pipeline.
@@ -158,7 +167,7 @@ def evalhub_validate(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
-    log = logging.getLogger("evalhub_validate")
+    log = logging.getLogger("validate")
 
     from llama_stack_provider_trustyai_garak.errors import GarakValidationError
 
@@ -208,26 +217,18 @@ def evalhub_validate(
     packages_to_install=[],
     base_image=_resolve_base_image(),
 )
-def evalhub_resolve_policy(
-    art_intents: bool,
-    policy_s3_key: str,
-    policy_format: str,
-    sdg_model: str,
-    sdg_api_base: str,
-    sdg_api_key: str,
-    sdg_flow_id: str,
-    policy_dataset: dsl.Output[dsl.Dataset],
+def resolve_taxonomy(
+    taxonomy_dataset: dsl.Output[dsl.Dataset],
+    policy_s3_key: str = "",
+    policy_format: str = "csv"
 ):
-    """Resolve the policy dataset for a Garak intents scan.
+    """Resolve the taxonomy input for SDG.
 
-    When ``art_intents=False`` writes an empty marker (native probes).
-    When ``art_intents=True`` SDG always runs to generate adversarial
-    prompts.  If ``policy_s3_key`` is provided, the referenced S3 object
-    is loaded as a custom taxonomy that replaces the built-in
-    ``BASE_TAXONOMY``; otherwise the default taxonomy is used.
+    If ``policy_s3_key`` is provided, the referenced S3 object is
+    downloaded and validated via ``load_taxonomy_dataset()``.  Otherwise
+    the built-in ``BASE_TAXONOMY`` is emitted.
 
-    S3 credentials are injected as env vars by the pipeline using
-    ``kubernetes.use_secret_as_env`` from the same Data Connection secret.
+    The output artifact is always a CSV-formatted taxonomy DataFrame.
     """
     import logging
     import os
@@ -236,27 +237,12 @@ def evalhub_resolve_policy(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
-    log = logging.getLogger("evalhub_resolve_policy")
+    log = logging.getLogger("resolve_taxonomy")
 
+    import pandas as pd
     from llama_stack_provider_trustyai_garak.errors import GarakValidationError
 
-    if not art_intents:
-        log.info("Non-intents scan — writing empty dataset marker")
-        with open(policy_dataset.path, "w") as f:
-            f.write("")
-        return
-
-    if not sdg_model or not sdg_model.strip():
-        raise GarakValidationError(
-            "sdg_model is required for intents scans (art_intents=True)."
-        )
-    if not sdg_api_base or not sdg_api_base.strip():
-        raise GarakValidationError(
-            "sdg_api_base is required for intents scans (art_intents=True)."
-        )
-
-    taxonomy = None
-    if policy_s3_key:
+    if policy_s3_key and policy_s3_key.strip():
         from llama_stack_provider_trustyai_garak.intents import load_taxonomy_dataset
         from llama_stack_provider_trustyai_garak.evalhub.s3_utils import create_s3_client
 
@@ -280,21 +266,93 @@ def evalhub_resolve_policy(
                 "or set AWS_S3_BUCKET."
             )
 
-        log.info("Fetching policy taxonomy from S3 (bucket=%s, key=%s, format=%s)", s3_bucket, s3_key, policy_format)
+        log.info(
+            "Fetching policy taxonomy from S3 (bucket=%s, key=%s, format=%s)",
+            s3_bucket, s3_key, policy_format,
+        )
 
         s3 = create_s3_client()
         response = s3.get_object(Bucket=s3_bucket, Key=s3_key)
         file_content = response["Body"].read().decode("utf-8")
 
-        taxonomy = load_taxonomy_dataset(
-            content=file_content,
-            format=policy_format,
-        )
+        taxonomy = load_taxonomy_dataset(content=file_content, format=policy_format)
         log.info(
             "Loaded custom taxonomy: %d entries, columns: %s",
             len(taxonomy), list(taxonomy.columns),
         )
+    else:
+        from llama_stack_provider_trustyai_garak.sdg import BASE_TAXONOMY
 
+        taxonomy = pd.DataFrame(BASE_TAXONOMY)
+        log.info("Using BASE_TAXONOMY: %d entries", len(taxonomy))
+
+    taxonomy.to_csv(taxonomy_dataset.path, index=False)
+
+
+@dsl.component(
+    install_kfp_package=False,
+    packages_to_install=[],
+    base_image=_resolve_base_image(),
+)
+def sdg_generate(
+    art_intents: bool,
+    intents_s3_key: str,
+    sdg_model: str,
+    sdg_api_base: str,
+    sdg_api_key: str,
+    sdg_flow_id: str,
+    taxonomy_dataset: dsl.Input[dsl.Dataset],
+    sdg_dataset: dsl.Output[dsl.Dataset],
+):
+    """Run Synthetic Data Generation on a taxonomy to produce raw prompts.
+
+    Two modes:
+
+    * ``art_intents=False`` or ``intents_s3_key`` set -- writes an empty
+      marker (native probes or bypass; downstream ``prepare_prompts``
+      handles the bypass fetch).
+    * Otherwise -- run SDG on the taxonomy artifact, emit the raw
+      (un-normalised) output including all pool columns.
+
+    Only depends on taxonomy + SDG model params so KFP caching works
+    across multiple garak runs with identical inputs.
+    """
+    import logging
+    import os
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+    log = logging.getLogger("sdg_generate")
+
+    from llama_stack_provider_trustyai_garak.errors import GarakValidationError
+
+    if not art_intents:
+        log.info("Non-intents scan — writing empty dataset marker")
+        with open(sdg_dataset.path, "w") as f:
+            f.write("")
+        return
+
+    if intents_s3_key and intents_s3_key.strip():
+        log.info("Bypass mode (intents_s3_key set) — SDG not needed, writing empty marker")
+        with open(sdg_dataset.path, "w") as f:
+            f.write("")
+        return
+
+    # --- SDG path ---
+    if not sdg_model or not sdg_model.strip():
+        raise GarakValidationError(
+            "sdg_model is required for intents scans when intents_s3_key "
+            "is not provided (SDG must run)."
+        )
+    if not sdg_api_base or not sdg_api_base.strip():
+        raise GarakValidationError(
+            "sdg_api_base is required for intents scans when intents_s3_key "
+            "is not provided (SDG must run)."
+        )
+
+    import pandas as pd
     from llama_stack_provider_trustyai_garak.sdg import generate_sdg_dataset
     from llama_stack_provider_trustyai_garak.constants import DEFAULT_SDG_FLOW_ID as _DEFAULT_FLOW
 
@@ -305,18 +363,28 @@ def evalhub_resolve_policy(
     if not effective_flow_id:
         effective_flow_id = _DEFAULT_FLOW
 
-    log.info("Running SDG: model=%s, api_base=%s, flow=%s", sdg_model, sdg_api_base, effective_flow_id)
-    normalized = generate_sdg_dataset(
+    taxonomy = pd.read_csv(taxonomy_dataset.path)
+    log.info(
+        "Read taxonomy from artifact: %d entries, columns: %s",
+        len(taxonomy), list(taxonomy.columns),
+    )
+
+    log.info(
+        "Running SDG: model=%s, api_base=%s, flow=%s",
+        sdg_model, sdg_api_base, effective_flow_id,
+    )
+    sdg_result = generate_sdg_dataset(
         model=sdg_model,
         api_base=sdg_api_base,
         flow_id=effective_flow_id,
         api_key=sdg_api_key if sdg_api_key and sdg_api_key.strip() else "dummy",
         taxonomy=taxonomy,
     )
-    normalized.to_csv(policy_dataset.path, index=False)
+
+    sdg_result.raw.to_csv(sdg_dataset.path, index=False)
     log.info(
-        "SDG produced %d prompts across %d categories",
-        len(normalized), normalized["category"].nunique(),
+        "SDG produced %d raw rows across %d categories",
+        len(sdg_result.raw), sdg_result.raw["policy_concept"].nunique(),
     )
 
 
@@ -325,15 +393,135 @@ def evalhub_resolve_policy(
     packages_to_install=[],
     base_image=_resolve_base_image(),
 )
-def evalhub_garak_scan(
+def prepare_prompts(
+    art_intents: bool,
+    s3_prefix: str,
+    intents_s3_key: str,
+    intents_format: str,
+    sdg_dataset: dsl.Input[dsl.Dataset],
+    prompts_dataset: dsl.Output[dsl.Dataset],
+):
+    """Prepare normalised prompts for the Garak scan.
+
+    Handles three scenarios:
+
+    * **Non-intents** (``art_intents=False``): passes through an empty
+      marker — garak uses its native probes.
+    * **Bypass SDG** (``intents_s3_key`` set): fetches the user's
+      pre-generated dataset from S3, uploads the original file as the
+      raw artifact, normalises it via :func:`load_intents_dataset`,
+      uploads the normalised version, and outputs it for garak.
+    * **SDG ran** (``sdg_dataset`` non-empty): uploads the raw SDG
+      output, normalises it, uploads the normalised version, and
+      outputs it for garak.
+
+    Raw and normalised CSVs are persisted to the S3 job folder
+    *before* the scan starts, so they are available for review while
+    the scan is still running.
+    """
+    import logging
+    import os
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+    log = logging.getLogger("prepare_prompts")
+
+    if not art_intents:
+        log.info("Non-intents scan — passing through empty marker")
+        with open(prompts_dataset.path, "w") as f:
+            f.write("")
+        return
+
+    from llama_stack_provider_trustyai_garak.intents import load_intents_dataset
+    from llama_stack_provider_trustyai_garak.evalhub.s3_utils import create_s3_client
+    from llama_stack_provider_trustyai_garak.errors import GarakValidationError
+
+    s3_bucket = os.environ.get("AWS_S3_BUCKET", "")
+    if not s3_bucket:
+        raise GarakValidationError(
+            "AWS_S3_BUCKET is required. "
+            "Ensure the Data Connection secret is configured."
+        )
+    if not s3_prefix:
+        raise GarakValidationError(
+            "s3_prefix is required. "
+            "Ensure the s3_prefix is configured in the benchmark_config."
+        )
+
+    s3 = create_s3_client()
+
+    raw_content: str | None = None
+
+    # --- Bypass SDG: fetch the user's pre-generated dataset from S3 ---
+    if intents_s3_key and intents_s3_key.strip():
+        if intents_s3_key.startswith("s3://"):
+            parts = intents_s3_key[len("s3://"):].split("/", 1)
+            fetch_bucket = parts[0]
+            fetch_key = parts[1] if len(parts) > 1 else ""
+            if not fetch_key:
+                raise GarakValidationError(
+                    f"Invalid intents_s3_key '{intents_s3_key}': "
+                    "expected s3://bucket/key format"
+                )
+        else:
+            fetch_bucket = s3_bucket
+            fetch_key = intents_s3_key
+
+        log.info(
+            "Bypass mode — fetching pre-generated intents from S3 "
+            "(bucket=%s, key=%s, format=%s)",
+            fetch_bucket, fetch_key, intents_format,
+        )
+        response = s3.get_object(Bucket=fetch_bucket, Key=fetch_key)
+        raw_content = response["Body"].read().decode("utf-8")
+
+    # --- SDG ran: read the raw artifact ---
+    elif os.path.getsize(sdg_dataset.path) > 0:
+        with open(sdg_dataset.path) as f:
+            raw_content = f.read()
+        log.info("Read raw SDG output from artifact (%d bytes)", len(raw_content))
+    else:
+        log.warning("No SDG output and no intents_s3_key — writing empty marker")
+        with open(prompts_dataset.path, "w") as f:
+            f.write("")
+        return
+
+    # Upload raw (user-provided or SDG output) to S3 job folder
+    raw_key = f"{s3_prefix}/sdg_raw_output.csv"
+    s3.put_object(Bucket=s3_bucket, Key=raw_key, Body=raw_content.encode("utf-8"))
+    log.info("Uploaded raw output to s3://%s/%s", s3_bucket, raw_key)
+
+    # Normalise
+    fmt = intents_format if (intents_s3_key and intents_s3_key.strip()) else "csv"
+    normalized = load_intents_dataset(content=raw_content, format=fmt)
+    normalized.to_csv(prompts_dataset.path, index=False)
+    log.info(
+        "Normalised %d prompts across %d categories",
+        len(normalized), normalized["category"].nunique(),
+    )
+
+    # Upload normalised to S3 job folder
+    norm_key = f"{s3_prefix}/sdg_normalized_output.csv"
+    s3.upload_file(prompts_dataset.path, s3_bucket, norm_key)
+    log.info("Uploaded normalised output to s3://%s/%s", s3_bucket, norm_key)
+
+
+@dsl.component(
+    install_kfp_package=False,
+    packages_to_install=[],
+    base_image=_resolve_base_image(),
+)
+def garak_scan(
     config_json: str,
     s3_prefix: str,
     timeout_seconds: int,
-    policy_dataset: dsl.Input[dsl.Dataset],
+    prompts_dataset: dsl.Input[dsl.Dataset],
 ) -> NamedTuple("Outputs", [("success", bool), ("return_code", int)]):
     """Run a Garak scan and upload output to S3 via Data Connection credentials.
 
-    If the ``policy_dataset`` artifact contains data, intent stubs are
+    If the ``prompts_dataset`` artifact contains data, intent stubs are
     generated from it before launching garak. S3 credentials are injected
     as environment variables by the pipeline using
     ``kubernetes.use_secret_as_env`` from a Data Connection secret.
@@ -367,11 +555,11 @@ def evalhub_garak_scan(
     report_prefix = scan_dir / "scan"
     log_file = scan_dir / "scan.log"
 
-    if os.path.getsize(policy_dataset.path) > 0:
+    if os.path.getsize(prompts_dataset.path) > 0:
         import pandas as pd
         from llama_stack_provider_trustyai_garak.intents import generate_intents_from_dataset
 
-        df = pd.read_csv(policy_dataset.path)
+        df = pd.read_csv(prompts_dataset.path)
         if not df.empty:
             desc_col = "description" if "description" in df.columns else None
             generate_intents_from_dataset(
@@ -442,14 +630,15 @@ def evalhub_garak_scan(
     packages_to_install=[],
     base_image=_resolve_base_image(),
 )
-def evalhub_write_kfp_outputs(
+def write_kfp_outputs(
     s3_prefix: str,
     eval_threshold: float,
     art_intents: bool,
     summary_metrics: dsl.Output[dsl.Metrics],
     html_report: dsl.Output[dsl.HTML],
 ):
-    """Download scan results from S3, parse them, and write KFP artifacts.
+    """Download scan results from S3, parse them, write KFP artifacts,
+    and upload the intents HTML report to the S3 job folder.
 
     This is a best-effort component: the adapter pod performs the
     authoritative parse. This component exists so that key metrics and
@@ -462,7 +651,7 @@ def evalhub_write_kfp_outputs(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
-    log = logging.getLogger("evalhub_write_kfp_outputs")
+    log = logging.getLogger("write_kfp_outputs")
 
     try:
         from llama_stack_provider_trustyai_garak.evalhub.s3_utils import create_s3_client
@@ -567,6 +756,20 @@ def evalhub_write_kfp_outputs(
         if html_content:
             with open(html_report.path, "w") as f:
                 f.write(html_content)
+
+            # Upload intents HTML to S3 job folder
+            if art_intents and s3_prefix:
+                try:
+                    s3.upload_file(
+                        html_report.path, s3_bucket,
+                        f"{s3_prefix}/scan.intents.html",
+                    )
+                    log.info(
+                        "Uploaded intents HTML report to s3://%s/%s/scan.intents.html",
+                        s3_bucket, s3_prefix,
+                    )
+                except Exception as exc:
+                    log.warning("Failed to upload intents HTML to S3: %s", exc)
         else:
             with open(html_report.path, "w") as f:
                 f.write("<html><body><p>No HTML report available.</p></body></html>")
@@ -591,24 +794,27 @@ def evalhub_garak_pipeline(
     art_intents: bool = False,
     policy_s3_key: str = "",
     policy_format: str = "csv",
+    intents_s3_key: str = "",
+    intents_format: str = "csv",
     sdg_model: str = "",
     sdg_api_base: str = "",
     sdg_api_key: str = "",
     sdg_flow_id: str = DEFAULT_SDG_FLOW_ID,
 ):
-    """Four-step pipeline: validate, resolve policy, scan, write KFP outputs.
+    """Six-step pipeline: validate, resolve taxonomy, SDG, prepare prompts, scan, write outputs.
 
     ``s3_secret_name`` is required -- the Data Connection secret is injected
     as environment variables into all pipeline pods.
 
-    For native probe scans, ``art_intents`` is False and the resolve step
-    writes an empty marker.  For intents scans, ``sdg_model`` and
-    ``sdg_api_base`` are required.  Optionally provide ``policy_s3_key``
-    pointing to a custom taxonomy file that replaces the default
-    ``BASE_TAXONOMY`` used by SDG.
+    Three intents modes:
+    - Default taxonomy + SDG: no file params, requires ``sdg_model``/``sdg_api_base``.
+    - Custom taxonomy + SDG: ``policy_s3_key`` set, requires ``sdg_model``/``sdg_api_base``.
+    - Bypass SDG: ``intents_s3_key`` set, SDG params NOT required.
+
+    ``policy_s3_key`` and ``intents_s3_key`` are mutually exclusive.
     """
     # Step 1: Pre-flight validation
-    validate_task = evalhub_validate(
+    validate_task = validate(
         config_json=config_json,
     )
     validate_task.set_caching_options(False)
@@ -619,33 +825,63 @@ def evalhub_garak_pipeline(
         secret_key_to_env=S3_DATA_CONNECTION_KEYS,
     )
 
-    # Step 2: Resolve policy dataset (taxonomy -> SDG -> prompts)
-    resolve_task = evalhub_resolve_policy(
-        art_intents=art_intents,
+    # Step 2: Resolve taxonomy (custom from S3 or BASE_TAXONOMY)
+    taxonomy_task = resolve_taxonomy(
         policy_s3_key=policy_s3_key,
         policy_format=policy_format,
-        sdg_model=sdg_model,
-        sdg_api_base=sdg_api_base,
-        sdg_api_key=sdg_api_key,
-        sdg_flow_id=sdg_flow_id,
     )
-    resolve_task.set_caching_options(True)
-    resolve_task.after(validate_task)
+    taxonomy_task.set_caching_options(True)
+    taxonomy_task.after(validate_task)
 
     kubernetes.use_secret_as_env(
-        resolve_task,
+        taxonomy_task,
         secret_name=s3_secret_name,
         secret_key_to_env=S3_DATA_CONNECTION_KEYS,
     )
 
-    # Step 3: Run garak scan
-    scan_task = evalhub_garak_scan(
+    # Step 3: Run SDG (or no-op for non-intents / bypass)
+    sdg_task = sdg_generate(
+        art_intents=art_intents,
+        intents_s3_key=intents_s3_key,
+        sdg_model=sdg_model,
+        sdg_api_base=sdg_api_base,
+        sdg_api_key=sdg_api_key,
+        sdg_flow_id=sdg_flow_id,
+        taxonomy_dataset=taxonomy_task.outputs["taxonomy_dataset"],
+    )
+    sdg_task.set_caching_options(True)
+
+    kubernetes.use_secret_as_env(
+        sdg_task,
+        secret_name=s3_secret_name,
+        secret_key_to_env=S3_DATA_CONNECTION_KEYS,
+    )
+
+    # Step 4: Prepare prompts (normalise, persist raw+normalised to S3)
+    prep_task = prepare_prompts(
+        art_intents=art_intents,
+        s3_prefix=s3_prefix,
+        intents_s3_key=intents_s3_key,
+        intents_format=intents_format,
+        sdg_dataset=sdg_task.outputs["sdg_dataset"],
+    )
+    prep_task.set_caching_options(False)
+
+    kubernetes.use_secret_as_env(
+        prep_task,
+        secret_name=s3_secret_name,
+        secret_key_to_env=S3_DATA_CONNECTION_KEYS,
+    )
+
+    # Step 5: Run garak scan
+    scan_task = garak_scan(
         config_json=config_json,
         s3_prefix=s3_prefix,
         timeout_seconds=timeout_seconds,
-        policy_dataset=resolve_task.outputs["policy_dataset"],
+        prompts_dataset=prep_task.outputs["prompts_dataset"],
     )
     scan_task.set_caching_options(False)
+    scan_task.after(prep_task)
 
     kubernetes.use_secret_as_env(
         scan_task,
@@ -653,8 +889,8 @@ def evalhub_garak_pipeline(
         secret_key_to_env=S3_DATA_CONNECTION_KEYS,
     )
 
-    # Step 4: Write KFP Metrics + HTML (best-effort, for KFP dashboard)
-    outputs_task = evalhub_write_kfp_outputs(
+    # Step 6: Write KFP Metrics + HTML to dashboard, upload intents HTML to S3
+    outputs_task = write_kfp_outputs(
         s3_prefix=s3_prefix,
         eval_threshold=eval_threshold,
         art_intents=art_intents,

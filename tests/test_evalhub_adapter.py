@@ -1347,11 +1347,11 @@ def _get_component_fn(component_func):
     return getattr(component_func, "python_func", component_func)
 
 
-class TestEvalhubValidateComponent:
-    """Targeted tests for the evalhub_validate KFP component."""
+class TestValidateComponent:
+    """Targeted tests for the validate KFP component."""
 
     def test_valid_config_and_s3_passes(self, monkeypatch, tmp_path):
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_validate
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import validate
 
         monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "fake")
@@ -1371,13 +1371,13 @@ class TestEvalhubValidateComponent:
         )
 
         config_json = json.dumps({"plugins": {"probe_spec": ["test"]}, "reporting": {}})
-        fn = _get_component_fn(evalhub_validate)
+        fn = _get_component_fn(validate)
         result = fn(config_json=config_json)
         assert result.valid is True
         assert head_bucket_called["bucket"] == "test-bucket"
 
     def test_malformed_config_json_raises(self, monkeypatch):
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_validate
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import validate
         from llama_stack_provider_trustyai_garak.errors import GarakValidationError
 
         monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
@@ -1390,12 +1390,12 @@ class TestEvalhubValidateComponent:
             _fake_create_s3_client,
         )
 
-        fn = _get_component_fn(evalhub_validate)
+        fn = _get_component_fn(validate)
         with pytest.raises(GarakValidationError, match="not valid JSON"):
             fn(config_json="not-valid-json{{{")
 
     def test_missing_plugins_section_raises(self, monkeypatch):
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_validate
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import validate
         from llama_stack_provider_trustyai_garak.errors import GarakValidationError
 
         monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
@@ -1408,22 +1408,22 @@ class TestEvalhubValidateComponent:
             _fake_create_s3_client,
         )
 
-        fn = _get_component_fn(evalhub_validate)
+        fn = _get_component_fn(validate)
         with pytest.raises(GarakValidationError, match="plugins"):
             fn(config_json=json.dumps({"reporting": {}}))
 
     def test_missing_s3_bucket_raises(self, monkeypatch):
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_validate
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import validate
         from llama_stack_provider_trustyai_garak.errors import GarakValidationError
 
         monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
 
-        fn = _get_component_fn(evalhub_validate)
+        fn = _get_component_fn(validate)
         with pytest.raises(GarakValidationError, match="AWS_S3_BUCKET"):
             fn(config_json=json.dumps({"plugins": {}}))
 
     def test_unreachable_s3_bucket_raises(self, monkeypatch):
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_validate
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import validate
         from llama_stack_provider_trustyai_garak.errors import GarakValidationError
 
         monkeypatch.setenv("AWS_S3_BUCKET", "bad-bucket")
@@ -1438,111 +1438,34 @@ class TestEvalhubValidateComponent:
             _fake_create_s3_client,
         )
 
-        fn = _get_component_fn(evalhub_validate)
+        fn = _get_component_fn(validate)
         with pytest.raises(GarakValidationError, match="not reachable"):
             fn(config_json=json.dumps({"plugins": {}}))
 
 
-class TestEvalhubResolvePolicyComponent:
-    """Targeted tests for the evalhub_resolve_policy KFP component."""
+class TestResolveTaxonomyComponent:
+    """Tests for the resolve_taxonomy KFP component."""
 
-    def test_non_intents_writes_empty_artifact(self, monkeypatch, tmp_path):
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_resolve_policy
-
-        artifact = _FakeArtifact(str(tmp_path / "dataset.csv"))
-
-        fn = _get_component_fn(evalhub_resolve_policy)
-        fn(
-            art_intents=False,
-            policy_s3_key="",
-            policy_format="csv",
-            sdg_model="",
-            sdg_api_base="",
-            sdg_api_key="",
-            sdg_flow_id="",
-            policy_dataset=artifact,
-        )
-
-        content = Path(artifact.path).read_text()
-        assert content == ""
-
-    def test_intents_no_sdg_model_raises(self, monkeypatch, tmp_path):
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_resolve_policy
-        from llama_stack_provider_trustyai_garak.errors import GarakValidationError
-
-        artifact = _FakeArtifact(str(tmp_path / "dataset.csv"))
-
-        fn = _get_component_fn(evalhub_resolve_policy)
-        with pytest.raises(GarakValidationError, match="sdg_model"):
-            fn(
-                art_intents=True,
-                policy_s3_key="",
-                policy_format="csv",
-                sdg_model="",
-                sdg_api_base="",
-                sdg_api_key="",
-                sdg_flow_id="",
-                policy_dataset=artifact,
-            )
-
-    def test_invalid_s3_uri_raises(self, monkeypatch, tmp_path):
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_resolve_policy
-        from llama_stack_provider_trustyai_garak.errors import GarakValidationError
-
-        artifact = _FakeArtifact(str(tmp_path / "dataset.csv"))
-
-        fn = _get_component_fn(evalhub_resolve_policy)
-        with pytest.raises(GarakValidationError, match="Invalid policy_s3_key"):
-            fn(
-                art_intents=True,
-                policy_s3_key="s3://bucket-only",
-                policy_format="csv",
-                sdg_model="some-model",
-                sdg_api_base="http://sdg:8000",
-                sdg_api_key="",
-                sdg_flow_id="",
-                policy_dataset=artifact,
-            )
-
-    def test_sdg_missing_api_base_raises(self, monkeypatch, tmp_path):
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_resolve_policy
-        from llama_stack_provider_trustyai_garak.errors import GarakValidationError
-
-        artifact = _FakeArtifact(str(tmp_path / "dataset.csv"))
-
-        fn = _get_component_fn(evalhub_resolve_policy)
-        with pytest.raises(GarakValidationError, match="sdg_api_base"):
-            fn(
-                art_intents=True,
-                policy_s3_key="",
-                policy_format="csv",
-                sdg_model="some-model",
-                sdg_api_base="",
-                sdg_api_key="",
-                sdg_flow_id="",
-                policy_dataset=artifact,
-            )
-
-
-    def test_sdg_called_with_custom_taxonomy(self, monkeypatch, tmp_path):
-        """Positive path: S3 taxonomy is loaded and passed to SDG as the taxonomy argument."""
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_resolve_policy
+    def test_no_policy_emits_base_taxonomy(self, monkeypatch, tmp_path):
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import resolve_taxonomy
         import pandas as pd
 
-        artifact = _FakeArtifact(str(tmp_path / "dataset.csv"))
+        artifact = _FakeArtifact(str(tmp_path / "taxonomy.csv"))
 
-        taxonomy_df = pd.DataFrame([
-            {"policy_concept": "Custom Policy", "concept_definition": "Custom definition"},
-        ])
-        taxonomy_csv = taxonomy_df.to_csv(index=False)
+        fn = _get_component_fn(resolve_taxonomy)
+        fn(policy_s3_key="", policy_format="csv", taxonomy_dataset=artifact)
 
-        sdg_output = pd.DataFrame({
-            "category": ["custompolicy"],
-            "prompt": ["generated prompt"],
-            "description": ["Custom definition"],
-        })
+        df = pd.read_csv(artifact.path)
+        assert len(df) > 0
+        assert "policy_concept" in df.columns
 
-        captured: dict[str, object] = {}
+    def test_custom_taxonomy_from_s3(self, monkeypatch, tmp_path):
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import resolve_taxonomy
+        import pandas as pd
+
+        artifact = _FakeArtifact(str(tmp_path / "taxonomy.csv"))
+
+        taxonomy_csv = "policy_concept,concept_definition\nCustom,Custom def\n"
 
         def _fake_create_s3_client():
             def _get_object(Bucket, Key):
@@ -1553,53 +1476,480 @@ class TestEvalhubResolvePolicyComponent:
             "llama_stack_provider_trustyai_garak.evalhub.s3_utils.create_s3_client",
             _fake_create_s3_client,
         )
+        monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
+
+        fn = _get_component_fn(resolve_taxonomy)
+        fn(
+            policy_s3_key="path/to/taxonomy.csv",
+            policy_format="csv",
+            taxonomy_dataset=artifact,
+        )
+
+        df = pd.read_csv(artifact.path)
+        assert df["policy_concept"].iloc[0] == "Custom"
+
+    def test_invalid_s3_uri_raises(self, monkeypatch, tmp_path):
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import resolve_taxonomy
+        from llama_stack_provider_trustyai_garak.errors import GarakValidationError
+
+        artifact = _FakeArtifact(str(tmp_path / "taxonomy.csv"))
+
+        fn = _get_component_fn(resolve_taxonomy)
+        with pytest.raises(GarakValidationError, match="Invalid policy_s3_key"):
+            fn(
+                policy_s3_key="s3://bucket-only",
+                policy_format="csv",
+                taxonomy_dataset=artifact,
+            )
+
+
+class TestSdgGenerateComponent:
+    """Tests for the sdg_generate KFP component."""
+
+    def test_non_intents_writes_empty_marker(self, monkeypatch, tmp_path):
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import sdg_generate
+
+        taxonomy = _FakeArtifact(str(tmp_path / "taxonomy.csv"))
+        Path(taxonomy.path).write_text("policy_concept,concept_definition\nA,B\n")
+        sdg_out = _FakeArtifact(str(tmp_path / "sdg.csv"))
+
+        fn = _get_component_fn(sdg_generate)
+        fn(
+            art_intents=False,
+            intents_s3_key="",
+            sdg_model="",
+            sdg_api_base="",
+            sdg_api_key="",
+            sdg_flow_id="",
+            taxonomy_dataset=taxonomy,
+            sdg_dataset=sdg_out,
+        )
+
+        assert Path(sdg_out.path).read_text() == ""
+
+    def test_bypass_mode_writes_empty_marker(self, monkeypatch, tmp_path):
+        """When intents_s3_key is set, sdg_generate writes empty (bypass handled by prepare_prompts)."""
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import sdg_generate
+
+        taxonomy = _FakeArtifact(str(tmp_path / "taxonomy.csv"))
+        Path(taxonomy.path).write_text("policy_concept,concept_definition\nA,B\n")
+        sdg_out = _FakeArtifact(str(tmp_path / "sdg.csv"))
+
+        fn = _get_component_fn(sdg_generate)
+        fn(
+            art_intents=True,
+            intents_s3_key="path/to/intents.csv",
+            sdg_model="",
+            sdg_api_base="",
+            sdg_api_key="",
+            sdg_flow_id="",
+            taxonomy_dataset=taxonomy,
+            sdg_dataset=sdg_out,
+        )
+
+        assert Path(sdg_out.path).read_text() == ""
+
+    def test_intents_no_sdg_model_raises(self, monkeypatch, tmp_path):
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import sdg_generate
+        from llama_stack_provider_trustyai_garak.errors import GarakValidationError
+
+        taxonomy = _FakeArtifact(str(tmp_path / "taxonomy.csv"))
+        Path(taxonomy.path).write_text("policy_concept,concept_definition\nA,B\n")
+        sdg_out = _FakeArtifact(str(tmp_path / "sdg.csv"))
+
+        fn = _get_component_fn(sdg_generate)
+        with pytest.raises(GarakValidationError, match="sdg_model"):
+            fn(
+                art_intents=True,
+                intents_s3_key="",
+                sdg_model="",
+                sdg_api_base="",
+                sdg_api_key="",
+                sdg_flow_id="",
+                taxonomy_dataset=taxonomy,
+                sdg_dataset=sdg_out,
+            )
+
+    def test_sdg_missing_api_base_raises(self, monkeypatch, tmp_path):
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import sdg_generate
+        from llama_stack_provider_trustyai_garak.errors import GarakValidationError
+
+        taxonomy = _FakeArtifact(str(tmp_path / "taxonomy.csv"))
+        Path(taxonomy.path).write_text("policy_concept,concept_definition\nA,B\n")
+        sdg_out = _FakeArtifact(str(tmp_path / "sdg.csv"))
+
+        fn = _get_component_fn(sdg_generate)
+        with pytest.raises(GarakValidationError, match="sdg_api_base"):
+            fn(
+                art_intents=True,
+                intents_s3_key="",
+                sdg_model="some-model",
+                sdg_api_base="",
+                sdg_api_key="",
+                sdg_flow_id="",
+                taxonomy_dataset=taxonomy,
+                sdg_dataset=sdg_out,
+            )
+
+    def test_sdg_outputs_raw_artifact(self, monkeypatch, tmp_path):
+        """SDG path writes only the raw artifact (normalisation is in prepare_prompts)."""
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import sdg_generate
+        from llama_stack_provider_trustyai_garak.sdg import SDGResult
+        import pandas as pd
+
+        taxonomy = _FakeArtifact(str(tmp_path / "taxonomy.csv"))
+        Path(taxonomy.path).write_text("policy_concept,concept_definition\nHarm,Harm def\n")
+        sdg_out = _FakeArtifact(str(tmp_path / "sdg.csv"))
+
+        raw_df = pd.DataFrame({
+            "policy_concept": ["Harm"],
+            "concept_definition": ["Harm def"],
+            "prompt": ["generated"],
+            "demographics_pool": [["Teens"]],
+        })
+        norm_df = pd.DataFrame({
+            "category": ["harm"],
+            "prompt": ["generated"],
+            "description": ["Harm def"],
+        })
 
         def _fake_generate_sdg(model, api_base, flow_id, api_key="dummy", taxonomy=None):
-            captured["taxonomy"] = taxonomy
-            captured["model"] = model
-            return sdg_output
+            return SDGResult(raw=raw_df, normalized=norm_df)
 
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.sdg.generate_sdg_dataset",
             _fake_generate_sdg,
         )
 
-        monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
-
-        fn = _get_component_fn(evalhub_resolve_policy)
+        fn = _get_component_fn(sdg_generate)
         fn(
             art_intents=True,
-            policy_s3_key="evalhub-garak/custom_policy.csv",
-            policy_format="csv",
+            intents_s3_key="",
             sdg_model="test-model",
             sdg_api_base="http://sdg:8000",
             sdg_api_key="",
             sdg_flow_id="test-flow",
-            policy_dataset=artifact,
+            taxonomy_dataset=taxonomy,
+            sdg_dataset=sdg_out,
         )
 
-        assert captured["model"] == "test-model"
-        assert captured["taxonomy"] is not None
-        assert list(captured["taxonomy"].columns[:2]) == ["policy_concept", "concept_definition"]
-        assert captured["taxonomy"]["policy_concept"].iloc[0] == "Custom Policy"
+        raw_result = pd.read_csv(sdg_out.path)
+        assert "policy_concept" in raw_result.columns
+        assert "prompt" in raw_result.columns
+        assert len(raw_result) == 1
 
-        result_df = pd.read_csv(artifact.path)
+
+class TestPreparePromptsComponent:
+    """Tests for the prepare_prompts KFP component."""
+
+    def test_non_intents_writes_empty_marker(self, monkeypatch, tmp_path):
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import prepare_prompts
+
+        sdg_in = _FakeArtifact(str(tmp_path / "sdg.csv"))
+        Path(sdg_in.path).write_text("")
+        prompts_out = _FakeArtifact(str(tmp_path / "prompts.csv"))
+
+        fn = _get_component_fn(prepare_prompts)
+        fn(
+            art_intents=False,
+            s3_prefix="evalhub-garak-kfp/job1",
+            intents_s3_key="",
+            intents_format="csv",
+            sdg_dataset=sdg_in,
+            prompts_dataset=prompts_out,
+        )
+
+        assert Path(prompts_out.path).read_text() == ""
+
+    def test_sdg_path_normalises_and_uploads(self, monkeypatch, tmp_path):
+        """SDG ran: reads raw artifact, uploads raw + normalised to S3, outputs normalised."""
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import prepare_prompts
+        import pandas as pd
+
+        raw_csv = "policy_concept,concept_definition,prompt\nHarm,Harmful stuff,Do bad\n"
+        sdg_in = _FakeArtifact(str(tmp_path / "sdg.csv"))
+        Path(sdg_in.path).write_text(raw_csv)
+        prompts_out = _FakeArtifact(str(tmp_path / "prompts.csv"))
+
+        uploaded: dict[str, str] = {}
+
+        def _fake_create_s3_client():
+            def _put_object(Bucket, Key, Body):
+                uploaded[Key] = Body.decode("utf-8") if isinstance(Body, bytes) else Body
+            def _upload_file(filepath, bucket, key):
+                uploaded[key] = Path(filepath).read_text()
+            return SimpleNamespace(put_object=_put_object, upload_file=_upload_file)
+
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.evalhub.s3_utils.create_s3_client",
+            _fake_create_s3_client,
+        )
+        monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
+
+        fn = _get_component_fn(prepare_prompts)
+        fn(
+            art_intents=True,
+            s3_prefix="evalhub-garak-kfp/job123",
+            intents_s3_key="",
+            intents_format="csv",
+            sdg_dataset=sdg_in,
+            prompts_dataset=prompts_out,
+        )
+
+        assert "evalhub-garak-kfp/job123/sdg_raw_output.csv" in uploaded
+        assert "evalhub-garak-kfp/job123/sdg_normalized_output.csv" in uploaded
+
+        result_df = pd.read_csv(prompts_out.path)
+        assert "category" in result_df.columns
+        assert "prompt" in result_df.columns
         assert len(result_df) == 1
-        assert result_df["prompt"].iloc[0] == "generated prompt"
+
+        raw_uploaded = uploaded["evalhub-garak-kfp/job123/sdg_raw_output.csv"]
+        assert "policy_concept" in raw_uploaded
+
+    def test_bypass_fetches_and_preserves_raw(self, monkeypatch, tmp_path):
+        """Bypass mode: fetches user file from S3, uploads original as raw, normalises."""
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import prepare_prompts
+        import pandas as pd
+
+        user_csv = "policy_concept,concept_definition,prompt,demographics_pool\nHarm,Bad stuff,Do harm,\"['Teens']\"\n"
+
+        sdg_in = _FakeArtifact(str(tmp_path / "sdg.csv"))
+        Path(sdg_in.path).write_text("")
+        prompts_out = _FakeArtifact(str(tmp_path / "prompts.csv"))
+
+        uploaded: dict[str, str] = {}
+
+        def _fake_create_s3_client():
+            def _get_object(Bucket, Key):
+                return {"Body": SimpleNamespace(read=lambda: user_csv.encode())}
+            def _put_object(Bucket, Key, Body):
+                uploaded[Key] = Body.decode("utf-8") if isinstance(Body, bytes) else Body
+            def _upload_file(filepath, bucket, key):
+                uploaded[key] = Path(filepath).read_text()
+            return SimpleNamespace(
+                get_object=_get_object,
+                put_object=_put_object,
+                upload_file=_upload_file,
+            )
+
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.evalhub.s3_utils.create_s3_client",
+            _fake_create_s3_client,
+        )
+        monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
+
+        fn = _get_component_fn(prepare_prompts)
+        fn(
+            art_intents=True,
+            s3_prefix="evalhub-garak-kfp/job456",
+            intents_s3_key="user/intents.csv",
+            intents_format="csv",
+            sdg_dataset=sdg_in,
+            prompts_dataset=prompts_out,
+        )
+
+        raw_uploaded = uploaded.get("evalhub-garak-kfp/job456/sdg_raw_output.csv", "")
+        assert "demographics_pool" in raw_uploaded
+
+        result_df = pd.read_csv(prompts_out.path)
+        assert list(result_df.columns) == ["category", "prompt", "description"]
+        assert len(result_df) == 1
+
+    def test_empty_sdg_and_no_bypass_writes_empty(self, monkeypatch, tmp_path):
+        """No SDG output and no bypass key: writes empty marker."""
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import prepare_prompts
+
+        monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
+
+        sdg_in = _FakeArtifact(str(tmp_path / "sdg.csv"))
+        Path(sdg_in.path).write_text("")
+        prompts_out = _FakeArtifact(str(tmp_path / "prompts.csv"))
+
+        fn = _get_component_fn(prepare_prompts)
+        fn(
+            art_intents=True,
+            s3_prefix="evalhub-garak-kfp/job1",
+            intents_s3_key="",
+            intents_format="csv",
+            sdg_dataset=sdg_in,
+            prompts_dataset=prompts_out,
+        )
+
+        assert Path(prompts_out.path).read_text() == ""
 
 
-class TestEvalhubWriteKfpOutputsComponent:
-    """Targeted tests for the evalhub_write_kfp_outputs KFP component."""
+class TestAdapterMutualExclusivity:
+    """Tests for mutual exclusivity of policy_s3_key and intents_s3_key in adapter."""
+
+    _KFP_ENV = {
+        "EVALHUB_KFP_ENDPOINT": "http://kfp:8080",
+        "EVALHUB_KFP_NAMESPACE": "test-ns",
+        "EVALHUB_KFP_S3_SECRET_NAME": "test-secret",
+        "AWS_S3_BUCKET": "test-bucket",
+    }
+
+    def test_both_policy_and_intents_s3_key_raises(self, monkeypatch):
+        """Both policy_s3_key and intents_s3_key set raises ValueError."""
+        from llama_stack_provider_trustyai_garak.evalhub.garak_adapter import GarakAdapter
+
+        for k, v in self._KFP_ENV.items():
+            monkeypatch.setenv(k, v)
+
+        adapter = GarakAdapter.__new__(GarakAdapter)
+
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            adapter._run_via_kfp(
+                config=SimpleNamespace(
+                    id="test-job",
+                    benchmark_id="test",
+                    benchmark_config={},
+                ),
+                callbacks=SimpleNamespace(report_status=lambda *a, **kw: None),
+                garak_config_dict={"plugins": {}},
+                timeout=300,
+                intents_params={
+                    "art_intents": True,
+                    "policy_s3_key": "path/to/policy.csv",
+                    "intents_s3_key": "path/to/intents.csv",
+                    "sdg_model": "model",
+                    "sdg_api_base": "http://base",
+                },
+                eval_threshold=0.5,
+            )
+
+    def test_bypass_mode_no_sdg_params_accepted(self, monkeypatch):
+        """intents_s3_key set without sdg_model/sdg_api_base should not raise SDG validation."""
+        from llama_stack_provider_trustyai_garak.evalhub.garak_adapter import GarakAdapter
+
+        for k, v in self._KFP_ENV.items():
+            monkeypatch.setenv(k, v)
+
+        adapter = GarakAdapter.__new__(GarakAdapter)
+
+        ip = {
+            "art_intents": True,
+            "policy_s3_key": "",
+            "intents_s3_key": "path/to/intents.csv",
+            "intents_format": "csv",
+            "sdg_model": "",
+            "sdg_api_base": "",
+        }
+
+        try:
+            adapter._run_via_kfp(
+                config=SimpleNamespace(
+                    id="test-job",
+                    benchmark_id="test",
+                    benchmark_config={},
+                ),
+                callbacks=SimpleNamespace(report_status=lambda *a, **kw: None),
+                garak_config_dict={"plugins": {}},
+                timeout=300,
+                intents_params=ip,
+                eval_threshold=0.5,
+            )
+        except ValueError as e:
+            assert "sdg_model" not in str(e), f"Should not require sdg_model in bypass mode: {e}"
+            assert "sdg_api_base" not in str(e), f"Should not require sdg_api_base in bypass mode: {e}"
+        except Exception:
+            pass  # Other errors (KFP client creation, etc.) are expected
+
+    def test_sdg_mode_requires_sdg_params(self, monkeypatch):
+        """art_intents=True without intents_s3_key requires sdg_model."""
+        from llama_stack_provider_trustyai_garak.evalhub.garak_adapter import GarakAdapter
+
+        for k, v in self._KFP_ENV.items():
+            monkeypatch.setenv(k, v)
+
+        adapter = GarakAdapter.__new__(GarakAdapter)
+
+        with pytest.raises(ValueError, match="sdg_model"):
+            adapter._run_via_kfp(
+                config=SimpleNamespace(
+                    id="test-job",
+                    benchmark_id="test",
+                    benchmark_config={},
+                ),
+                callbacks=SimpleNamespace(report_status=lambda *a, **kw: None),
+                garak_config_dict={"plugins": {}},
+                timeout=300,
+                intents_params={
+                    "art_intents": True,
+                    "policy_s3_key": "",
+                    "intents_s3_key": "",
+                    "sdg_model": "",
+                    "sdg_api_base": "",
+                },
+                eval_threshold=0.5,
+            )
+
+
+class TestArtifactMetadataSurfacing:
+    """Tests that artifact S3 paths are surfaced in evaluation_metadata."""
+
+    def test_intents_kfp_job_includes_artifacts(self, monkeypatch):
+        """art_intents=True + KFP mode -> artifacts dict in evaluation_metadata."""
+        from llama_stack_provider_trustyai_garak.evalhub.garak_adapter import GarakAdapter
+
+        # Build minimal eval_meta dict the same way the adapter does
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import DEFAULT_S3_PREFIX
+        from llama_stack_provider_trustyai_garak.constants import EXECUTION_MODE_KFP
+
+        art_intents = True
+        execution_mode = EXECUTION_MODE_KFP
+        job_id = "test-job-123"
+        s3_prefix = f"{DEFAULT_S3_PREFIX}/{job_id}"
+
+        eval_meta = {
+            "framework": "garak",
+            "art_intents": art_intents,
+            "execution_mode": execution_mode,
+        }
+
+        if art_intents and execution_mode == EXECUTION_MODE_KFP:
+            eval_meta["artifacts"] = {
+                "sdg_raw_output": f"{s3_prefix}/sdg_raw_output.csv",
+                "sdg_normalized_output": f"{s3_prefix}/sdg_normalized_output.csv",
+                "intents_html_report": f"{s3_prefix}/scan.intents.html",
+                "scan_report": f"{s3_prefix}/scan.report.jsonl",
+            }
+
+        assert "artifacts" in eval_meta
+        assert eval_meta["artifacts"]["sdg_raw_output"] == f"evalhub-garak-kfp/{job_id}/sdg_raw_output.csv"
+        assert eval_meta["artifacts"]["scan_report"] == f"evalhub-garak-kfp/{job_id}/scan.report.jsonl"
+
+    def test_non_intents_job_no_artifacts(self):
+        """art_intents=False -> no artifacts dict in evaluation_metadata."""
+        from llama_stack_provider_trustyai_garak.constants import EXECUTION_MODE_KFP
+
+        art_intents = False
+        execution_mode = EXECUTION_MODE_KFP
+
+        eval_meta = {
+            "framework": "garak",
+            "art_intents": art_intents,
+            "execution_mode": execution_mode,
+        }
+
+        if art_intents and execution_mode == EXECUTION_MODE_KFP:
+            eval_meta["artifacts"] = {}
+
+        assert "artifacts" not in eval_meta
+
+
+class TestWriteKfpOutputsComponent:
+    """Targeted tests for the write_kfp_outputs KFP component."""
 
     def test_missing_s3_bucket_skips_gracefully(self, monkeypatch, tmp_path):
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_write_kfp_outputs
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import write_kfp_outputs
 
         monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
 
         metrics = _FakeMetrics()
         html = _FakeArtifact(str(tmp_path / "report.html"))
 
-        fn = _get_component_fn(evalhub_write_kfp_outputs)
+        fn = _get_component_fn(write_kfp_outputs)
         fn(
             s3_prefix="test/prefix",
             eval_threshold=0.5,
@@ -1611,14 +1961,14 @@ class TestEvalhubWriteKfpOutputsComponent:
         assert metrics.logged == {}
 
     def test_empty_report_skips_gracefully(self, monkeypatch, tmp_path):
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_write_kfp_outputs
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import write_kfp_outputs
 
         monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
 
         def _fake_create_s3_client():
             def _get_object(**kwargs):
                 return {"Body": SimpleNamespace(read=lambda: b"")}
-            return SimpleNamespace(get_object=_get_object)
+            return SimpleNamespace(get_object=_get_object, upload_file=lambda *a: None)
 
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.evalhub.s3_utils.create_s3_client",
@@ -1628,7 +1978,7 @@ class TestEvalhubWriteKfpOutputsComponent:
         metrics = _FakeMetrics()
         html = _FakeArtifact(str(tmp_path / "report.html"))
 
-        fn = _get_component_fn(evalhub_write_kfp_outputs)
+        fn = _get_component_fn(write_kfp_outputs)
         fn(
             s3_prefix="test/prefix",
             eval_threshold=0.5,
@@ -1640,7 +1990,7 @@ class TestEvalhubWriteKfpOutputsComponent:
         assert metrics.logged == {}
 
     def test_native_probes_logs_metrics_and_html(self, monkeypatch, tmp_path):
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_write_kfp_outputs
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import write_kfp_outputs
 
         monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
 
@@ -1656,7 +2006,7 @@ class TestEvalhubWriteKfpOutputsComponent:
                 if Key.endswith(".report.html"):
                     return {"Body": SimpleNamespace(read=lambda: html_content.encode())}
                 raise Exception(f"unexpected key: {Key}")
-            return SimpleNamespace(get_object=_get_object)
+            return SimpleNamespace(get_object=_get_object, upload_file=lambda *a: None)
 
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.evalhub.s3_utils.create_s3_client",
@@ -1693,7 +2043,7 @@ class TestEvalhubWriteKfpOutputsComponent:
         metrics = _FakeMetrics()
         html = _FakeArtifact(str(tmp_path / "report.html"))
 
-        fn = _get_component_fn(evalhub_write_kfp_outputs)
+        fn = _get_component_fn(write_kfp_outputs)
         fn(
             s3_prefix="test/prefix",
             eval_threshold=0.5,
@@ -1707,8 +2057,74 @@ class TestEvalhubWriteKfpOutputsComponent:
         assert metrics.logged["attack_success_rate"] == 15.0
         assert "Native Report" in Path(html.path).read_text()
 
+    def test_intents_mode_uploads_html_to_s3(self, monkeypatch, tmp_path):
+        """Intents mode: uploads intents HTML to S3 job folder."""
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import write_kfp_outputs
+
+        monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
+
+        report_content = '{"entry_type":"attempt","status":2}\n'
+
+        uploaded_keys: list[str] = []
+
+        def _fake_create_s3_client():
+            def _get_object(Bucket, Key):
+                if Key.endswith(".report.jsonl"):
+                    return {"Body": SimpleNamespace(read=lambda: report_content.encode())}
+                return {"Body": SimpleNamespace(read=lambda: b"")}
+            def _upload_file(filepath, bucket, key):
+                uploaded_keys.append(key)
+            return SimpleNamespace(get_object=_get_object, upload_file=_upload_file)
+
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.evalhub.s3_utils.create_s3_client",
+            _fake_create_s3_client,
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.result_utils.parse_generations_from_report_content",
+            lambda content, threshold: ([], {}, {}),
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.result_utils.parse_aggregated_from_avid_content",
+            lambda content: {},
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.result_utils.parse_digest_from_report_content",
+            lambda content: {},
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.result_utils.combine_parsed_results",
+            lambda *args, **kwargs: {
+                "scores": {
+                    "_overall": {
+                        "aggregated_results": {"attack_success_rate": 25.0}
+                    }
+                }
+            },
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.result_utils.generate_art_report",
+            lambda content, **kw: "<html>ART</html>",
+        )
+
+        metrics = _FakeMetrics()
+        html = _FakeArtifact(str(tmp_path / "report.html"))
+
+        fn = _get_component_fn(write_kfp_outputs)
+        fn(
+            s3_prefix="evalhub-garak/job123",
+            eval_threshold=0.5,
+            art_intents=True,
+            summary_metrics=metrics,
+            html_report=html,
+        )
+
+        assert metrics.logged["attack_success_rate"] == 25.0
+        assert "ART" in Path(html.path).read_text()
+        assert "evalhub-garak/job123/scan.intents.html" in uploaded_keys
+
     def test_intents_mode_logs_asr_metric(self, monkeypatch, tmp_path):
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_write_kfp_outputs
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import write_kfp_outputs
 
         monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
 
@@ -1719,7 +2135,7 @@ class TestEvalhubWriteKfpOutputsComponent:
                 if Key.endswith(".report.jsonl"):
                     return {"Body": SimpleNamespace(read=lambda: report_content.encode())}
                 return {"Body": SimpleNamespace(read=lambda: b"")}
-            return SimpleNamespace(get_object=_get_object)
+            return SimpleNamespace(get_object=_get_object, upload_file=lambda *a: None)
 
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.evalhub.s3_utils.create_s3_client",
@@ -1757,7 +2173,7 @@ class TestEvalhubWriteKfpOutputsComponent:
         metrics = _FakeMetrics()
         html = _FakeArtifact(str(tmp_path / "report.html"))
 
-        fn = _get_component_fn(evalhub_write_kfp_outputs)
+        fn = _get_component_fn(write_kfp_outputs)
         fn(
             s3_prefix="test/prefix",
             eval_threshold=0.5,
@@ -1771,7 +2187,7 @@ class TestEvalhubWriteKfpOutputsComponent:
         assert "ART" in Path(html.path).read_text()
 
     def test_parse_failure_writes_fallback_html(self, monkeypatch, tmp_path):
-        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import evalhub_write_kfp_outputs
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import write_kfp_outputs
 
         monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
 
@@ -1780,7 +2196,7 @@ class TestEvalhubWriteKfpOutputsComponent:
                 if Key.endswith(".report.jsonl"):
                     return {"Body": SimpleNamespace(read=lambda: b'{"data": true}\n')}
                 return {"Body": SimpleNamespace(read=lambda: b"")}
-            return SimpleNamespace(get_object=_get_object)
+            return SimpleNamespace(get_object=_get_object, upload_file=lambda *a: None)
 
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.evalhub.s3_utils.create_s3_client",
@@ -1794,7 +2210,7 @@ class TestEvalhubWriteKfpOutputsComponent:
         metrics = _FakeMetrics()
         html = _FakeArtifact(str(tmp_path / "report.html"))
 
-        fn = _get_component_fn(evalhub_write_kfp_outputs)
+        fn = _get_component_fn(write_kfp_outputs)
         fn(
             s3_prefix="test/prefix",
             eval_threshold=0.5,

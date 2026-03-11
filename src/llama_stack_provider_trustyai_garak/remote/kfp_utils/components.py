@@ -214,16 +214,16 @@ def resolve_policy_dataset(
         effective_flow_id = DEFAULT_SDG_FLOW_ID
 
     logger.info("Running SDG: model=%s, api_base=%s, flow=%s", sdg_model, sdg_api_base, effective_flow_id)
-    normalized = generate_sdg_dataset(
+    sdg_result = generate_sdg_dataset(
         model=sdg_model,
         api_base=sdg_api_base,
         flow_id=effective_flow_id,
         taxonomy=taxonomy,
     )
-    normalized.to_csv(policy_dataset.path, index=False)
+    sdg_result.normalized.to_csv(policy_dataset.path, index=False)
     logger.info(
         "SDG produced %d prompts across %d categories",
-        len(normalized), normalized["category"].nunique(),
+        len(sdg_result.normalized), sdg_result.normalized["category"].nunique(),
     )
 
 
