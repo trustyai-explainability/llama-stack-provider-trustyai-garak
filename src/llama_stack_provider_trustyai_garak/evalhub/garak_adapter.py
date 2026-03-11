@@ -124,6 +124,16 @@ class GarakAdapter(FrameworkAdapter):
             execution_mode = self._resolve_execution_mode(benchmark_config)
             logger.info("Execution mode: %s", execution_mode)
 
+            # Early check: intents benchmarks require KFP mode
+            _intents_required = benchmark_config.get("art_intents")
+            if _intents_required is None:
+                _profile = self._resolve_profile(config.benchmark_id)
+                _intents_required = _profile.get("art_intents", False) if _profile else False
+            if _intents_required and execution_mode != EXECUTION_MODE_KFP:
+                raise ValueError(
+                    "Intents benchmarks are only supported in KFP execution mode. "
+                )
+
             # Build merged garak config (common to both modes)
             scan_dir = get_scan_base_dir() / config.id
             scan_dir.mkdir(parents=True, exist_ok=True)

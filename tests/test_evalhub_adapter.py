@@ -1113,6 +1113,37 @@ class TestResolveIntentsApiKey:
         assert result == "direct-wins"
 
 
+class TestIntentsRequiresKFP:
+    """Intents benchmarks must reject non-KFP execution modes."""
+
+    def test_intents_simple_mode_raises(self, monkeypatch, tmp_path):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+
+        job = SimpleNamespace(
+            id="intents-simple-job",
+            benchmark_id="trustyai_garak::intents_spo",
+            benchmark_index=0,
+            model=SimpleNamespace(
+                url="http://localhost:8000",
+                name="test-model",
+            ),
+            benchmark_config={
+                "execution_mode": "simple",
+                "art_intents": True,
+            },
+            exports=None,
+        )
+
+        with pytest.raises(ValueError, match="Intents benchmarks are only supported in KFP"):
+            adapter.run_benchmark_job(job, _Callbacks())
+
+
 class TestKFPIntentsMode:
     """Tests for intents mode through run_benchmark_job with KFP."""
 
@@ -1168,25 +1199,23 @@ class TestKFPIntentsMode:
         module = _load_evalhub_garak_adapter(monkeypatch)
         adapter = module.GarakAdapter()
         monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+        monkeypatch.setenv("EVALHUB_KFP_ENDPOINT", "http://kfp:8080")
+        monkeypatch.setenv("EVALHUB_KFP_NAMESPACE", "test-ns")
 
-        report_prefix = tmp_path / "intents-html-job" / "scan"
-        report_prefix.parent.mkdir(parents=True)
+        scan_dir = tmp_path / "intents-html-job"
+        scan_dir.mkdir(parents=True)
+        report_prefix = scan_dir / "scan"
         report_prefix.with_suffix(".report.jsonl").write_text(
             '{"entry_type":"attempt","status":2}\n',
             encoding="utf-8",
         )
 
-        def _fake_run_garak_scan(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
-            report_prefix.with_suffix(".report.jsonl").write_text(
-                '{"entry_type":"attempt","status":2}\n',
-                encoding="utf-8",
-            )
+        def _fake_run_via_kfp(self, config, callbacks, garak_config_dict, timeout, intents_params=None, eval_threshold=0.5):
             return module.GarakScanResult(
                 returncode=0, stdout="", stderr="", report_prefix=report_prefix,
-            )
+            ), scan_dir
 
-        monkeypatch.setattr(module, "run_garak_scan", _fake_run_garak_scan)
-        monkeypatch.setattr(module, "convert_to_avid_report", lambda _path: True)
+        monkeypatch.setattr(module.GarakAdapter, "_run_via_kfp", _fake_run_via_kfp)
         monkeypatch.setattr(
             module.GarakAdapter,
             "_parse_results",
@@ -1212,14 +1241,14 @@ class TestKFPIntentsMode:
             benchmark_id="trustyai_garak::intents",
             benchmark_index=0,
             model=SimpleNamespace(url="http://model:8000", name="my-llm"),
-            benchmark_config={**_INTENTS_MODELS_SINGLE},
+            benchmark_config={**_INTENTS_MODELS_SINGLE, "execution_mode": "kfp"},
             exports=None,
         )
 
         adapter.run_benchmark_job(job, _Callbacks())
 
         assert html_generated["called"] is True
-        html_path = tmp_path / "intents-html-job" / "scan.intents.html"
+        html_path = scan_dir / "scan.intents.html"
         assert html_path.exists()
         assert "ART Report" in html_path.read_text()
 
