@@ -30,8 +30,8 @@ ARG TARGETARCH=x86_64
 # Install cpu torch to reduce image size
 RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
 
-# Install eval-hub SDK (separate step — git source can't be hash-pinned in requirements)
-RUN pip install --no-cache-dir "eval-hub-sdk[adapter] @ git+https://github.com/eval-hub/eval-hub-sdk.git@main"
+# # Install eval-hub SDK (separate step — git source can't be hash-pinned in requirements)
+# RUN pip install --no-cache-dir "eval-hub-sdk[adapter] @ git+https://github.com/eval-hub/eval-hub-sdk.git@main"
 
 # Install the package itself
 # Use [inline] to get garak dependency
