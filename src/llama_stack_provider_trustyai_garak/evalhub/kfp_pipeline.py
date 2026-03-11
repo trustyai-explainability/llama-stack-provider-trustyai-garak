@@ -116,7 +116,7 @@ class KFPConfig:
                 _resolve("poll_interval_seconds", "KFP_POLL_INTERVAL", str(DEFAULT_POLL_INTERVAL))
             ),
             s3_prefix=_resolve(
-                "s3_prefix", "EVALHUB_KFP_S3_PREFIX", DEFAULT_S3_PREFIX,
+                "s3_prefix", "KFP_S3_PREFIX", DEFAULT_S3_PREFIX,
             ),
             base_image=_resolve("base_image", "KUBEFLOW_GARAK_BASE_IMAGE"),
             verify_ssl=verify_ssl,

@@ -237,7 +237,7 @@ class GarakAdapter(FrameworkAdapter):
                 from .kfp_pipeline import DEFAULT_S3_PREFIX
                 _bc = config.benchmark_config or {}
                 _kfp_ov = _bc.get("kfp_config", {}) if isinstance(_bc.get("kfp_config"), dict) else {}
-                _prefix = _kfp_ov.get("s3_prefix", os.getenv("EVALHUB_KFP_S3_PREFIX", DEFAULT_S3_PREFIX))
+                _prefix = _kfp_ov.get("s3_prefix", os.getenv("KFP_S3_PREFIX", DEFAULT_S3_PREFIX))
                 _bucket = _kfp_ov.get("s3_bucket", os.getenv("AWS_S3_BUCKET", ""))
                 s3_prefix = f"{_prefix}/{config.id}"
                 s3_base = f"s3://{_bucket}/{s3_prefix}" if _bucket else s3_prefix

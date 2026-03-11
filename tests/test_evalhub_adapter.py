@@ -1211,8 +1211,8 @@ class TestKFPIntentsMode:
         module = _load_evalhub_garak_adapter(monkeypatch)
         adapter = module.GarakAdapter()
         monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
-        monkeypatch.setenv("EVALHUB_KFP_ENDPOINT", "http://kfp:8080")
-        monkeypatch.setenv("EVALHUB_KFP_NAMESPACE", "test-ns")
+        monkeypatch.setenv("KFP_ENDPOINT", "http://kfp:8080")
+        monkeypatch.setenv("KFP_NAMESPACE", "test-ns")
 
         scan_dir = tmp_path / "intents-html-job"
         scan_dir.mkdir(parents=True)
@@ -1415,6 +1415,9 @@ class TestValidateComponent:
     def test_valid_config_and_s3_passes(self, monkeypatch, tmp_path):
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import validate
 
+        # Mock garak module so import succeeds
+        monkeypatch.setitem(sys.modules, 'garak', types.ModuleType('garak'))
+
         monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "fake")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "fake")
@@ -1478,6 +1481,9 @@ class TestValidateComponent:
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import validate
         from llama_stack_provider_trustyai_garak.errors import GarakValidationError
 
+        # Mock garak module so import succeeds
+        monkeypatch.setitem(sys.modules, 'garak', types.ModuleType('garak'))
+
         monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
 
         fn = _get_component_fn(validate)
@@ -1487,6 +1493,9 @@ class TestValidateComponent:
     def test_unreachable_s3_bucket_raises(self, monkeypatch):
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import validate
         from llama_stack_provider_trustyai_garak.errors import GarakValidationError
+
+        # Mock garak module so import succeeds
+        monkeypatch.setitem(sys.modules, 'garak', types.ModuleType('garak'))
 
         monkeypatch.setenv("AWS_S3_BUCKET", "bad-bucket")
 
@@ -1845,9 +1854,9 @@ class TestAdapterMutualExclusivity:
     """Tests for mutual exclusivity of policy_s3_key and intents_s3_key in adapter."""
 
     _KFP_ENV = {
-        "EVALHUB_KFP_ENDPOINT": "http://kfp:8080",
-        "EVALHUB_KFP_NAMESPACE": "test-ns",
-        "EVALHUB_KFP_S3_SECRET_NAME": "test-secret",
+        "KFP_ENDPOINT": "http://kfp:8080",
+        "KFP_NAMESPACE": "test-ns",
+        "KFP_S3_SECRET_NAME": "test-secret",
         "AWS_S3_BUCKET": "test-bucket",
     }
 
@@ -1983,7 +1992,7 @@ class TestArtifactMetadataSurfacing:
         )
 
         _kfp_ov = {}
-        _prefix = _kfp_ov.get("s3_prefix", os.getenv("EVALHUB_KFP_S3_PREFIX", DEFAULT_S3_PREFIX))
+        _prefix = _kfp_ov.get("s3_prefix", os.getenv("KFP_S3_PREFIX", DEFAULT_S3_PREFIX))
         _bucket = _kfp_ov.get("s3_bucket", os.getenv("AWS_S3_BUCKET", ""))
 
         artifact_keys = {
