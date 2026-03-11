@@ -120,7 +120,7 @@ class GarakAdapter(FrameworkAdapter):
 
             self._validate_config(config)
 
-            benchmark_config = config.benchmark_config or {}
+            benchmark_config = config.parameters or {}
             execution_mode = self._resolve_execution_mode(benchmark_config)
             logger.info("Execution mode: %s", execution_mode)
 
@@ -212,6 +212,16 @@ class GarakAdapter(FrameworkAdapter):
                 except Exception as e:
                     logger.warning("Failed to generate ART HTML report: %s", e)
 
+            # Redact api_key values from config.json before OCI export
+            config_file = scan_dir / "config.json"
+            if config_file.exists():
+                try:
+                    from ..core.pipeline_steps import redact_api_keys
+                    cfg = json.loads(config_file.read_text())
+                    config_file.write_text(json.dumps(redact_api_keys(cfg), indent=1))
+                except Exception as exc:
+                    logger.warning("Could not redact config.json: %s", exc)
+
             # Phase 4: Persist artifacts
             oci_artifact = None
             if config.exports and config.exports.oci:
@@ -235,7 +245,7 @@ class GarakAdapter(FrameworkAdapter):
 
             if art_intents and execution_mode == EXECUTION_MODE_KFP:
                 from .kfp_pipeline import DEFAULT_S3_PREFIX
-                _bc = config.benchmark_config or {}
+                _bc = config.parameters or {}
                 _kfp_ov = _bc.get("kfp_config", {}) if isinstance(_bc.get("kfp_config"), dict) else {}
                 _prefix = _kfp_ov.get("s3_prefix", os.getenv("EVALHUB_KFP_S3_PREFIX", DEFAULT_S3_PREFIX))
                 _bucket = _kfp_ov.get("s3_bucket", os.getenv("AWS_S3_BUCKET", ""))
@@ -391,7 +401,7 @@ class GarakAdapter(FrameworkAdapter):
             KFPConfig, evalhub_garak_pipeline
         )
 
-        benchmark_config = config.benchmark_config or {}
+        benchmark_config = config.parameters or {}
         kfp_config = KFPConfig.from_env_and_config(benchmark_config)
 
         if not kfp_config.s3_secret_name:
@@ -405,7 +415,9 @@ class GarakAdapter(FrameworkAdapter):
         scan_dir = get_scan_base_dir() / config.id
         scan_dir.mkdir(parents=True, exist_ok=True)
 
-        config_json = json.dumps(garak_config_dict)
+        from ..core.pipeline_steps import redact_api_keys
+        sanitised_config = redact_api_keys(garak_config_dict)
+        config_json = json.dumps(sanitised_config)
 
         ip = intents_params or {}
 
@@ -441,26 +453,41 @@ class GarakAdapter(FrameworkAdapter):
             current_step="Submitting to Kubeflow Pipelines",
         ))
 
+        # Resolve model auth secret from EvalHub SDK model.auth.secret_ref
+        # Falls back to pipeline default ("model-auth") when not specified.
+        model_auth_secret = ""
+        try:
+            model_auth = getattr(config.model, "auth", None)
+            if model_auth:
+                model_auth_secret = getattr(model_auth, "secret_ref", "") or ""
+        except Exception:
+            pass
+        if model_auth_secret:
+            logger.info("Using model auth secret: %s", model_auth_secret)
+
         kfp_client = self._create_kfp_client(kfp_config)
+
+        pipeline_args: dict[str, Any] = {
+            "config_json": config_json,
+            "s3_prefix": s3_prefix,
+            "timeout_seconds": timeout,
+            "s3_secret_name": kfp_config.s3_secret_name,
+            "eval_threshold": eval_threshold,
+            "art_intents": ip.get("art_intents", False),
+            "policy_s3_key": ip.get("policy_s3_key", ""),
+            "policy_format": ip.get("policy_format", "csv"),
+            "intents_s3_key": ip.get("intents_s3_key", ""),
+            "intents_format": ip.get("intents_format", "csv"),
+            "sdg_model": ip.get("sdg_model", ""),
+            "sdg_api_base": ip.get("sdg_api_base", ""),
+            "sdg_flow_id": ip.get("sdg_flow_id", DEFAULT_SDG_FLOW_ID),
+        }
+        if model_auth_secret:
+            pipeline_args["model_auth_secret_name"] = model_auth_secret
 
         run = kfp_client.create_run_from_pipeline_func(
             evalhub_garak_pipeline,
-            arguments={
-                "config_json": config_json,
-                "s3_prefix": s3_prefix,
-                "timeout_seconds": timeout,
-                "s3_secret_name": kfp_config.s3_secret_name,
-                "eval_threshold": eval_threshold,
-                "art_intents": ip.get("art_intents", False),
-                "policy_s3_key": ip.get("policy_s3_key", ""),
-                "policy_format": ip.get("policy_format", "csv"),
-                "intents_s3_key": ip.get("intents_s3_key", ""),
-                "intents_format": ip.get("intents_format", "csv"),
-                "sdg_model": ip.get("sdg_model", ""),
-                "sdg_api_base": ip.get("sdg_api_base", ""),
-                "sdg_api_key": ip.get("sdg_api_key", ""),
-                "sdg_flow_id": ip.get("sdg_flow_id", DEFAULT_SDG_FLOW_ID),
-            },
+            arguments=pipeline_args,
             run_name=f"evalhub-garak-{config.id}",
             namespace=kfp_config.namespace,
             experiment_name=kfp_config.experiment_name,
@@ -697,7 +724,7 @@ class GarakAdapter(FrameworkAdapter):
             raise ValueError("model.name is required")
 
         profile = self._resolve_profile(config.benchmark_id)
-        benchmark_config = config.benchmark_config or {}
+        benchmark_config = config.parameters or {}
         explicit_garak_cfg = benchmark_config.get("garak_config", {})
         if not isinstance(explicit_garak_cfg, dict):
             explicit_garak_cfg = {}
@@ -730,7 +757,7 @@ class GarakAdapter(FrameworkAdapter):
             intents_params contains art_intents and related settings
             extracted from the profile and benchmark_config.
         """
-        benchmark_config = config.benchmark_config or {}
+        benchmark_config = config.parameters or {}
         profile = self._resolve_profile(config.benchmark_id)
         garak_config: GarakCommandConfig = build_effective_garak_config(
             benchmark_config=benchmark_config,
@@ -748,11 +775,18 @@ class GarakAdapter(FrameworkAdapter):
         model_type = benchmark_config.get("model_type", DEFAULT_MODEL_TYPE)
         # set generators if not already set by user (because there's a eval-hub config.model for this)
         if model_type == DEFAULT_MODEL_TYPE and not garak_config.plugins.generators:
+            from evalhub.adapter.auth import read_model_auth_key
+
+            api_key = (
+                getattr(config.model, "api_key", None)
+                or read_model_auth_key("api-key")
+                or os.getenv("OPENAICOMPATIBLE_API_KEY")
+                or "DUMMY"
+            )
             garak_config.plugins.generators = build_generator_options(
                 model_endpoint=self._normalize_url(config.model.url),
                 model_name=config.model.name,
-                api_key=getattr(config.model, "api_key", None)
-                or os.getenv("OPENAICOMPATIBLE_API_KEY", "DUMMY"),
+                api_key=api_key,
                 extra_params=model_params,
             )
 
@@ -813,12 +847,16 @@ class GarakAdapter(FrameworkAdapter):
         ``sdg`` has no fallback — it must be provided explicitly if SDG
         generation is needed.
 
-        API keys are resolved per role via :meth:`_resolve_intents_api_key`.
+        API keys are **no longer** embedded in the config dict.  They are
+        injected at pod level via a Kubernetes Secret
+        (``model_auth_secret_name``).  Placeholder values (``__FROM_ENV__``)
+        are written into the config and resolved inside the KFP pod by
+        ``core.pipeline_steps._resolve_config_api_keys``.
 
         Returns:
-            Dict with SDG-related keys (``sdg_model``, ``sdg_api_base``,
-            ``sdg_api_key``) extracted from the ``sdg`` role, or empty strings
-            if SDG is not configured.
+            Dict with SDG-related keys (``sdg_model``, ``sdg_api_base``)
+            extracted from the ``sdg`` role, or empty strings if SDG is
+            not configured.
         """
         intents_models = benchmark_config.get("intents_models", {})
         if not isinstance(intents_models, dict):
@@ -866,15 +904,15 @@ class GarakAdapter(FrameworkAdapter):
 
         judge_url = judge_cfg["url"]
         judge_name = judge_cfg["name"]
-        judge_api_key = self._resolve_intents_api_key("judge", judge_cfg)
 
         attacker_url = attacker_cfg["url"]
         attacker_name = attacker_cfg["name"]
-        attacker_api_key = self._resolve_intents_api_key("attacker", attacker_cfg)
 
         evaluator_url = evaluator_cfg["url"]
         evaluator_name = evaluator_cfg["name"]
-        evaluator_api_key = self._resolve_intents_api_key("evaluator", evaluator_cfg)
+
+        # Use placeholder — real keys are injected via K8s Secret at pod level
+        _PLACEHOLDER = "__FROM_ENV__"
 
         plugins = garak_config.plugins
 
@@ -884,7 +922,7 @@ class GarakAdapter(FrameworkAdapter):
             "detector_model_name": judge_name,
             "detector_model_config": {
                 "uri": judge_url,
-                "api_key": judge_api_key,
+                "api_key": _PLACEHOLDER,
             },
         }
 
@@ -894,13 +932,13 @@ class GarakAdapter(FrameworkAdapter):
                 tap_cfg["attack_model_name"] = attacker_name
                 tap_cfg["attack_model_config"] = {
                     "uri": attacker_url,
-                    "api_key": attacker_api_key,
+                    "api_key": _PLACEHOLDER,
                     "max_tokens": tap_cfg.get("attack_model_config", {}).get("max_tokens", 500),
                 }
                 tap_cfg["evaluator_model_name"] = evaluator_name
                 tap_cfg["evaluator_model_config"] = {
                     "uri": evaluator_url,
-                    "api_key": evaluator_api_key,
+                    "api_key": _PLACEHOLDER,
                     "max_tokens": tap_cfg.get("evaluator_model_config", {}).get("max_tokens", 10),
                     "temperature": tap_cfg.get("evaluator_model_config", {}).get("temperature", 0.0),
                 }
@@ -909,19 +947,16 @@ class GarakAdapter(FrameworkAdapter):
         sdg_params: dict[str, str] = {
             "sdg_model": "",
             "sdg_api_base": "",
-            "sdg_api_key": "",
         }
         if sdg_cfg.get("url") and sdg_cfg.get("name"):
             sdg_params["sdg_model"] = sdg_cfg["name"]
             sdg_params["sdg_api_base"] = sdg_cfg["url"]
-            sdg_params["sdg_api_key"] = self._resolve_intents_api_key("sdg", sdg_cfg)
         else:
             sdg_model = benchmark_config.get("sdg_model", profile.get("sdg_model", ""))
             sdg_api_base = benchmark_config.get("sdg_api_base", profile.get("sdg_api_base", ""))
             if sdg_model and sdg_api_base:
                 sdg_params["sdg_model"] = sdg_model
                 sdg_params["sdg_api_base"] = sdg_api_base
-                sdg_params["sdg_api_key"] = self._resolve_intents_api_key("sdg", {})
 
         return sdg_params
 
@@ -1164,7 +1199,6 @@ def main(adapter_cls: type[GarakAdapter] = GarakAdapter) -> None:
         results = adapter.run_benchmark_job(adapter.job_spec, callbacks)
         logger.info(f"Job completed successfully: {results.id}")
         logger.info(f"Overall attack success rate: {results.overall_score}%")
-        print(f"Results: {results}")
 
         callbacks.report_results(results)
         sys.exit(0)

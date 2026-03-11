@@ -44,10 +44,13 @@ def garak_scan_pipeline(
     intents_format: str = "csv",
     sdg_model: str = "",
     sdg_api_base: str = "",
-    sdg_api_key: str = "",
     sdg_flow_id: str = DEFAULT_SDG_FLOW_ID,
 ):
     """Six-step pipeline: validate, resolve taxonomy, SDG, prepare prompts, scan, parse.
+
+    No API key parameters — Llama Stack models handle their own auth
+    at the server level.  The ``core.pipeline_steps`` resolve functions
+    fall back to ``"DUMMY"`` when no Secret is injected.
 
     Three intents modes:
     - Default taxonomy + SDG: no file params, requires sdg_model/sdg_api_base.
@@ -82,7 +85,6 @@ def garak_scan_pipeline(
         intents_file_id=intents_file_id,
         sdg_model=sdg_model,
         sdg_api_base=sdg_api_base,
-        sdg_api_key=sdg_api_key,
         sdg_flow_id=sdg_flow_id,
         taxonomy_dataset=taxonomy_task.outputs["taxonomy_dataset"],
     )

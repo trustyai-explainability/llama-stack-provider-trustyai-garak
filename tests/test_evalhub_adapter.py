@@ -60,8 +60,12 @@ def _load_evalhub_garak_adapter(monkeypatch) -> types.ModuleType:
     adapter_models_job_module.MessageInfo = _SimpleModel
     models_api_module.EvaluationResult = _SimpleModel
 
+    adapter_auth_module = types.ModuleType("evalhub.adapter.auth")
+    adapter_auth_module.read_model_auth_key = lambda _name: None
+
     monkeypatch.setitem(sys.modules, "evalhub", evalhub_module)
     monkeypatch.setitem(sys.modules, "evalhub.adapter", adapter_module)
+    monkeypatch.setitem(sys.modules, "evalhub.adapter.auth", adapter_auth_module)
     monkeypatch.setitem(sys.modules, "evalhub.adapter.models", adapter_models_module)
     monkeypatch.setitem(sys.modules, "evalhub.adapter.models.job", adapter_models_job_module)
     monkeypatch.setitem(sys.modules, "evalhub.models", models_module)
@@ -159,7 +163,7 @@ def test_run_benchmark_job_uses_garak_config_file(monkeypatch, tmp_path):
         benchmark_id="trustyai_garak::quick",
         benchmark_index=0,
         model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
-        benchmark_config={"timeout_seconds": 42, "generations": 2},
+        parameters={"timeout_seconds": 42, "generations": 2},
         exports=None,
     )
 
@@ -404,7 +408,7 @@ class TestKFPModeExecution:
             benchmark_id="trustyai_garak::quick",
             benchmark_index=0,
             model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
-            benchmark_config={"execution_mode": "kfp", "timeout_seconds": 99},
+            parameters={"execution_mode": "kfp", "timeout_seconds": 99},
             exports=None,
         )
 
@@ -455,7 +459,7 @@ class TestKFPModeExecution:
             benchmark_id="trustyai_garak::quick",
             benchmark_index=0,
             model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
-            benchmark_config={},
+            parameters={},
             exports=None,
         )
 
@@ -676,7 +680,7 @@ class TestKFPMissingS3Secret:
             benchmark_id="trustyai_garak::quick",
             benchmark_index=0,
             model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
-            benchmark_config={"execution_mode": "kfp"},
+            parameters={"execution_mode": "kfp"},
             exports=None,
         )
 
@@ -717,7 +721,7 @@ class TestBuildConfigIntentsOverrides:
             benchmark_id="trustyai_garak::intents",
             benchmark_index=0,
             model=SimpleNamespace(url="http://model:8000", name="my-llm"),
-            benchmark_config={**_INTENTS_MODELS_SINGLE},
+            parameters={**_INTENTS_MODELS_SINGLE},
             exports=None,
         )
 
@@ -738,7 +742,7 @@ class TestBuildConfigIntentsOverrides:
             benchmark_id="trustyai_garak::intents",
             benchmark_index=0,
             model=SimpleNamespace(url="http://target:8000", name="target-llm"),
-            benchmark_config={**_INTENTS_MODELS_SINGLE},
+            parameters={**_INTENTS_MODELS_SINGLE},
             exports=None,
         )
 
@@ -766,7 +770,7 @@ class TestBuildConfigIntentsOverrides:
             benchmark_id="trustyai_garak::intents",
             benchmark_index=0,
             model=SimpleNamespace(url="http://target:8000", name="target-llm"),
-            benchmark_config={
+            parameters={
                 "intents_models": {
                     "attacker": {"url": "http://atk-model:9000/v1", "name": "atk-model"},
                 }
@@ -795,7 +799,7 @@ class TestBuildConfigIntentsOverrides:
             benchmark_id="trustyai_garak::intents",
             benchmark_index=0,
             model=SimpleNamespace(url="http://target:8000", name="target-llm"),
-            benchmark_config={**_INTENTS_MODELS_ALL_ROLES},
+            parameters={**_INTENTS_MODELS_ALL_ROLES},
             exports=None,
         )
 
@@ -805,19 +809,18 @@ class TestBuildConfigIntentsOverrides:
         judge = config_dict["plugins"]["detectors"]["judge"]
         assert judge["detector_model_name"] == "judge-model"
         assert judge["detector_model_config"]["uri"] == "http://judge:8000/v1"
-        assert judge["detector_model_config"]["api_key"] == "jk"
+        assert judge["detector_model_config"]["api_key"] == "__FROM_ENV__"
 
         tap_cfg = config_dict["plugins"]["probes"]["tap"]["TAPIntent"]
         assert tap_cfg["attack_model_name"] == "atk-model"
         assert tap_cfg["attack_model_config"]["uri"] == "http://attacker:9000/v1"
-        assert tap_cfg["attack_model_config"]["api_key"] == "ak"
+        assert tap_cfg["attack_model_config"]["api_key"] == "__FROM_ENV__"
         assert tap_cfg["evaluator_model_name"] == "eval-model"
         assert tap_cfg["evaluator_model_config"]["uri"] == "http://evaluator:9001/v1"
-        assert tap_cfg["evaluator_model_config"]["api_key"] == "ek"
+        assert tap_cfg["evaluator_model_config"]["api_key"] == "__FROM_ENV__"
 
         assert intents_params["sdg_model"] == "sdg-model"
         assert intents_params["sdg_api_base"] == "http://sdg:7000/v1"
-        assert intents_params["sdg_api_key"] == "sk"
 
     def test_no_roles_raises_clear_error(self, monkeypatch, tmp_path):
         module = _load_evalhub_garak_adapter(monkeypatch)
@@ -829,7 +832,7 @@ class TestBuildConfigIntentsOverrides:
             benchmark_id="trustyai_garak::intents",
             benchmark_index=0,
             model=SimpleNamespace(url="http://model:8000", name="my-llm"),
-            benchmark_config={},
+            parameters={},
             exports=None,
         )
 
@@ -847,7 +850,7 @@ class TestBuildConfigIntentsOverrides:
             benchmark_id="trustyai_garak::intents",
             benchmark_index=0,
             model=SimpleNamespace(url="http://model:8000", name="my-llm"),
-            benchmark_config={
+            parameters={
                 "intents_models": {
                     "judge": {"url": "http://judge:8000/v1", "name": "judge-m"},
                     "attacker": {"url": "http://atk:9000/v1", "name": "atk-m"},
@@ -870,7 +873,7 @@ class TestBuildConfigIntentsOverrides:
             benchmark_id="trustyai_garak::intents",
             benchmark_index=0,
             model=SimpleNamespace(url="http://model:8000", name="my-llm"),
-            benchmark_config={
+            parameters={
                 "intents_models": {"judge": {"url": "http://judge:8000/v1"}},
             },
             exports=None,
@@ -890,7 +893,7 @@ class TestBuildConfigIntentsOverrides:
             benchmark_id="trustyai_garak::quick",
             benchmark_index=0,
             model=SimpleNamespace(url="http://model:8000", name="my-llm"),
-            benchmark_config={},
+            parameters={},
             exports=None,
         )
 
@@ -910,7 +913,7 @@ class TestBuildConfigIntentsOverrides:
             benchmark_id="trustyai_garak::intents",
             benchmark_index=0,
             model=SimpleNamespace(url="http://model:8000", name="my-llm"),
-            benchmark_config={"art_intents": False},
+            parameters={"art_intents": False},
             exports=None,
         )
 
@@ -930,7 +933,7 @@ class TestBuildConfigIntentsOverrides:
             benchmark_id="trustyai_garak::quick",
             benchmark_index=0,
             model=SimpleNamespace(url="http://model:8000", name="my-llm"),
-            benchmark_config={
+            parameters={
                 "art_intents": True,
                 **_INTENTS_MODELS_SINGLE,
             },
@@ -952,7 +955,7 @@ class TestBuildConfigIntentsOverrides:
             benchmark_id="trustyai_garak::intents",
             benchmark_index=0,
             model=SimpleNamespace(url="http://model:8000", name="my-llm"),
-            benchmark_config={
+            parameters={
                 **_INTENTS_MODELS_SINGLE,
                 "intents_models": {
                     **_INTENTS_MODELS_SINGLE["intents_models"],
@@ -967,7 +970,6 @@ class TestBuildConfigIntentsOverrides:
 
         assert intents_params["sdg_model"] == "sdg-model"
         assert intents_params["sdg_api_base"] == "http://sdg:7000/v1"
-        assert intents_params["sdg_api_key"] == "sdg-key"
 
     def test_sdg_fallback_to_flat_keys(self, monkeypatch, tmp_path):
         """When intents_models.sdg is absent, fall back to flat sdg_model/sdg_api_base."""
@@ -980,7 +982,7 @@ class TestBuildConfigIntentsOverrides:
             benchmark_id="trustyai_garak::intents",
             benchmark_index=0,
             model=SimpleNamespace(url="http://model:8000", name="my-llm"),
-            benchmark_config={
+            parameters={
                 **_INTENTS_MODELS_SINGLE,
                 "sdg_model": "legacy-sdg",
                 "sdg_api_base": "http://legacy-sdg:5000",
@@ -1133,7 +1135,7 @@ class TestIntentsRequiresKFP:
                 url="http://localhost:8000",
                 name="test-model",
             ),
-            benchmark_config={
+            parameters={
                 "execution_mode": "simple",
                 "art_intents": True,
             },
@@ -1181,7 +1183,7 @@ class TestKFPIntentsMode:
             benchmark_id="trustyai_garak::intents",
             benchmark_index=0,
             model=SimpleNamespace(url="http://model:8000", name="my-llm"),
-            benchmark_config={
+            parameters={
                 "execution_mode": "kfp",
                 **_INTENTS_MODELS_ALL_ROLES,
             },
@@ -1192,7 +1194,6 @@ class TestKFPIntentsMode:
 
         assert captured["intents_params"]["art_intents"] is True
         assert captured["intents_params"]["sdg_model"] == "sdg-model"
-        assert captured["intents_params"]["sdg_api_key"] == "sk"
         assert result.evaluation_metadata["art_intents"] is True
 
     def test_art_html_generated_for_intents(self, monkeypatch, tmp_path):
@@ -1241,7 +1242,7 @@ class TestKFPIntentsMode:
             benchmark_id="trustyai_garak::intents",
             benchmark_index=0,
             model=SimpleNamespace(url="http://model:8000", name="my-llm"),
-            benchmark_config={**_INTENTS_MODELS_SINGLE, "execution_mode": "kfp"},
+            parameters={**_INTENTS_MODELS_SINGLE, "execution_mode": "kfp"},
             exports=None,
         )
 
@@ -1272,7 +1273,7 @@ class TestKFPIntentsMode:
             benchmark_id="trustyai_garak::intents",
             benchmark_index=0,
             model=SimpleNamespace(url="http://model:8000", name="my-llm"),
-            benchmark_config={
+            parameters={
                 "execution_mode": "kfp",
                 **_INTENTS_MODELS_SINGLE,
             },
@@ -1569,7 +1570,6 @@ class TestSdgGenerateComponent:
             intents_s3_key="",
             sdg_model="",
             sdg_api_base="",
-            sdg_api_key="",
             sdg_flow_id="",
             taxonomy_dataset=taxonomy,
             sdg_dataset=sdg_out,
@@ -1591,7 +1591,6 @@ class TestSdgGenerateComponent:
             intents_s3_key="path/to/intents.csv",
             sdg_model="",
             sdg_api_base="",
-            sdg_api_key="",
             sdg_flow_id="",
             taxonomy_dataset=taxonomy,
             sdg_dataset=sdg_out,
@@ -1614,7 +1613,6 @@ class TestSdgGenerateComponent:
                 intents_s3_key="",
                 sdg_model="",
                 sdg_api_base="",
-                sdg_api_key="",
                 sdg_flow_id="",
                 taxonomy_dataset=taxonomy,
                 sdg_dataset=sdg_out,
@@ -1635,7 +1633,6 @@ class TestSdgGenerateComponent:
                 intents_s3_key="",
                 sdg_model="some-model",
                 sdg_api_base="",
-                sdg_api_key="",
                 sdg_flow_id="",
                 taxonomy_dataset=taxonomy,
                 sdg_dataset=sdg_out,
@@ -1677,7 +1674,6 @@ class TestSdgGenerateComponent:
             intents_s3_key="",
             sdg_model="test-model",
             sdg_api_base="http://sdg:8000",
-            sdg_api_key="",
             sdg_flow_id="test-flow",
             taxonomy_dataset=taxonomy,
             sdg_dataset=sdg_out,
@@ -1853,7 +1849,7 @@ class TestAdapterMutualExclusivity:
                 config=SimpleNamespace(
                     id="test-job",
                     benchmark_id="test",
-                    benchmark_config={},
+                    parameters={},
                 ),
                 callbacks=SimpleNamespace(report_status=lambda *a, **kw: None),
                 garak_config_dict={"plugins": {}},
@@ -1891,7 +1887,7 @@ class TestAdapterMutualExclusivity:
                 config=SimpleNamespace(
                     id="test-job",
                     benchmark_id="test",
-                    benchmark_config={},
+                    parameters={},
                 ),
                 callbacks=SimpleNamespace(report_status=lambda *a, **kw: None),
                 garak_config_dict={"plugins": {}},
@@ -1919,7 +1915,7 @@ class TestAdapterMutualExclusivity:
                 config=SimpleNamespace(
                     id="test-job",
                     benchmark_id="test",
-                    benchmark_config={},
+                    parameters={},
                 ),
                 callbacks=SimpleNamespace(report_status=lambda *a, **kw: None),
                 garak_config_dict={"plugins": {}},

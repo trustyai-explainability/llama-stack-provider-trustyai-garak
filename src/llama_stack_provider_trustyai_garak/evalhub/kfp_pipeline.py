@@ -32,6 +32,7 @@ from typing import NamedTuple
 from kfp import dsl, kubernetes
 
 from ..constants import DEFAULT_SDG_FLOW_ID
+from ..core.pipeline_steps import MODEL_AUTH_MOUNT_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -255,12 +256,16 @@ def sdg_generate(
     intents_s3_key: str,
     sdg_model: str,
     sdg_api_base: str,
-    sdg_api_key: str,
     sdg_flow_id: str,
     taxonomy_dataset: dsl.Input[dsl.Dataset],
     sdg_dataset: dsl.Output[dsl.Dataset],
 ):
     """Run Synthetic Data Generation on a taxonomy to produce raw prompts.
+
+    The SDG API key is injected into the pod as an environment variable via a Kubernetes
+    Secret (``model_auth_secret_name``).  The core function
+    ``run_sdg_generation`` resolves the key via ``resolve_api_key("sdg")``
+    which checks env vars and volume-mounted secret files automatically.
 
     Two modes:
 
@@ -303,7 +308,6 @@ def sdg_generate(
         taxonomy_df=taxonomy,
         sdg_model=sdg_model,
         sdg_api_base=sdg_api_base,
-        sdg_api_key=sdg_api_key,
         sdg_flow_id=sdg_flow_id,
     )
     raw_df.to_csv(sdg_dataset.path, index=False)
@@ -439,10 +443,11 @@ def garak_scan(
     """Run a Garak scan and upload output to S3 via Data Connection credentials.
 
     If the ``prompts_dataset`` artifact contains data, intent stubs are
-    generated from it before launching garak. S3 credentials are injected
-    as environment variables by the pipeline using
-    ``kubernetes.use_secret_as_env`` from a Data Connection secret.
+    generated from it before launching garak.  S3 credentials and model
+    API keys are injected as environment variables by the pipeline using
+    ``kubernetes.use_secret_as_env``.
     """
+    import json
     import logging
     import os
     import tempfile
@@ -455,7 +460,10 @@ def garak_scan(
     )
     log = logging.getLogger("evalhub_garak_scan")
 
-    from llama_stack_provider_trustyai_garak.core.pipeline_steps import setup_and_run_garak
+    from llama_stack_provider_trustyai_garak.core.pipeline_steps import (
+        setup_and_run_garak,
+        redact_api_keys,
+    )
     from llama_stack_provider_trustyai_garak.errors import GarakError
 
     scan_dir = Path(tempfile.mkdtemp(prefix="garak-scan-"))
@@ -469,6 +477,16 @@ def garak_scan(
         scan_dir=scan_dir,
         timeout_seconds=timeout_seconds,
     )
+
+    # Redact api_key values from config.json before uploading to S3
+    config_file = scan_dir / "config.json"
+    if config_file.exists():
+        try:
+            cfg = json.loads(config_file.read_text())
+            config_file.write_text(json.dumps(redact_api_keys(cfg), indent=1))
+            log.info("Redacted api_key values from config.json before S3 upload")
+        except Exception as exc:
+            log.warning("Could not redact config.json: %s", exc)
 
     # Upload results to S3
     s3_bucket = os.environ.get("AWS_S3_BUCKET", "")
@@ -605,6 +623,7 @@ def evalhub_garak_pipeline(
     s3_prefix: str,
     timeout_seconds: int,
     s3_secret_name: str,
+    model_auth_secret_name: str = "model-auth",
     eval_threshold: float = 0.5,
     art_intents: bool = False,
     policy_s3_key: str = "",
@@ -613,13 +632,23 @@ def evalhub_garak_pipeline(
     intents_format: str = "csv",
     sdg_model: str = "",
     sdg_api_base: str = "",
-    sdg_api_key: str = "",
     sdg_flow_id: str = DEFAULT_SDG_FLOW_ID,
 ):
     """Six-step pipeline: validate, resolve taxonomy, SDG, prepare prompts, scan, write outputs.
 
     ``s3_secret_name`` is required -- the Data Connection secret is injected
     as environment variables into all pipeline pods.
+
+    ``model_auth_secret_name`` (optional) -- a Kubernetes Secret mounted
+    as a volume at ``/mnt/model-auth`` (with ``optional=True`` so pods
+    start even if the secret is missing).  Each key in the secret becomes
+    a file that ``resolve_api_key`` reads at runtime.  Resolution order
+    per role: ``{ROLE}_API_KEY`` env -> ``{ROLE}_API_KEY`` file ->
+    ``API_KEY`` env -> ``API_KEY`` file -> ``"DUMMY"``.
+
+    * ``API_KEY`` -- generic fallback, sufficient for most setups
+    * ``TARGET_API_KEY``, ``JUDGE_API_KEY``, ``EVALUATOR_API_KEY``,
+      ``ATTACKER_API_KEY``, ``SDG_API_KEY`` -- optional per-role overrides
 
     Three intents modes:
     - Default taxonomy + SDG: no file params, requires ``sdg_model``/``sdg_api_base``.
@@ -660,7 +689,6 @@ def evalhub_garak_pipeline(
         intents_s3_key=intents_s3_key,
         sdg_model=sdg_model,
         sdg_api_base=sdg_api_base,
-        sdg_api_key=sdg_api_key,
         sdg_flow_id=sdg_flow_id,
         taxonomy_dataset=taxonomy_task.outputs["taxonomy_dataset"],
     )
@@ -670,6 +698,12 @@ def evalhub_garak_pipeline(
         sdg_task,
         secret_name=s3_secret_name,
         secret_key_to_env=S3_DATA_CONNECTION_KEYS,
+    )
+    kubernetes.use_secret_as_volume(
+        sdg_task,
+        secret_name=model_auth_secret_name,
+        mount_path=MODEL_AUTH_MOUNT_PATH,
+        optional=True,
     )
 
     # Step 4: Prepare prompts (normalise, persist raw+normalised to S3)
@@ -702,6 +736,12 @@ def evalhub_garak_pipeline(
         scan_task,
         secret_name=s3_secret_name,
         secret_key_to_env=S3_DATA_CONNECTION_KEYS,
+    )
+    kubernetes.use_secret_as_volume(
+        scan_task,
+        secret_name=model_auth_secret_name,
+        mount_path=MODEL_AUTH_MOUNT_PATH,
+        optional=True,
     )
 
     # Step 6: Write KFP Metrics + HTML to dashboard, upload intents HTML to S3

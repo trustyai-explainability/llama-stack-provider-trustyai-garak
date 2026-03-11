@@ -186,13 +186,16 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
                 raise GarakConfigError("llama_stack_url cannot be empty after normalization")
 
             from .kfp_utils.pipeline import garak_scan_pipeline
-            
+            from ..core.pipeline_steps import redact_api_keys
+
             self._ensure_kfp_client()
+
+            sanitised_config = redact_api_keys(cmd_config)
             
             run = self.kfp_client.create_run_from_pipeline_func(
                 garak_scan_pipeline,
                 arguments={
-                    "command": json.dumps(cmd_config),
+                    "command": json.dumps(sanitised_config),
                     "llama_stack_url": llama_stack_url,
                     "job_id": job_id,
                     "eval_threshold": float(garak_config.run.eval_threshold),
@@ -205,7 +208,6 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
                     "intents_format": provider_params.get("intents_format", "csv"),
                     "sdg_model": provider_params.get("sdg_model", ""),
                     "sdg_api_base": provider_params.get("sdg_api_base", ""),
-                    "sdg_api_key": provider_params.get("sdg_api_key", ""),
                     "sdg_flow_id": provider_params.get("sdg_flow_id", ""),
                 },
                 run_name=f"garak-{benchmark_id.split('::')[-1]}-{job_id.removeprefix(JOB_ID_PREFIX)}",
