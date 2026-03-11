@@ -216,7 +216,6 @@ class GarakAdapter(FrameworkAdapter):
 
             eval_meta: dict[str, Any] = {
                 "framework": "garak",
-                "framework_version": self._get_garak_version(),
                 "eval_threshold": eval_threshold,
                 "timed_out": result.timed_out,
                 "execution_mode": execution_mode,
@@ -229,13 +228,32 @@ class GarakAdapter(FrameworkAdapter):
                 _bc = config.benchmark_config or {}
                 _kfp_ov = _bc.get("kfp_config", {}) if isinstance(_bc.get("kfp_config"), dict) else {}
                 _prefix = _kfp_ov.get("s3_prefix", os.getenv("EVALHUB_KFP_S3_PREFIX", DEFAULT_S3_PREFIX))
+                _bucket = _kfp_ov.get("s3_bucket", os.getenv("AWS_S3_BUCKET", ""))
                 s3_prefix = f"{_prefix}/{config.id}"
-                eval_meta["artifacts"] = {
+                s3_base = f"s3://{_bucket}/{s3_prefix}" if _bucket else s3_prefix
+
+                artifact_keys = {
                     "sdg_raw_output": f"{s3_prefix}/sdg_raw_output.csv",
                     "sdg_normalized_output": f"{s3_prefix}/sdg_normalized_output.csv",
                     "intents_html_report": f"{s3_prefix}/scan.intents.html",
                     "scan_report": f"{s3_prefix}/scan.report.jsonl",
                 }
+                verified: dict[str, str] = {}
+                if _bucket:
+                    try:
+                        from .s3_utils import create_s3_client
+                        s3 = create_s3_client()
+                        for name, key in artifact_keys.items():
+                            try:
+                                s3.head_object(Bucket=_bucket, Key=key)
+                                verified[name] = f"s3://{_bucket}/{key}"
+                            except Exception:
+                                logger.warning("Artifact not found in S3: %s", key)
+                    except Exception as exc:
+                        logger.warning("Could not verify S3 artifacts: %s", exc)
+                        verified = {n: f"{s3_base}/{k.split('/')[-1]}" for n, k in artifact_keys.items()}
+
+                eval_meta["artifacts"] = verified
 
             return JobResults(
                 id=config.id,
@@ -1034,19 +1052,19 @@ class GarakAdapter(FrameworkAdapter):
 
             agg = score_data["aggregated_results"]
 
-            probe_attempts = agg.get("total_attempts", agg.get("total_attacks", 0))
             attack_success_rate = agg.get("attack_success_rate", 0.0)
-            
-            total_attempts += probe_attempts
 
             probe_metadata: dict[str, Any] = {"probe": probe_name}
             if art_intents:
                 probe_metadata.update({
-                    "total_prompts": agg.get("total_prompts", 0),
-                    "safe_prompts": agg.get("safe_prompts", 0),
-                    "successful_attacks": agg.get("successful_attacks", 0),
+                    "total_attempts": agg.get("total_attempts", 0),
+                    "unsafe_stubs": agg.get("unsafe_stubs", 0),
+                    "safe_stubs": agg.get("safe_stubs", 0),
+                    "intent_breakdown": agg.get("intent_breakdown", {}),
                 })
             else:
+                probe_attempts = agg.get("total_attempts", agg.get("total_attacks", 0))
+                total_attempts += probe_attempts
                 probe_metadata.update({
                     "vulnerable_responses": agg.get("vulnerable_responses", 0),
                     "benign_responses": agg.get("benign_responses", 0),
@@ -1058,10 +1076,10 @@ class GarakAdapter(FrameworkAdapter):
                 metric_name=f"{probe_name}_asr",
                 metric_value=attack_success_rate,
                 metric_type="percentage",
-                num_samples=probe_attempts,
+                num_samples=probe_attempts if not art_intents else None,
                 metadata=probe_metadata,
             ))
-        
+
         overall_score = overall_summary.get("attack_success_rate")
         if overall_score is not None:
             try:

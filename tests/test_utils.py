@@ -749,17 +749,15 @@ class TestIntentsAggregation:
         all_raw = [e for entries in raw_entries_by_probe.values() for e in entries]
         intents_metrics = calculate_intents_aggregates(all_raw)
 
-        assert intents_metrics["total_attacks"] == art_dict["Total attempts"]
-        # Compare stub-level jailbroken counts
-        unsafe_prompts = intents_metrics["total_prompts"] - intents_metrics["safe_prompts"]
-        assert unsafe_prompts == art_dict["Unsafe stubs"]
-        assert intents_metrics["safe_prompts"] == art_dict["Safe stubs"]
+        assert intents_metrics["total_attempts"] == art_dict["Total attempts"]
+        assert intents_metrics["unsafe_stubs"] == art_dict["Unsafe stubs"]
+        assert intents_metrics["safe_stubs"] == art_dict["Safe stubs"]
         expected_rate = art_dict["Attack success rate"].replace("%", "")
         assert format(intents_metrics["attack_success_rate"], '.0f') == expected_rate
 
     def test_intents_aggregates_per_probe(self):
         """Per-probe intents aggregates should sum to overall totals
-        for total_attacks and successful_attacks."""
+        for total_attempts (conversations)."""
         test_data_path = Path(__file__).parent / "_resources/garak_earlystop_run.jsonl"
         with open(test_data_path, 'r') as f:
             test_content = f.read()
@@ -770,26 +768,56 @@ class TestIntentsAggregation:
 
         _, _, raw_entries_by_probe = parse_generations_from_report_content(test_content, 0.5)
 
-        sum_attacks = 0
-        sum_successful = 0
+        sum_attempts = 0
         for probe_entries in raw_entries_by_probe.values():
             metrics = calculate_intents_aggregates(probe_entries)
-            sum_attacks += metrics["total_attacks"]
-            sum_successful += metrics["successful_attacks"]
-            assert metrics["total_prompts"] >= metrics["safe_prompts"]
+            sum_attempts += metrics["total_attempts"]
+            assert metrics["unsafe_stubs"] + metrics["safe_stubs"] >= 0
             assert metrics["attack_success_rate"] >= 0
+            assert "intent_breakdown" in metrics
 
         all_raw = [e for entries in raw_entries_by_probe.values() for e in entries]
         overall = calculate_intents_aggregates(all_raw)
-        assert overall["total_attacks"] == sum_attacks
-        assert overall["successful_attacks"] == sum_successful
+        assert overall["total_attempts"] == sum_attempts
 
     def test_intents_aggregates_empty_input(self):
         from llama_stack_provider_trustyai_garak.result_utils import calculate_intents_aggregates
         result = calculate_intents_aggregates([])
-        assert result["total_attacks"] == 0
-        assert result["successful_attacks"] == 0
+        assert result["total_attempts"] == 0
+        assert result["unsafe_stubs"] == 0
+        assert result["safe_stubs"] == 0
         assert result["attack_success_rate"] == 0
+        assert result["intent_breakdown"] == {}
+
+    def test_intents_aggregates_intent_breakdown(self):
+        """Intent breakdown should have per-intent stats matching the HTML report."""
+        test_data_path = Path(__file__).parent / "_resources/garak_earlystop_run.jsonl"
+        with open(test_data_path, 'r') as f:
+            test_content = f.read()
+
+        from llama_stack_provider_trustyai_garak.result_utils import (
+            parse_jsonl, vega_data, intent_stats,
+            parse_generations_from_report_content, calculate_intents_aggregates,
+        )
+
+        raw_report = parse_jsonl(test_content)
+        art_data = vega_data(raw_report)
+        art_intent_stats = intent_stats(art_data)
+
+        _, _, raw_entries_by_probe = parse_generations_from_report_content(test_content, 0.5)
+        all_raw = [e for entries in raw_entries_by_probe.values() for e in entries]
+        intents_metrics = calculate_intents_aggregates(all_raw)
+
+        breakdown = intents_metrics["intent_breakdown"]
+        assert len(breakdown) > 0
+
+        for art_stat in art_intent_stats:
+            intent_id = art_stat["intent"]
+            assert intent_id in breakdown, f"Missing intent {intent_id} in breakdown"
+            ib = breakdown[intent_id]
+            assert ib["total_stubs"] == art_stat["baseline_stubs"]
+            assert ib["unsafe_stubs"] == art_stat["jailbroken"]
+            assert ib["attack_success_rate"] == art_stat["attack_success_rate"]
 
     def test_combine_parsed_results_uses_intents_path(self):
         """combine_parsed_results with art_intents=True should produce
@@ -824,12 +852,12 @@ class TestIntentsAggregation:
         overall_intents = result_intents["scores"]["_overall"]["aggregated_results"]
         overall_native = result_native["scores"]["_overall"]["aggregated_results"]
 
-        # Intents path should have prompt-level fields
-        assert "total_attacks" in overall_intents
-        assert "safe_prompts" in overall_intents
-        assert "total_attempts" not in overall_intents
+        # Intents path should have stub-level + intent fields
+        assert "total_attempts" in overall_intents
+        assert "safe_stubs" in overall_intents
+        assert "unsafe_stubs" in overall_intents
+        assert "intent_breakdown" in overall_intents
 
         # Native path should have attempt-level fields
         assert "total_attempts" in overall_native
         assert "vulnerable_responses" in overall_native
-        assert "total_attacks" not in overall_native

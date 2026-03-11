@@ -1290,18 +1290,34 @@ class TestParseResultsIntentsMode:
                 "scores": {
                     "spo.SPOIntent": {
                         "aggregated_results": {
-                            "total_attacks": 20,
-                            "successful_attacks": 5,
-                            "total_prompts": 10,
-                            "safe_prompts": 7,
+                            "total_attempts": 20,
+                            "unsafe_stubs": 3,
+                            "safe_stubs": 7,
                             "attack_success_rate": 30.0,
+                            "intent_breakdown": {
+                                "S001": {
+                                    "total_attempts": 10,
+                                    "total_stubs": 5,
+                                    "unsafe_stubs": 2,
+                                    "safe_stubs": 3,
+                                    "attack_success_rate": 40.0,
+                                },
+                                "S002": {
+                                    "total_attempts": 10,
+                                    "total_stubs": 5,
+                                    "unsafe_stubs": 1,
+                                    "safe_stubs": 4,
+                                    "attack_success_rate": 20.0,
+                                },
+                            },
                             "metadata": {},
                         }
                     },
                     "_overall": {
                         "aggregated_results": {
-                            "total_attacks": 20,
+                            "total_attempts": 20,
                             "attack_success_rate": 30.0,
+                            "intent_breakdown": {},
                         }
                     },
                 }
@@ -1318,9 +1334,14 @@ class TestParseResultsIntentsMode:
         assert len(metrics) == 1
         assert metrics[0].metric_name == "spo.SPOIntent_asr"
         assert metrics[0].metric_value == 30.0
-        assert metrics[0].metadata["total_prompts"] == 10
-        assert metrics[0].metadata["safe_prompts"] == 7
+        assert metrics[0].num_samples is None
+        assert metrics[0].metadata["total_attempts"] == 20
+        assert metrics[0].metadata["unsafe_stubs"] == 3
+        assert metrics[0].metadata["safe_stubs"] == 7
+        assert "intent_breakdown" in metrics[0].metadata
+        assert metrics[0].metadata["intent_breakdown"]["S001"]["unsafe_stubs"] == 2
         assert overall_score == 30.0
+        assert num_examples == 20
 
 
 # ---------------------------------------------------------------------------
@@ -1888,36 +1909,75 @@ class TestAdapterMutualExclusivity:
 class TestArtifactMetadataSurfacing:
     """Tests that artifact S3 paths are surfaced in evaluation_metadata."""
 
-    def test_intents_kfp_job_includes_artifacts(self, monkeypatch):
-        """art_intents=True + KFP mode -> artifacts dict in evaluation_metadata."""
-        from llama_stack_provider_trustyai_garak.evalhub.garak_adapter import GarakAdapter
-
-        # Build minimal eval_meta dict the same way the adapter does
+    def test_intents_kfp_job_includes_only_verified_artifacts(self, monkeypatch):
+        """art_intents=True + KFP mode -> only artifacts verified in S3 are included."""
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import DEFAULT_S3_PREFIX
         from llama_stack_provider_trustyai_garak.constants import EXECUTION_MODE_KFP
+        from unittest.mock import MagicMock
+        import os
 
-        art_intents = True
-        execution_mode = EXECUTION_MODE_KFP
         job_id = "test-job-123"
+        bucket = "my-bucket"
         s3_prefix = f"{DEFAULT_S3_PREFIX}/{job_id}"
 
-        eval_meta = {
-            "framework": "garak",
-            "art_intents": art_intents,
-            "execution_mode": execution_mode,
+        monkeypatch.setenv("AWS_S3_BUCKET", bucket)
+
+        existing_keys = {
+            f"{s3_prefix}/sdg_raw_output.csv",
+            f"{s3_prefix}/sdg_normalized_output.csv",
+            f"{s3_prefix}/scan.report.jsonl",
         }
 
-        if art_intents and execution_mode == EXECUTION_MODE_KFP:
-            eval_meta["artifacts"] = {
-                "sdg_raw_output": f"{s3_prefix}/sdg_raw_output.csv",
-                "sdg_normalized_output": f"{s3_prefix}/sdg_normalized_output.csv",
-                "intents_html_report": f"{s3_prefix}/scan.intents.html",
-                "scan_report": f"{s3_prefix}/scan.report.jsonl",
-            }
+        mock_s3 = MagicMock()
+        def _head_object(Bucket, Key):
+            if Key not in existing_keys:
+                raise Exception("Not found")
+        mock_s3.head_object = MagicMock(side_effect=_head_object)
 
-        assert "artifacts" in eval_meta
-        assert eval_meta["artifacts"]["sdg_raw_output"] == f"evalhub-garak-kfp/{job_id}/sdg_raw_output.csv"
-        assert eval_meta["artifacts"]["scan_report"] == f"evalhub-garak-kfp/{job_id}/scan.report.jsonl"
+        mock_create = MagicMock(return_value=mock_s3)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.evalhub.garak_adapter.create_s3_client",
+            mock_create,
+            raising=False,
+        )
+
+        _kfp_ov = {}
+        _prefix = _kfp_ov.get("s3_prefix", os.getenv("EVALHUB_KFP_S3_PREFIX", DEFAULT_S3_PREFIX))
+        _bucket = _kfp_ov.get("s3_bucket", os.getenv("AWS_S3_BUCKET", ""))
+
+        artifact_keys = {
+            "sdg_raw_output": f"{s3_prefix}/sdg_raw_output.csv",
+            "sdg_normalized_output": f"{s3_prefix}/sdg_normalized_output.csv",
+            "intents_html_report": f"{s3_prefix}/scan.intents.html",
+            "scan_report": f"{s3_prefix}/scan.report.jsonl",
+        }
+        verified = {}
+        if _bucket:
+            s3 = mock_create()
+            for name, key in artifact_keys.items():
+                try:
+                    s3.head_object(Bucket=_bucket, Key=key)
+                    verified[name] = f"s3://{_bucket}/{key}"
+                except Exception:
+                    pass
+
+        assert len(verified) == 3
+        assert "sdg_raw_output" in verified
+        assert "sdg_normalized_output" in verified
+        assert "scan_report" in verified
+        assert "intents_html_report" not in verified
+        assert verified["sdg_raw_output"] == f"s3://{bucket}/{s3_prefix}/sdg_raw_output.csv"
+
+    def test_intents_kfp_job_bucket_from_kfp_config(self, monkeypatch):
+        """s3_bucket from kfp_config takes precedence over env var."""
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import DEFAULT_S3_PREFIX
+        import os
+
+        monkeypatch.setenv("AWS_S3_BUCKET", "env-bucket")
+        kfp_ov = {"s3_bucket": "config-bucket"}
+        _bucket = kfp_ov.get("s3_bucket", os.getenv("AWS_S3_BUCKET", ""))
+
+        assert _bucket == "config-bucket"
 
     def test_non_intents_job_no_artifacts(self):
         """art_intents=False -> no artifacts dict in evaluation_metadata."""
