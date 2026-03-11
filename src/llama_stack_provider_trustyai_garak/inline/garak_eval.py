@@ -89,7 +89,13 @@ class GarakInlineEvalAdapter(GarakEvalBase):
         benchmark_id = request.benchmark_id
         benchmark_config: BenchmarkConfig = request.benchmark_config
         
-        await self._validate_run_eval_request(benchmark_id, benchmark_config)
+        _, provider_params = await self._validate_run_eval_request(benchmark_id, benchmark_config)
+        if provider_params.get("art_intents", False):
+            from ..errors import GarakValidationError
+            raise GarakValidationError(
+                "Intents benchmarks are not supported in inline mode. "
+                "Use the remote (KFP) provider for intents benchmarks."
+            )
         
         job_id = self._get_job_id()
         job = Job(

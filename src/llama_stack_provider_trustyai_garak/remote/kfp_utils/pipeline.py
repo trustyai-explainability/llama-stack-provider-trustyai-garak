@@ -1,99 +1,123 @@
-from kfp import dsl, kubernetes
-from .components import validate_inputs, resolve_policy_dataset, garak_scan, parse_results
+"""Llama Stack KFP pipeline — 6-step linear DAG.
+
+Mirrors the EvalHub KFP pipeline structure:
+
+1. validate — pre-flight checks (garak, config, Llama Stack connectivity)
+2. resolve_taxonomy — custom taxonomy from Files API or BASE_TAXONOMY
+3. sdg_generate — run SDG on taxonomy (or no-op for bypass / non-intents)
+4. prepare_prompts — normalise, upload raw + normalised to Files API
+5. garak_scan — run scan, upload outputs to Files API
+6. parse_results — parse reports, log KFP metrics, upload EvaluateResponse
+"""
+
+from kfp import dsl
 from dotenv import load_dotenv
 import logging
-from typing import Optional
 from ...constants import DEFAULT_SDG_FLOW_ID
+
+from .components import (
+    validate,
+    resolve_taxonomy,
+    sdg_generate,
+    prepare_prompts,
+    garak_scan,
+    parse_results,
+)
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-@dsl.pipeline()
+@dsl.pipeline(name="llama-stack-garak-scan")
 def garak_scan_pipeline(
     command: str,
     llama_stack_url: str,
     job_id: str,
     eval_threshold: float,
     timeout_seconds: int,
-    max_retries: int = 3,
-    use_gpu: bool = False,
     verify_ssl: str = "True",
     art_intents: bool = False,
     policy_file_id: str = "",
     policy_format: str = "csv",
-    sdg_model: Optional[str] = None,
-    sdg_api_base: Optional[str] = None,
+    intents_file_id: str = "",
+    intents_format: str = "csv",
+    sdg_model: str = "",
+    sdg_api_base: str = "",
+    sdg_api_key: str = "",
     sdg_flow_id: str = DEFAULT_SDG_FLOW_ID,
 ):
+    """Six-step pipeline: validate, resolve taxonomy, SDG, prepare prompts, scan, parse.
 
-    # Step 1: Validate inputs (raises on failure, short-circuiting the pipeline)
-    validate_task = validate_inputs(
+    Three intents modes:
+    - Default taxonomy + SDG: no file params, requires sdg_model/sdg_api_base.
+    - Custom taxonomy + SDG: policy_file_id set, requires sdg_model/sdg_api_base.
+    - Bypass SDG: intents_file_id set, SDG params NOT required.
+
+    policy_file_id and intents_file_id are mutually exclusive.
+    """
+
+    # Step 1: Pre-flight validation
+    validate_task = validate(
         command=command,
         llama_stack_url=llama_stack_url,
         verify_ssl=verify_ssl,
     )
     validate_task.set_caching_options(False)
 
-    # Step 2: Resolve policy dataset (taxonomy -> SDG -> prompts, or empty for native probes)
-    resolve_task = resolve_policy_dataset(
+    # Step 2: Resolve taxonomy
+    taxonomy_task = resolve_taxonomy(
         art_intents=art_intents,
         policy_file_id=policy_file_id,
         policy_format=policy_format,
         llama_stack_url=llama_stack_url,
         verify_ssl=verify_ssl,
+    )
+    taxonomy_task.set_caching_options(True)
+    taxonomy_task.after(validate_task)
+
+    # Step 3: SDG generation (or no-op)
+    sdg_task = sdg_generate(
+        art_intents=art_intents,
+        intents_file_id=intents_file_id,
         sdg_model=sdg_model,
         sdg_api_base=sdg_api_base,
+        sdg_api_key=sdg_api_key,
         sdg_flow_id=sdg_flow_id,
+        taxonomy_dataset=taxonomy_task.outputs["taxonomy_dataset"],
     )
-    resolve_task.set_caching_options(True)
-    resolve_task.after(validate_task)
+    sdg_task.set_caching_options(True)
 
-    # Common arguments
-    scan_kwargs = dict(
+    # Step 4: Prepare prompts (normalise + persist)
+    prep_task = prepare_prompts(
+        art_intents=art_intents,
+        job_id=job_id,
+        intents_file_id=intents_file_id,
+        intents_format=intents_format,
+        llama_stack_url=llama_stack_url,
+        verify_ssl=verify_ssl,
+        sdg_dataset=sdg_task.outputs["sdg_dataset"],
+    )
+    prep_task.set_caching_options(False)
+
+    # Step 5: Garak scan
+    scan_task = garak_scan(
         command=command,
         llama_stack_url=llama_stack_url,
         job_id=job_id,
-        max_retries=max_retries,
         timeout_seconds=timeout_seconds,
         verify_ssl=verify_ssl,
-        policy_dataset=resolve_task.outputs['policy_dataset'],
+        prompts_dataset=prep_task.outputs["prompts_dataset"],
     )
-    parse_kwargs = dict(
+    scan_task.set_caching_options(False)
+
+    # Step 6: Parse results, log metrics, upload EvaluateResponse
+    results_task = parse_results(
+        file_id_mapping=scan_task.outputs["file_id_mapping"],
         llama_stack_url=llama_stack_url,
         eval_threshold=eval_threshold,
         job_id=job_id,
         verify_ssl=verify_ssl,
         art_intents=art_intents,
     )
-
-    # Step 3 & 4: Scan then parse (GPU / CPU split is required because
-    # KFP accelerator settings are compile-time, not runtime).
-    # Both scan and parse raise on failure, so no success-check wrappers needed —
-    # KFP skips downstream tasks automatically when an upstream task fails.
-    with dsl.If(use_gpu == True, name="USE_GPU"):
-        scan_task_gpu = garak_scan(**scan_kwargs)
-        scan_task_gpu.set_caching_options(False)
-        scan_task_gpu.set_accelerator_type(accelerator="nvidia.com/gpu")
-        scan_task_gpu.set_accelerator_limit(limit=1)
-        kubernetes.add_toleration(
-            scan_task_gpu, key="nvidia.com/gpu",
-            operator="Exists", effect="NoSchedule",
-        )
-
-        parse_gpu = parse_results(
-            file_id_mapping=scan_task_gpu.outputs['file_id_mapping'],
-            **parse_kwargs,
-        )
-        parse_gpu.set_caching_options(False)
-
-    with dsl.Else(name="USE_CPU"):
-        scan_task_cpu = garak_scan(**scan_kwargs)
-        scan_task_cpu.set_caching_options(False)
-
-        parse_cpu = parse_results(
-            file_id_mapping=scan_task_cpu.outputs['file_id_mapping'],
-            **parse_kwargs,
-        )
-        parse_cpu.set_caching_options(False)
+    results_task.set_caching_options(False)

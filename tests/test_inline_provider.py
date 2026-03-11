@@ -7,8 +7,14 @@ from llama_stack_provider_trustyai_garak.inline import get_provider_impl
 from llama_stack_provider_trustyai_garak.inline.garak_eval import GarakInlineEvalAdapter
 from llama_stack_provider_trustyai_garak.inline.provider import get_provider_spec
 from llama_stack_provider_trustyai_garak.config import GarakInlineConfig
+from llama_stack_provider_trustyai_garak.errors import GarakValidationError
 
-from llama_stack_provider_trustyai_garak.compat import Api
+from llama_stack_provider_trustyai_garak.compat import (
+    Api,
+    Benchmark,
+    BenchmarkConfig,
+    RunEvalRequest,
+)
 
 
 class TestInlineProvider:
@@ -121,3 +127,35 @@ class TestInlineProvider:
                     assert impl.safety_api is not None
                     assert impl.shields_api is not None
                     impl.initialize.assert_called_once()
+
+
+class TestInlineIntentsFailFast:
+    """Verify that intents benchmarks fail fast in inline mode."""
+
+    @pytest.mark.asyncio
+    async def test_art_intents_raises_in_inline_mode(self):
+        """art_intents=True should be rejected by the inline provider."""
+        config = GarakInlineConfig()
+        mock_deps = {Api.files: Mock(), Api.benchmarks: Mock()}
+
+        with patch.object(GarakInlineEvalAdapter, "initialize", new_callable=AsyncMock):
+            with patch.object(GarakInlineEvalAdapter, "_ensure_garak_installed"):
+                with patch.object(GarakInlineEvalAdapter, "_get_all_probes", return_value=set()):
+                    adapter = await get_provider_impl(config, mock_deps)
+
+        adapter._initialized = True
+
+        # Mock _validate_run_eval_request to return art_intents=True
+        mock_garak_config = Mock()
+        provider_params = {"art_intents": True, "sdg_model": "m", "sdg_api_base": "http://api"}
+        adapter._validate_run_eval_request = AsyncMock(
+            return_value=(mock_garak_config, provider_params)
+        )
+
+        request = RunEvalRequest(
+            benchmark_id="test-benchmark",
+            benchmark_config=Mock(spec=BenchmarkConfig),
+        )
+
+        with pytest.raises(GarakValidationError, match="not supported in inline mode"):
+            await adapter.run_eval(request)

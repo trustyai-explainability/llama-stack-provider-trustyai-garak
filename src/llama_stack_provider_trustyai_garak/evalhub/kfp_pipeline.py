@@ -148,17 +148,7 @@ def _resolve_base_image(kfp_config: KFPConfig | None = None) -> str:
 def validate(
     config_json: str,
 ) -> NamedTuple("Outputs", [("valid", bool)]):
-    """Pre-flight validation before running the scan pipeline.
-
-    Checks:
-    - garak is importable (installed in the base image).
-    - ``config_json`` is valid JSON with required sections.
-    - S3 credentials are present and the bucket is reachable.
-
-    Raises ``GarakValidationError`` on any hard failure, which
-    short-circuits all downstream tasks.
-    """
-    import json
+    """Pre-flight validation: garak, config JSON, flags, S3 connectivity."""
     import logging
     import os
     from collections import namedtuple
@@ -169,43 +159,26 @@ def validate(
     )
     log = logging.getLogger("validate")
 
+    from llama_stack_provider_trustyai_garak.core.pipeline_steps import validate_scan_config
     from llama_stack_provider_trustyai_garak.errors import GarakValidationError
 
-    errors: list[str] = []
+    validate_scan_config(config_json)
+    log.info("Core config validation passed")
 
-    # 1. garak installed
-    try:
-        import garak  # noqa: F401
-        log.info("garak is installed")
-    except ImportError:
-        errors.append("garak is not installed in the base image")
-
-    # 2. config_json parseable with required sections
-    try:
-        config = json.loads(config_json)
-        if "plugins" not in config:
-            errors.append("config_json missing required 'plugins' section")
-        log.info("config_json is valid JSON")
-    except json.JSONDecodeError as exc:
-        errors.append(f"config_json is not valid JSON: {exc}")
-
-    # 3. S3 credentials and bucket reachable
+    # S3 connectivity check (EvalHub-specific)
     s3_bucket = os.environ.get("AWS_S3_BUCKET", "")
     if not s3_bucket:
-        errors.append("AWS_S3_BUCKET env var is not set")
-    else:
-        try:
-            from llama_stack_provider_trustyai_garak.evalhub.s3_utils import create_s3_client
+        raise GarakValidationError("AWS_S3_BUCKET env var is not set")
+    try:
+        from llama_stack_provider_trustyai_garak.evalhub.s3_utils import create_s3_client
 
-            s3 = create_s3_client()
-            s3.head_bucket(Bucket=s3_bucket)
-            log.info("S3 bucket '%s' is reachable", s3_bucket)
-        except Exception as exc:
-            errors.append(f"S3 bucket '{s3_bucket}' is not reachable: {exc}")
-    if errors:
+        s3 = create_s3_client()
+        s3.head_bucket(Bucket=s3_bucket)
+        log.info("S3 bucket '%s' is reachable", s3_bucket)
+    except Exception as exc:
         raise GarakValidationError(
-            "Pre-flight validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
-        )
+            f"S3 bucket '{s3_bucket}' is not reachable: {exc}"
+        ) from exc
 
     log.info("All pre-flight checks passed")
     Outputs = namedtuple("Outputs", ["valid"])
@@ -222,14 +195,7 @@ def resolve_taxonomy(
     policy_s3_key: str = "",
     policy_format: str = "csv"
 ):
-    """Resolve the taxonomy input for SDG.
-
-    If ``policy_s3_key`` is provided, the referenced S3 object is
-    downloaded and validated via ``load_taxonomy_dataset()``.  Otherwise
-    the built-in ``BASE_TAXONOMY`` is emitted.
-
-    The output artifact is always a CSV-formatted taxonomy DataFrame.
-    """
+    """Resolve taxonomy: custom from S3 or built-in BASE_TAXONOMY."""
     import logging
     import os
 
@@ -239,11 +205,11 @@ def resolve_taxonomy(
     )
     log = logging.getLogger("resolve_taxonomy")
 
-    import pandas as pd
+    from llama_stack_provider_trustyai_garak.core.pipeline_steps import resolve_taxonomy_data
     from llama_stack_provider_trustyai_garak.errors import GarakValidationError
 
+    policy_content = None
     if policy_s3_key and policy_s3_key.strip():
-        from llama_stack_provider_trustyai_garak.intents import load_taxonomy_dataset
         from llama_stack_provider_trustyai_garak.evalhub.s3_utils import create_s3_client
 
         if policy_s3_key.startswith("s3://"):
@@ -270,23 +236,13 @@ def resolve_taxonomy(
             "Fetching policy taxonomy from S3 (bucket=%s, key=%s, format=%s)",
             s3_bucket, s3_key, policy_format,
         )
-
         s3 = create_s3_client()
         response = s3.get_object(Bucket=s3_bucket, Key=s3_key)
-        file_content = response["Body"].read().decode("utf-8")
+        policy_content = response["Body"].read()
 
-        taxonomy = load_taxonomy_dataset(content=file_content, format=policy_format)
-        log.info(
-            "Loaded custom taxonomy: %d entries, columns: %s",
-            len(taxonomy), list(taxonomy.columns),
-        )
-    else:
-        from llama_stack_provider_trustyai_garak.sdg import BASE_TAXONOMY
-
-        taxonomy = pd.DataFrame(BASE_TAXONOMY)
-        log.info("Using BASE_TAXONOMY: %d entries", len(taxonomy))
-
-    taxonomy.to_csv(taxonomy_dataset.path, index=False)
+    taxonomy_df = resolve_taxonomy_data(policy_content, format=policy_format)
+    taxonomy_df.to_csv(taxonomy_dataset.path, index=False)
+    log.info("Wrote taxonomy (%d entries) to artifact", len(taxonomy_df))
 
 
 @dsl.component(
@@ -318,15 +274,12 @@ def sdg_generate(
     across multiple garak runs with identical inputs.
     """
     import logging
-    import os
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
     log = logging.getLogger("sdg_generate")
-
-    from llama_stack_provider_trustyai_garak.errors import GarakValidationError
 
     if not art_intents:
         log.info("Non-intents scan — writing empty dataset marker")
@@ -335,57 +288,26 @@ def sdg_generate(
         return
 
     if intents_s3_key and intents_s3_key.strip():
-        log.info("Bypass mode (intents_s3_key set) — SDG not needed, writing empty marker")
+        log.info("Bypass mode (intents_s3_key set) — SDG not needed")
         with open(sdg_dataset.path, "w") as f:
             f.write("")
         return
 
-    # --- SDG path ---
-    if not sdg_model or not sdg_model.strip():
-        raise GarakValidationError(
-            "sdg_model is required for intents scans when intents_s3_key "
-            "is not provided (SDG must run)."
-        )
-    if not sdg_api_base or not sdg_api_base.strip():
-        raise GarakValidationError(
-            "sdg_api_base is required for intents scans when intents_s3_key "
-            "is not provided (SDG must run)."
-        )
-
     import pandas as pd
-    from llama_stack_provider_trustyai_garak.sdg import generate_sdg_dataset
-    from llama_stack_provider_trustyai_garak.constants import DEFAULT_SDG_FLOW_ID as _DEFAULT_FLOW
-
-    if sdg_api_key and sdg_api_key.strip():
-        os.environ["OPENAI_API_KEY"] = sdg_api_key
-
-    effective_flow_id = sdg_flow_id.strip() if sdg_flow_id else ""
-    if not effective_flow_id:
-        effective_flow_id = _DEFAULT_FLOW
+    from llama_stack_provider_trustyai_garak.core.pipeline_steps import run_sdg_generation
 
     taxonomy = pd.read_csv(taxonomy_dataset.path)
-    log.info(
-        "Read taxonomy from artifact: %d entries, columns: %s",
-        len(taxonomy), list(taxonomy.columns),
-    )
+    log.info("Read taxonomy: %d entries", len(taxonomy))
 
-    log.info(
-        "Running SDG: model=%s, api_base=%s, flow=%s",
-        sdg_model, sdg_api_base, effective_flow_id,
+    raw_df = run_sdg_generation(
+        taxonomy_df=taxonomy,
+        sdg_model=sdg_model,
+        sdg_api_base=sdg_api_base,
+        sdg_api_key=sdg_api_key,
+        sdg_flow_id=sdg_flow_id,
     )
-    sdg_result = generate_sdg_dataset(
-        model=sdg_model,
-        api_base=sdg_api_base,
-        flow_id=effective_flow_id,
-        api_key=sdg_api_key if sdg_api_key and sdg_api_key.strip() else "dummy",
-        taxonomy=taxonomy,
-    )
-
-    sdg_result.raw.to_csv(sdg_dataset.path, index=False)
-    log.info(
-        "SDG produced %d raw rows across %d categories",
-        len(sdg_result.raw), sdg_result.raw["policy_concept"].nunique(),
-    )
+    raw_df.to_csv(sdg_dataset.path, index=False)
+    log.info("Wrote %d raw SDG rows to artifact", len(raw_df))
 
 
 @dsl.component(
@@ -434,9 +356,9 @@ def prepare_prompts(
             f.write("")
         return
 
-    from llama_stack_provider_trustyai_garak.intents import load_intents_dataset
     from llama_stack_provider_trustyai_garak.evalhub.s3_utils import create_s3_client
     from llama_stack_provider_trustyai_garak.errors import GarakValidationError
+    from llama_stack_provider_trustyai_garak.core.pipeline_steps import normalize_prompts
 
     s3_bucket = os.environ.get("AWS_S3_BUCKET", "")
     if not s3_bucket:
@@ -454,7 +376,7 @@ def prepare_prompts(
 
     raw_content: str | None = None
 
-    # --- Bypass SDG: fetch the user's pre-generated dataset from S3 ---
+    # Bypass SDG: fetch user's pre-generated dataset from S3
     if intents_s3_key and intents_s3_key.strip():
         if intents_s3_key.startswith("s3://"):
             parts = intents_s3_key[len("s3://"):].split("/", 1)
@@ -470,14 +392,13 @@ def prepare_prompts(
             fetch_key = intents_s3_key
 
         log.info(
-            "Bypass mode — fetching pre-generated intents from S3 "
-            "(bucket=%s, key=%s, format=%s)",
+            "Bypass mode — fetching from S3 (bucket=%s, key=%s, format=%s)",
             fetch_bucket, fetch_key, intents_format,
         )
         response = s3.get_object(Bucket=fetch_bucket, Key=fetch_key)
         raw_content = response["Body"].read().decode("utf-8")
 
-    # --- SDG ran: read the raw artifact ---
+    # SDG ran: read the raw artifact
     elif os.path.getsize(sdg_dataset.path) > 0:
         with open(sdg_dataset.path) as f:
             raw_content = f.read()
@@ -488,21 +409,17 @@ def prepare_prompts(
             f.write("")
         return
 
-    # Upload raw (user-provided or SDG output) to S3 job folder
+    # Upload raw to S3
     raw_key = f"{s3_prefix}/sdg_raw_output.csv"
     s3.put_object(Bucket=s3_bucket, Key=raw_key, Body=raw_content.encode("utf-8"))
     log.info("Uploaded raw output to s3://%s/%s", s3_bucket, raw_key)
 
-    # Normalise
+    # Normalise via core function
     fmt = intents_format if (intents_s3_key and intents_s3_key.strip()) else "csv"
-    normalized = load_intents_dataset(content=raw_content, format=fmt)
+    normalized = normalize_prompts(raw_content, format=fmt)
     normalized.to_csv(prompts_dataset.path, index=False)
-    log.info(
-        "Normalised %d prompts across %d categories",
-        len(normalized), normalized["category"].nunique(),
-    )
 
-    # Upload normalised to S3 job folder
+    # Upload normalised to S3
     norm_key = f"{s3_prefix}/sdg_normalized_output.csv"
     s3.upload_file(prompts_dataset.path, s3_bucket, norm_key)
     log.info("Uploaded normalised output to s3://%s/%s", s3_bucket, norm_key)
@@ -526,7 +443,6 @@ def garak_scan(
     as environment variables by the pipeline using
     ``kubernetes.use_secret_as_env`` from a Data Connection secret.
     """
-    import json
     import logging
     import os
     import tempfile
@@ -539,87 +455,41 @@ def garak_scan(
     )
     log = logging.getLogger("evalhub_garak_scan")
 
-    from llama_stack_provider_trustyai_garak.core.garak_runner import (
-        convert_to_avid_report,
-        run_garak_scan,
-    )
+    from llama_stack_provider_trustyai_garak.core.pipeline_steps import setup_and_run_garak
     from llama_stack_provider_trustyai_garak.errors import GarakError
 
     scan_dir = Path(tempfile.mkdtemp(prefix="garak-scan-"))
 
-    config: dict = json.loads(config_json)
-    config.setdefault("reporting", {})["report_prefix"] = str(scan_dir / "scan")
-    config_file = scan_dir / "config.json"
-    config_file.write_text(json.dumps(config, indent=1))
+    prompts_path = Path(prompts_dataset.path)
+    has_prompts = prompts_path.exists() and prompts_path.stat().st_size > 0
 
-    report_prefix = scan_dir / "scan"
-    log_file = scan_dir / "scan.log"
-
-    if os.path.getsize(prompts_dataset.path) > 0:
-        import pandas as pd
-        from llama_stack_provider_trustyai_garak.intents import generate_intents_from_dataset
-
-        df = pd.read_csv(prompts_dataset.path)
-        if not df.empty:
-            desc_col = "description" if "description" in df.columns else None
-            generate_intents_from_dataset(
-                df,
-                category_description_column_name=desc_col,
-            )
-            log.info(
-                "Generated intent stubs for %d prompts across %d categories",
-                len(df), df["category"].nunique(),
-            )
-        else:
-            log.info("Policy dataset artifact is empty DataFrame — skipping intent generation")
-
-    log.info("Starting garak scan (timeout=%ss, output=%s)", timeout_seconds, scan_dir)
-
-    result = run_garak_scan(
-        config_file=config_file,
+    result = setup_and_run_garak(
+        config_json=config_json,
+        prompts_csv_path=prompts_path if has_prompts else None,
+        scan_dir=scan_dir,
         timeout_seconds=timeout_seconds,
-        report_prefix=report_prefix,
-        log_file=log_file,
     )
-
-    if result.success:
-        log.info("Garak scan completed successfully (rc=%s)", result.returncode)
-        try:
-            convert_to_avid_report(result.report_jsonl)
-        except Exception as e:
-            log.warning("AVID conversion failed: %s", e)
-    else:
-        error_msg = f"Garak scan failed (rc={result.returncode}, timed_out={result.timed_out}): {result.stderr[:500] if result.stderr else 'no stderr'}"
-        log.error(error_msg)
-        raise GarakError(error_msg)
-
 
     # Upload results to S3
     s3_bucket = os.environ.get("AWS_S3_BUCKET", "")
-
     if s3_bucket and s3_prefix:
         try:
             from llama_stack_provider_trustyai_garak.evalhub.s3_utils import create_s3_client
 
             s3 = create_s3_client()
-
             uploaded = 0
             for file_path in scan_dir.rglob("*"):
                 if file_path.is_file():
                     key = f"{s3_prefix}/{file_path.relative_to(scan_dir)}"
                     s3.upload_file(str(file_path), s3_bucket, key)
                     uploaded += 1
-
             log.info("Uploaded %d files to s3://%s/%s", uploaded, s3_bucket, s3_prefix)
         except Exception as e:
-            error_msg = f"Failed to upload results to S3: {e}"
-            log.error(error_msg)
-            raise GarakError(error_msg)
+            raise GarakError(f"Failed to upload results to S3: {e}") from e
     else:
-        error_msg = f"S3 not configured (bucket={s3_bucket}, prefix={s3_prefix}); results not uploaded"
-        log.error(error_msg)
-        raise GarakError(error_msg)
-
+        raise GarakError(
+            f"S3 not configured (bucket={s3_bucket}, prefix={s3_prefix}); results not uploaded"
+        )
 
     Outputs = namedtuple("Outputs", ["success", "return_code"])
     return Outputs(success=result.success, return_code=result.returncode)
@@ -637,12 +507,10 @@ def write_kfp_outputs(
     summary_metrics: dsl.Output[dsl.Metrics],
     html_report: dsl.Output[dsl.HTML],
 ):
-    """Download scan results from S3, parse them, write KFP artifacts,
-    and upload the intents HTML report to the S3 job folder.
+    """Parse scan results from S3, log KFP metrics, and write HTML report.
 
-    This is a best-effort component: the adapter pod performs the
-    authoritative parse. This component exists so that key metrics and
-    an HTML report are visible directly in the KFP dashboard UI.
+    Best-effort component for the KFP dashboard UI — the adapter pod
+    performs the authoritative parse.
     """
     import logging
     import os
@@ -655,9 +523,13 @@ def write_kfp_outputs(
 
     try:
         from llama_stack_provider_trustyai_garak.evalhub.s3_utils import create_s3_client
+        from llama_stack_provider_trustyai_garak.core.pipeline_steps import (
+            parse_and_build_results,
+            log_kfp_metrics,
+        )
+        from llama_stack_provider_trustyai_garak.result_utils import generate_art_report
 
         s3_bucket = os.environ.get("AWS_S3_BUCKET", "")
-
         if not s3_bucket:
             log.warning("AWS_S3_BUCKET not set; skipping KFP output generation")
             return
@@ -671,71 +543,23 @@ def write_kfp_outputs(
             except Exception:
                 return ""
 
-        report_key = f"{s3_prefix}/scan.report.jsonl"
-        avid_key = f"{s3_prefix}/scan.avid.jsonl"
-
-        report_content = _download_text(report_key)
+        report_content = _download_text(f"{s3_prefix}/scan.report.jsonl")
         if not report_content.strip():
-            log.warning("Report file empty or not found at s3://%s/%s", s3_bucket, report_key)
+            log.warning("Report file empty or not found")
             return
 
-        avid_content = _download_text(avid_key)
+        avid_content = _download_text(f"{s3_prefix}/scan.avid.jsonl")
 
-        # Parse using shared utilities
-        from llama_stack_provider_trustyai_garak.result_utils import (
-            combine_parsed_results,
-            generate_art_report,
-            parse_aggregated_from_avid_content,
-            parse_digest_from_report_content,
-            parse_generations_from_report_content,
-        )
-
-        generations, score_rows_by_probe, raw_entries_by_probe = (
-            parse_generations_from_report_content(report_content, eval_threshold)
-        )
-        aggregated_by_probe = parse_aggregated_from_avid_content(avid_content)
-        digest = parse_digest_from_report_content(report_content)
-
-        combined = combine_parsed_results(
-            generations,
-            score_rows_by_probe,
-            aggregated_by_probe,
-            eval_threshold,
-            digest,
+        # Parse via core function
+        combined = parse_and_build_results(
+            report_content=report_content,
+            avid_content=avid_content,
             art_intents=art_intents,
-            raw_entries_by_probe=raw_entries_by_probe,
+            eval_threshold=eval_threshold,
         )
 
-        # Log metrics
-        overall = (
-            combined.get("scores", {})
-            .get("_overall", {})
-            .get("aggregated_results", {})
-        )
-
-        if art_intents:
-            summary_metrics.log_metric(
-                "attack_success_rate",
-                overall.get("attack_success_rate", 0),
-            )
-        else:
-            summary_metrics.log_metric(
-                "total_attempts",
-                overall.get("total_attempts", 0),
-            )
-            summary_metrics.log_metric(
-                "vulnerable_responses",
-                overall.get("vulnerable_responses", 0),
-            )
-            summary_metrics.log_metric(
-                "attack_success_rate",
-                overall.get("attack_success_rate", 0),
-            )
-
-        if overall.get("tbsa"):
-            summary_metrics.log_metric("tbsa", overall["tbsa"])
-
-        log.info("Logged metrics to KFP: %s", {k: v for k, v in overall.items() if k in ("attack_success_rate", "total_attempts", "tbsa")})
+        # Log metrics via core function
+        log_kfp_metrics(summary_metrics, combined, art_intents)
 
         # Generate HTML report
         html_content = None
@@ -746,28 +570,19 @@ def write_kfp_outputs(
             except Exception as exc:
                 log.warning("Failed to generate ART HTML report: %s", exc)
         else:
-            html_key = f"{s3_prefix}/scan.report.html"
-            html_content = _download_text(html_key)
-            if html_content:
-                log.info("Downloaded native probe HTML report from S3")
-            else:
-                log.warning("No native probe HTML report found at s3://%s/%s", s3_bucket, html_key)
+            html_content = _download_text(f"{s3_prefix}/scan.report.html")
 
         if html_content:
             with open(html_report.path, "w") as f:
                 f.write(html_content)
 
-            # Upload intents HTML to S3 job folder
             if art_intents and s3_prefix:
                 try:
                     s3.upload_file(
                         html_report.path, s3_bucket,
                         f"{s3_prefix}/scan.intents.html",
                     )
-                    log.info(
-                        "Uploaded intents HTML report to s3://%s/%s/scan.intents.html",
-                        s3_bucket, s3_prefix,
-                    )
+                    log.info("Uploaded intents HTML to S3")
                 except Exception as exc:
                     log.warning("Failed to upload intents HTML to S3: %s", exc)
         else:

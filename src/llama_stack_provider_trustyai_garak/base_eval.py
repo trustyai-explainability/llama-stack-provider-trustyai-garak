@@ -186,9 +186,18 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
             benchmark.metadata = pre_defined_profiles.get(benchmark.identifier, {})
         
         if benchmark.metadata.get("art_intents", False):
+            # Mutual exclusivity: policy_file_id and intents_file_id cannot both be set
+            _policy_id = benchmark.metadata.get("policy_file_id", "")
+            _intents_id = benchmark.metadata.get("intents_file_id", "")
+            if _policy_id and _intents_id:
+                raise GarakValidationError(
+                    "policy_file_id and intents_file_id are mutually exclusive. "
+                    "Use policy_file_id to provide a custom taxonomy for SDG, "
+                    "or intents_file_id to bypass SDG with pre-generated prompts."
+                )
+
             benchmark.metadata["garak_config"] = self._override_intents_benchmark_config(benchmark.metadata["garak_config"]).to_dict()
             benchmark.metadata["sdg_api_base"] = benchmark.metadata.get("sdg_api_base") if benchmark.metadata.get("sdg_api_base") else self._get_llama_stack_url()
-
 
         async with self._benchmarks_lock:
             self.benchmarks[benchmark.identifier] = benchmark
@@ -624,6 +633,14 @@ class GarakEvalBase(Eval, BenchmarksProtocolPrivate):
             
             if not garak_config.plugins.detectors.get("judge").get("detector_model_name"):
                 raise GarakValidationError("detector_model_name must be configured for ART intents")
+
+            # SDG params required when SDG must run (no bypass file)
+            if not provider_params.get("intents_file_id"):
+                if not provider_params.get("sdg_model"):
+                    raise GarakValidationError(
+                        "sdg_model is required for intents benchmarks when "
+                        "intents_file_id is not provided (SDG must run)."
+                    )
         
         cmd_config: dict = garak_config.to_dict()
         
