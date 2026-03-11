@@ -205,10 +205,11 @@ class GarakAdapter(FrameworkAdapter):
                 try:
                     report_content = result.report_jsonl.read_text()
                     if report_content.strip():
-                        art_html = generate_art_report(report_content)
                         art_html_path = scan_dir / "scan.intents.html"
-                        art_html_path.write_text(art_html)
-                        logger.info("Generated ART HTML report: %s", art_html_path)
+                        if not art_html_path.exists():
+                            art_html = generate_art_report(report_content)
+                            art_html_path.write_text(art_html)
+                            logger.info("Generated ART HTML report: %s", art_html_path)
                 except Exception as e:
                     logger.warning("Failed to generate ART HTML report: %s", e)
 
@@ -275,7 +276,7 @@ class GarakAdapter(FrameworkAdapter):
 
                 eval_meta["artifacts"] = verified
 
-            return JobResults(
+            results = JobResults(
                 id=config.id,
                 benchmark_id=config.benchmark_id,
                 benchmark_index=config.benchmark_index,
@@ -288,6 +289,52 @@ class GarakAdapter(FrameworkAdapter):
                 evaluation_metadata=eval_meta,
                 oci_artifact=oci_artifact,
             )
+
+            # Phase 5: Save to MLflow (if experiment_name configured)
+            try:
+                from evalhub.adapter.mlflow import MlflowArtifact
+
+                mlflow_artifacts: list[MlflowArtifact] = []
+                if result.report_html.exists():
+                    mlflow_artifacts.append(MlflowArtifact(
+                        "scan.report.html",
+                        result.report_html.read_bytes(),
+                        "text/html",
+                    ))
+                art_html_path = scan_dir / "scan.intents.html"
+                if art_html_path.exists():
+                    mlflow_artifacts.append(MlflowArtifact(
+                        "scan.intents.html",
+                        art_html_path.read_bytes(),
+                        "text/html",
+                    ))
+                if result.report_jsonl.exists():
+                    mlflow_artifacts.append(MlflowArtifact(
+                        "scan.report.jsonl",
+                        result.report_jsonl.read_bytes(),
+                        "application/jsonl",
+                    ))
+                sdg_raw = scan_dir / "sdg_raw_output.csv"
+                if sdg_raw.exists():
+                    mlflow_artifacts.append(MlflowArtifact(
+                        "sdg_raw_output.csv",
+                        sdg_raw.read_bytes(),
+                        "text/csv",
+                    ))
+                sdg_norm = scan_dir / "sdg_normalized_output.csv"
+                if sdg_norm.exists():
+                    mlflow_artifacts.append(MlflowArtifact(
+                        "sdg_normalized_output.csv",
+                        sdg_norm.read_bytes(),
+                        "text/csv",
+                    ))
+
+                callbacks.mlflow.save(results, config, artifacts=mlflow_artifacts)
+                logger.info("Saved results and %d artifacts to MLflow", len(mlflow_artifacts))
+            except Exception as mlflow_exc:
+                logger.warning("MLflow save failed (non-fatal): %s", mlflow_exc)
+
+            return results
 
         except Exception as e:
             logger.exception(f"Garak job {config.id} failed")
