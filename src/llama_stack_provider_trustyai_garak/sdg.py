@@ -1,13 +1,14 @@
 """Synthetic Data Generation (SDG) for red-team prompt generation.
 
-Wraps the sdg_hub library to generate adversarial prompts from a fixed
-base taxonomy of harm categories.  Framework-agnostic — can be called
+Wraps the sdg_hub library to generate adversarial prompts from a
+taxonomy of harm categories.  When no custom taxonomy is provided the
+built-in ``BASE_TAXONOMY`` is used.  Framework-agnostic -- can be called
 from KFP components, EvalHub integrations, or standalone scripts.
 """
 
 import re
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, NamedTuple, Optional
 from .constants import DEFAULT_SDG_FLOW_ID
 
 import pandas
@@ -114,36 +115,52 @@ BASE_TAXONOMY: List[Dict[str, Any]] = [
 ]
 
 
+class SDGResult(NamedTuple):
+    """Return type for :func:`generate_sdg_dataset`."""
+    raw: pandas.DataFrame
+    normalized: pandas.DataFrame
+
+
 def generate_sdg_dataset(
     model: str,
     api_base: str,
     flow_id: str = DEFAULT_SDG_FLOW_ID,
     api_key: str = "dummy",
-) -> pandas.DataFrame:
+    taxonomy: Optional[pandas.DataFrame] = None,
+) -> SDGResult:
     """Generate a red-team prompt dataset using sdg_hub.
 
-    Loads the base taxonomy, runs the specified sdg_hub flow against the
-    given model endpoint, and returns a normalized DataFrame ready for
+    Runs the specified sdg_hub flow against the given model endpoint and
+    returns both the full SDG output and a normalised version ready for
     Garak intents consumption.
 
-    Args:
-        model: LLM model identifier (e.g. ``"hosted_vllm/gemma-2-9b-it-abliterated"``).
-        api_base: Model serving endpoint URL.
-        flow_id: sdg_hub flow identifier.
-        api_key: API key for the model.
+    When *taxonomy* is ``None`` the built-in :data:`BASE_TAXONOMY` is
+    used.  Callers may supply a custom taxonomy (validated by
+    :func:`~.intents.load_taxonomy_dataset`) to override the default
+    harm categories.
+
     Returns:
-        DataFrame with columns ``(category, prompt, description)``.
+        :class:`SDGResult` with ``raw`` (all columns from SDG including
+        pools) and ``normalized`` (``category``, ``prompt``,
+        ``description`` only).
     """
     import nest_asyncio
     from sdg_hub import FlowRegistry, Flow
 
     nest_asyncio.apply()
 
-    df = pandas.DataFrame(BASE_TAXONOMY)
-    logger.info(
-        "Starting SDG generation: model=%s, flow=%s, %d taxonomy entries",
-        model, flow_id, len(df),
-    )
+    if taxonomy is not None:
+        df = taxonomy.copy()
+        logger.info(
+            "Starting SDG generation with custom taxonomy: model=%s, flow=%s, %d entries",
+            model, flow_id, len(df),
+        )
+    else:
+        df = pandas.DataFrame(BASE_TAXONOMY)
+        logger.info(
+            "Starting SDG generation with BASE_TAXONOMY: model=%s, flow=%s, %d entries",
+            model, flow_id, len(df),
+        )
 
     FlowRegistry.discover_flows()
     flow_path = FlowRegistry.get_flow_path(flow_id)
@@ -152,21 +169,18 @@ def generate_sdg_dataset(
 
     result = flow.generate(df)
 
-    pool_cols = [c for c in result.columns if c.endswith("_pool")]
-    result = result.drop(columns=pool_cols, errors="ignore")
-
-    result = result.dropna(subset=["prompt"])
+    raw = result.dropna(subset=["prompt"]).copy()
 
     normalized = pandas.DataFrame({
-        "category": result["policy_concept"].apply(
+        "category": raw["policy_concept"].apply(
             lambda v: re.sub(r"[^a-z]", "", str(v).lower())
         ),
-        "prompt": result["prompt"].astype(str),
-        "description": result["concept_definition"].astype(str),
+        "prompt": raw["prompt"].astype(str),
+        "description": raw["concept_definition"].astype(str),
     })
 
     logger.info(
         "SDG complete: %d prompts across %d categories",
         len(normalized), normalized["category"].nunique(),
     )
-    return normalized
+    return SDGResult(raw=raw, normalized=normalized)

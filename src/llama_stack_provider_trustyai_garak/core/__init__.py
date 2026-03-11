@@ -15,6 +15,15 @@ from .config_resolution import (
     resolve_timeout_seconds,
 )
 from .garak_runner import run_garak_scan, GarakScanResult
+from .pipeline_steps import (
+    validate_scan_config,
+    resolve_taxonomy_data,
+    run_sdg_generation,
+    normalize_prompts,
+    setup_and_run_garak,
+    parse_and_build_results,
+    log_kfp_metrics,
+)
 
 __all__ = [
     "build_garak_command",
@@ -26,4 +35,11 @@ __all__ = [
     "resolve_timeout_seconds",
     "run_garak_scan",
     "GarakScanResult",
+    "validate_scan_config",
+    "resolve_taxonomy_data",
+    "run_sdg_generation",
+    "normalize_prompts",
+    "setup_and_run_garak",
+    "parse_and_build_results",
+    "log_kfp_metrics",
 ]

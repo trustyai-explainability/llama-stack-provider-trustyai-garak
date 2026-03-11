@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -8,39 +9,45 @@ import pandas
 from .utils import _ensure_xdg_vars
 from .constants import XDG_DATA_HOME
 
+logger = logging.getLogger(__name__)
 
-def load_intents_dataset(
-        content: str,
-        format: str = "csv",
-        category_column: str = "category",
-        prompt_column: str = "prompt",
-        description_column: Optional[str] = None,
+ALLOWED_POOL_COLUMNS = frozenset({
+    "demographics_pool",
+    "expertise_pool",
+    "geography_pool",
+    "language_styles_pool",
+    "exploit_stages_pool",
+    "task_medium_pool",
+    "temporal_pool",
+    "trust_signals_pool",
+})
+
+_MANDATORY_COLUMNS = ("policy_concept", "concept_definition")
+_MIN_RECOMMENDED_POOLS = 2
+
+
+def load_taxonomy_dataset(
+    content: str,
+    format: str = "csv",
 ) -> pandas.DataFrame:
-    """Parse, validate, and normalize an intents dataset from raw content.
+    """Parse, validate, and clean a user-provided policy taxonomy.
 
-    Accepts CSV or JSON content as a string, validates that required columns
-    are present and the dataset is non-empty, then returns a normalized
-    DataFrame with standard column names (category, prompt, and optionally
-    description).
-
-    This function is framework-agnostic — it can be called from KFP
-    components, Llama Stack providers, EvalHub integrations, or standalone
-    scripts.
+    The returned DataFrame is suitable as the ``taxonomy`` argument to
+    :func:`~.sdg.generate_sdg_dataset`.  It contains ``policy_concept``
+    and ``concept_definition`` plus all 8 recognised ``*_pool`` columns
+    (missing ones filled with ``None``).
 
     Args:
         content: Raw file content (CSV or JSON) as a string.
-        format: Content format — ``"csv"`` or ``"json"``.
-        category_column: Name of the column containing intent categories.
-        prompt_column: Name of the column containing prompts.
-        description_column: Optional column with category descriptions.
+        format: Content format -- ``"csv"`` or ``"json"``.
 
     Returns:
-        A normalized ``DataFrame`` with columns ``category``, ``prompt``,
-        and optionally ``description``.
+        Cleaned ``DataFrame`` ready for SDG consumption.
 
     Raises:
-        ValueError: If format is unsupported, required columns are missing,
-            or the dataset is empty.
+        ValueError: On unsupported format, missing mandatory columns,
+            disallowed pool column names, unparseable pool cell values,
+            or an empty dataset after cleaning.
     """
     fmt = format.lower()
     if fmt == "csv":
@@ -49,27 +56,209 @@ def load_intents_dataset(
         df = pandas.read_json(io.StringIO(content))
     else:
         raise ValueError(
-            f"Unsupported intents format: '{format}'. Use 'csv' or 'json'."
+            f"Unsupported policy file format: '{format}'. Use 'csv' or 'json'."
         )
 
-    required = {category_column, prompt_column}
-    missing = required - set(df.columns)
+    # --- mandatory columns ---------------------------------------------------
+    missing = set(_MANDATORY_COLUMNS) - set(df.columns)
     if missing:
         raise ValueError(
-            f"Dataset missing required columns: {sorted(missing)}. "
+            f"Taxonomy missing required columns: {sorted(missing)}. "
             f"Found columns: {sorted(df.columns)}"
         )
+
+    for col in _MANDATORY_COLUMNS:
+        df[col] = df[col].astype(str).str.strip()
+
+    df = df[~df[list(_MANDATORY_COLUMNS)].isin(["", "nan", "None"]).any(axis=1)]
+    df = df.dropna(subset=list(_MANDATORY_COLUMNS))
+    df = df.drop_duplicates(subset=list(_MANDATORY_COLUMNS))
+
     if df.empty:
-        raise ValueError("Intents dataset is empty")
+        raise ValueError(
+            "Taxonomy dataset is empty after removing null, empty, and "
+            "duplicate rows."
+        )
 
-    normalized = pandas.DataFrame({
-        "category": df[category_column].astype(str),
-        "prompt": df[prompt_column].astype(str),
-    })
-    if description_column and description_column in df.columns:
-        normalized["description"] = df[description_column].astype(str)
+    # --- pool columns ---------------------------------------------------------
+    user_pool_cols = {c for c in df.columns if c.endswith("_pool")}
+    disallowed = user_pool_cols - ALLOWED_POOL_COLUMNS
+    if disallowed:
+        raise ValueError(
+            f"Unrecognised pool columns: {sorted(disallowed)}. "
+            f"Allowed pool columns: {sorted(ALLOWED_POOL_COLUMNS)}"
+        )
 
-    return normalized
+    recognized_pools = user_pool_cols & ALLOWED_POOL_COLUMNS
+    if len(recognized_pools) < _MIN_RECOMMENDED_POOLS:
+        logger.warning(
+            "Only %d pool column(s) provided; recommend at least %d for "
+            "diverse SDG output.",
+            len(recognized_pools),
+            _MIN_RECOMMENDED_POOLS,
+        )
+
+    # --- convert to list-of-dicts, parse pool values, rebuild ----------------
+    # Working with plain dicts avoids pandas cell-assignment issues when
+    # storing list/dict objects (PyArrow / pandas broadcasting quirks).
+    records = df.to_dict("records")
+    for row_idx, row in enumerate(records):
+        for col in recognized_pools:
+            row[col] = _parse_pool_value(row.get(col), col, row_idx)
+
+        # keep only mandatory + recognised pool columns, add missing pools
+        cleaned = {
+            mc: row[mc] for mc in _MANDATORY_COLUMNS
+        }
+        for pool_col in sorted(ALLOWED_POOL_COLUMNS):
+            cleaned[pool_col] = row.get(pool_col)
+        records[row_idx] = cleaned
+
+    result = pandas.DataFrame(records)
+
+    logger.info(
+        "Loaded taxonomy: %d entries, user-provided pools: %s, "
+        "empty pools (defaults): %s",
+        len(result),
+        sorted(recognized_pools) or "(none)",
+        sorted(ALLOWED_POOL_COLUMNS - recognized_pools) or "(none)",
+    )
+    return result
+
+
+def _parse_pool_value(value, col: str, row_idx: int):
+    """Parse a single pool cell into a native ``dict`` or ``list``.
+
+    Strings are tried with``json.loads`` first, 
+    then ``ast.literal_eval`` (for Python-repr strings that pandas 
+    produces when writing lists/dicts to CSV).
+    Sets are normalised to sorted lists.  Returns ``None`` for
+    null / empty values.
+    """
+    import ast
+
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, set):
+        return sorted(value)
+    if isinstance(value, str):
+        if not value.strip():
+            return None
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            try:
+                parsed = ast.literal_eval(value)
+            except (ValueError, SyntaxError) as exc:
+                raise ValueError(
+                    f"Cannot parse pool column '{col}' at row {row_idx}: "
+                    f"{exc}. Value must be a JSON or Python-literal "
+                    f"dict, list, or set."
+                ) from exc
+        if isinstance(parsed, set):
+            parsed = sorted(parsed)
+        if not isinstance(parsed, (dict, list)):
+            raise ValueError(
+                f"Pool column '{col}' at row {row_idx} must be a dict, list, "
+                f"or set, got {type(parsed).__name__}"
+            )
+        return parsed
+
+    # Scalar NaN -- treat as empty
+    try:
+        if pandas.isna(value):
+            return None
+    except (ValueError, TypeError):
+        pass
+    raise ValueError(
+        f"Pool column '{col}' at row {row_idx} must be a dict, list, "
+        f"or set, got {type(value).__name__}"
+    )
+
+
+def load_intents_dataset(
+    content: str,
+    format: str = "csv",
+) -> pandas.DataFrame:
+    """Load a pre-generated prompts dataset for the SDG bypass path.
+
+    Auto-detects the schema and returns a normalised DataFrame with
+    ``(category, prompt, description)`` columns ready for
+    :func:`generate_intents_from_dataset`.
+
+    Two schemas are recognised:
+
+    * **Normalised** -- already has ``category`` and ``prompt`` columns
+      (optionally ``description``).  Returned as-is after cleaning.
+    * **Raw SDG output** -- has ``policy_concept``, ``concept_definition``
+      and ``prompt`` columns (plus optional pool columns).  Columns are
+      renamed / dropped to match the normalised schema.
+
+    Args:
+        content: Raw file content (CSV or JSON) as a string.
+        format:  ``"csv"`` or ``"json"``.
+
+    Raises:
+        ValueError: On unsupported format, missing ``prompt`` column, or
+            unrecognised schema.
+    """
+    fmt = format.lower()
+    if fmt == "csv":
+        df = pandas.read_csv(io.StringIO(content))
+    elif fmt == "json":
+        df = pandas.read_json(io.StringIO(content))
+    else:
+        raise ValueError(
+            f"Unsupported intents file format: '{format}'. Use 'csv' or 'json'."
+        )
+
+    if "prompt" not in df.columns:
+        raise ValueError(
+            f"Intents dataset must contain a 'prompt' column. "
+            f"Found columns: {sorted(df.columns)}"
+        )
+
+    if "category" in df.columns:
+        # Already-normalised schema
+        cols = ["category", "prompt"]
+        if "description" in df.columns:
+            cols.append("description")
+        df = df[cols].copy()
+        if "description" not in df.columns:
+            df["description"] = ""
+    elif "policy_concept" in df.columns:
+        # Raw SDG output schema -- normalise column names
+        df["category"] = df["policy_concept"].apply(
+            lambda v: re.sub(r"[^a-z]", "", str(v).lower())
+        )
+        df["prompt"] = df["prompt"].astype(str)
+        df["description"] = (
+            df["concept_definition"].astype(str)
+            if "concept_definition" in df.columns
+            else ""
+        )
+        df = df[["category", "prompt", "description"]]
+    else:
+        raise ValueError(
+            "Cannot detect intents dataset schema. Expected either "
+            "'category'+'prompt' (normalised) or 'policy_concept'+'prompt' "
+            f"(raw SDG output). Found columns: {sorted(df.columns)}"
+        )
+
+    df = df.dropna(subset=["prompt"])
+    df = df[df["prompt"].astype(str).str.strip() != ""]
+    df = df.reset_index(drop=True)
+
+    if df.empty:
+        raise ValueError("Intents dataset is empty after removing null/empty prompts.")
+
+    logger.info(
+        "Loaded intents dataset (bypass SDG): %d prompts across %d categories",
+        len(df), df["category"].nunique(),
+    )
+    return df
 
 
 def generate_intents_from_dataset(dataset: pandas.DataFrame,
