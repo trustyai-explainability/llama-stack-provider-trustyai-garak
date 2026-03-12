@@ -26,7 +26,7 @@ class TestInlineProvider:
         
         assert spec.api == Api.eval
         assert spec.provider_type == "inline::trustyai_garak"
-        assert "garak @ git+https://github.com/trustyai-explainability/garak.git@automated-red-teaming" in spec.pip_packages
+        assert any(pkg.startswith("garak") for pkg in spec.pip_packages)
         assert spec.config_class == "llama_stack_provider_trustyai_garak.config.GarakInlineConfig"
         assert spec.module == "llama_stack_provider_trustyai_garak.inline"
         assert Api.inference in spec.api_dependencies

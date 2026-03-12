@@ -351,7 +351,6 @@ class TestProviderSpecsUseGarakVersion:
         # - "garak==0.12.0"
         # - "garak>=0.12.0"
         # - "garak~=0.12.0"
-        # version_pattern = r"^garak(==|>=|<=|~=|!=)?\d*\.?\d*\.?\d*$"
-        # assert re.match(version_pattern, garak_package), f"Invalid garak version format: {garak_package}"
-        assert garak_package == "garak @ git+https://github.com/trustyai-explainability/garak.git@automated-red-teaming"
+        version_pattern = r"^garak(==|>=|<=|~=|!=)?\d*\.?\d*\.?\d*$"
+        assert re.match(version_pattern, garak_package), f"Invalid garak version format: {garak_package}"
 
