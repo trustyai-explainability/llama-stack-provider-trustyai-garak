@@ -11,8 +11,8 @@ authors = [
 ]
 keywords = ["llama-stack", "garak", "red-teaming", "security", "ai-safety"]
 dependencies = [
-    "llama-stack-client>=0.5.0",
-    "llama-stack-api>=0.5.0",
+    "llama-stack-client>=0.5.0,<0.6.0",
+    "llama-stack-api>=0.5.0,<0.6.0",
     # Remote execution dependencies
     "kfp>=2.14.6",
     "kfp-kubernetes>=2.14.6",
@@ -48,7 +48,7 @@ inline = [
     "garak @ git+https://github.com/trustyai-explainability/garak.git@automated-red-teaming",
 ]
 dev = ["pytest", "pytest-cov",  "pytest-asyncio", "black", "isort"]
-server = ["llama-stack>=0.5.0"]
+server = ["llama-stack>=0.5.0,<0.6.0"]
 
 # [tool.uv] - no need as latest garak has "openai>=2,<3"
 # # Added this because:
