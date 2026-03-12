@@ -303,9 +303,9 @@ class TestKFPConfig:
     """Tests for KFPConfig.from_env_and_config."""
 
     def test_from_env_vars(self, monkeypatch):
-        monkeypatch.setenv("EVALHUB_KFP_ENDPOINT", "https://kfp.example.com")
-        monkeypatch.setenv("EVALHUB_KFP_NAMESPACE", "test-ns")
-        monkeypatch.setenv("EVALHUB_KFP_S3_SECRET_NAME", "my-data-connection")
+        monkeypatch.setenv("KFP_ENDPOINT", "https://kfp.example.com")
+        monkeypatch.setenv("KFP_NAMESPACE", "test-ns")
+        monkeypatch.setenv("KFP_S3_SECRET_NAME", "my-data-connection")
         monkeypatch.setenv("AWS_S3_BUCKET", "my-bucket")
 
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import KFPConfig
@@ -318,8 +318,8 @@ class TestKFPConfig:
         assert cfg.experiment_name == "evalhub-garak"
 
     def test_benchmark_config_overrides_env(self, monkeypatch):
-        monkeypatch.setenv("EVALHUB_KFP_ENDPOINT", "https://env.example.com")
-        monkeypatch.setenv("EVALHUB_KFP_NAMESPACE", "env-ns")
+        monkeypatch.setenv("KFP_ENDPOINT", "https://env.example.com")
+        monkeypatch.setenv("KFP_NAMESPACE", "env-ns")
 
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import KFPConfig
 
@@ -337,29 +337,37 @@ class TestKFPConfig:
         assert cfg.s3_bucket == "override-bucket"
 
     def test_missing_endpoint_raises(self, monkeypatch):
-        monkeypatch.delenv("EVALHUB_KFP_ENDPOINT", raising=False)
-        monkeypatch.setenv("EVALHUB_KFP_NAMESPACE", "ns")
+        monkeypatch.delenv("KFP_ENDPOINT", raising=False)
+        monkeypatch.setenv("KFP_NAMESPACE", "ns")
 
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import KFPConfig
         import pytest
 
-        with pytest.raises(ValueError, match="KFP endpoint is required"):
+        with pytest.raises(ValueError) as excinfo:
             KFPConfig.from_env_and_config()
+
+        msg = str(excinfo.value)
+        assert "KFP_ENDPOINT" in msg
+        assert "kfp_config.endpoint" in msg
 
     def test_missing_namespace_raises(self, monkeypatch):
-        monkeypatch.setenv("EVALHUB_KFP_ENDPOINT", "https://kfp.example.com")
-        monkeypatch.delenv("EVALHUB_KFP_NAMESPACE", raising=False)
+        monkeypatch.setenv("KFP_ENDPOINT", "https://kfp.example.com")
+        monkeypatch.delenv("KFP_NAMESPACE", raising=False)
 
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import KFPConfig
         import pytest
 
-        with pytest.raises(ValueError, match="KFP namespace is required"):
+        with pytest.raises(ValueError) as excinfo:
             KFPConfig.from_env_and_config()
 
+        msg = str(excinfo.value)
+        assert "KFP_NAMESPACE" in msg
+        assert "kfp_config.namespace" in msg
+
     def test_verify_ssl_false(self, monkeypatch):
-        monkeypatch.setenv("EVALHUB_KFP_ENDPOINT", "https://kfp.example.com")
-        monkeypatch.setenv("EVALHUB_KFP_NAMESPACE", "ns")
-        monkeypatch.setenv("EVALHUB_KFP_VERIFY_SSL", "false")
+        monkeypatch.setenv("KFP_ENDPOINT", "https://kfp.example.com")
+        monkeypatch.setenv("KFP_NAMESPACE", "ns")
+        monkeypatch.setenv("KFP_VERIFY_SSL", "false")
 
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import KFPConfig
 
@@ -500,7 +508,7 @@ class TestS3Download:
 
         monkeypatch.setattr(
             module.GarakAdapter, "_create_s3_client",
-            staticmethod(lambda **kw: _FakeS3Client()),
+            staticmethod(lambda **kwargs: _FakeS3Client()),
         )
 
         local_dir = tmp_path / "results"
@@ -540,7 +548,7 @@ class TestS3Download:
 
         monkeypatch.setattr(
             module.GarakAdapter, "_create_s3_client",
-            staticmethod(lambda **kw: _FakeS3Client()),
+            staticmethod(lambda **kwargs: _FakeS3Client()),
         )
 
         local_dir = tmp_path / "results"
@@ -667,9 +675,9 @@ class TestKFPMissingS3Secret:
         module = _load_evalhub_garak_adapter(monkeypatch)
         adapter = module.GarakAdapter()
         monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
-        monkeypatch.setenv("EVALHUB_KFP_ENDPOINT", "https://kfp.example.com")
-        monkeypatch.setenv("EVALHUB_KFP_NAMESPACE", "test-ns")
-        monkeypatch.delenv("EVALHUB_KFP_S3_SECRET_NAME", raising=False)
+        monkeypatch.setenv("KFP_ENDPOINT", "https://kfp.example.com")
+        monkeypatch.setenv("KFP_NAMESPACE", "test-ns")
+        monkeypatch.delenv("KFP_S3_SECRET_NAME", raising=False)
 
         class _Callbacks:
             def report_status(self, _update):
@@ -684,8 +692,12 @@ class TestKFPMissingS3Secret:
             exports=None,
         )
 
-        with pytest.raises(ValueError, match="S3 data-connection secret name is required"):
+        with pytest.raises(ValueError) as excinfo:
             adapter.run_benchmark_job(job, _Callbacks())
+
+        msg = str(excinfo.value)
+        assert "KFP_S3_SECRET_NAME" in msg
+        assert "kfp_config.s3_secret_name" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -1200,8 +1212,8 @@ class TestKFPIntentsMode:
         module = _load_evalhub_garak_adapter(monkeypatch)
         adapter = module.GarakAdapter()
         monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
-        monkeypatch.setenv("EVALHUB_KFP_ENDPOINT", "http://kfp:8080")
-        monkeypatch.setenv("EVALHUB_KFP_NAMESPACE", "test-ns")
+        monkeypatch.setenv("KFP_ENDPOINT", "http://kfp:8080")
+        monkeypatch.setenv("KFP_NAMESPACE", "test-ns")
 
         scan_dir = tmp_path / "intents-html-job"
         scan_dir.mkdir(parents=True)
@@ -1258,9 +1270,9 @@ class TestKFPIntentsMode:
         module = _load_evalhub_garak_adapter(monkeypatch)
         adapter = module.GarakAdapter()
         monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
-        monkeypatch.setenv("EVALHUB_KFP_ENDPOINT", "https://kfp.example.com")
-        monkeypatch.setenv("EVALHUB_KFP_NAMESPACE", "test-ns")
-        monkeypatch.setenv("EVALHUB_KFP_S3_SECRET_NAME", "data-conn")
+        monkeypatch.setenv("KFP_ENDPOINT", "https://kfp.example.com")
+        monkeypatch.setenv("KFP_NAMESPACE", "test-ns")
+        monkeypatch.setenv("KFP_S3_SECRET_NAME", "data-conn")
 
         class _Callbacks:
             def report_status(self, _update):
@@ -1404,6 +1416,9 @@ class TestValidateComponent:
     def test_valid_config_and_s3_passes(self, monkeypatch, tmp_path):
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import validate
 
+        # Mock garak module so import succeeds
+        monkeypatch.setitem(sys.modules, 'garak', types.ModuleType('garak'))
+
         monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "fake")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "fake")
@@ -1467,6 +1482,9 @@ class TestValidateComponent:
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import validate
         from llama_stack_provider_trustyai_garak.errors import GarakValidationError
 
+        # Mock garak module so import succeeds
+        monkeypatch.setitem(sys.modules, 'garak', types.ModuleType('garak'))
+
         monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
 
         fn = _get_component_fn(validate)
@@ -1476,6 +1494,9 @@ class TestValidateComponent:
     def test_unreachable_s3_bucket_raises(self, monkeypatch):
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import validate
         from llama_stack_provider_trustyai_garak.errors import GarakValidationError
+
+        # Mock garak module so import succeeds
+        monkeypatch.setitem(sys.modules, 'garak', types.ModuleType('garak'))
 
         monkeypatch.setenv("AWS_S3_BUCKET", "bad-bucket")
 
@@ -1829,9 +1850,9 @@ class TestAdapterMutualExclusivity:
     """Tests for mutual exclusivity of policy_s3_key and intents_s3_key in adapter."""
 
     _KFP_ENV = {
-        "EVALHUB_KFP_ENDPOINT": "http://kfp:8080",
-        "EVALHUB_KFP_NAMESPACE": "test-ns",
-        "EVALHUB_KFP_S3_SECRET_NAME": "test-secret",
+        "KFP_ENDPOINT": "http://kfp:8080",
+        "KFP_NAMESPACE": "test-ns",
+        "KFP_S3_SECRET_NAME": "test-secret",
         "AWS_S3_BUCKET": "test-bucket",
     }
 
@@ -1967,7 +1988,7 @@ class TestArtifactMetadataSurfacing:
         )
 
         _kfp_ov = {}
-        _prefix = _kfp_ov.get("s3_prefix", os.getenv("EVALHUB_KFP_S3_PREFIX", DEFAULT_S3_PREFIX))
+        _prefix = _kfp_ov.get("s3_prefix", os.getenv("KFP_S3_PREFIX", DEFAULT_S3_PREFIX))
         _bucket = _kfp_ov.get("s3_bucket", os.getenv("AWS_S3_BUCKET", ""))
 
         artifact_keys = {

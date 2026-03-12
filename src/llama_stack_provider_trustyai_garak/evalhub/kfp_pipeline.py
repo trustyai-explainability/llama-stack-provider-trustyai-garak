@@ -75,7 +75,7 @@ class KFPConfig:
 
         Env var precedence (lowest to highest):
         1. Dataclass defaults
-        2. Environment variables (EVALHUB_KFP_*)
+        2. Environment variables (KFP_*)
         3. benchmark_config dict keys
         """
         bc = benchmark_config or {}
@@ -86,42 +86,42 @@ class KFPConfig:
         def _resolve(key: str, env_var: str, default: str = "") -> str:
             return str(kfp_overrides.get(key, os.getenv(env_var, default)))
 
-        endpoint = _resolve("endpoint", "EVALHUB_KFP_ENDPOINT")
+        endpoint = _resolve("endpoint", "KFP_ENDPOINT")
         if not endpoint:
             raise ValueError(
-                "KFP endpoint is required. Set EVALHUB_KFP_ENDPOINT or "
+                "KFP endpoint is required. Set KFP_ENDPOINT or "
                 "provide kfp_config.endpoint in benchmark_config."
             )
 
-        namespace = _resolve("namespace", "EVALHUB_KFP_NAMESPACE")
+        namespace = _resolve("namespace", "KFP_NAMESPACE")
         if not namespace:
             raise ValueError(
-                "KFP namespace is required. Set EVALHUB_KFP_NAMESPACE or "
+                "KFP namespace is required. Set KFP_NAMESPACE or "
                 "provide kfp_config.namespace in benchmark_config."
             )
 
-        verify_ssl_raw = _resolve("verify_ssl", "EVALHUB_KFP_VERIFY_SSL", "true")
+        verify_ssl_raw = _resolve("verify_ssl", "KFP_VERIFY_SSL", "true")
         verify_ssl = verify_ssl_raw.lower() not in ("false", "0", "no", "off")
 
         return cls(
             endpoint=endpoint,
             namespace=namespace,
-            auth_token=_resolve("auth_token", "EVALHUB_KFP_AUTH_TOKEN"),
-            s3_secret_name=_resolve("s3_secret_name", "EVALHUB_KFP_S3_SECRET_NAME"),
+            auth_token=_resolve("auth_token", "KFP_AUTH_TOKEN"),
+            s3_secret_name=_resolve("s3_secret_name", "KFP_S3_SECRET_NAME"),
             s3_bucket=_resolve("s3_bucket", "AWS_S3_BUCKET"),
             s3_endpoint=_resolve("s3_endpoint", "AWS_S3_ENDPOINT"),
             experiment_name=_resolve(
-                "experiment_name", "EVALHUB_KFP_EXPERIMENT", DEFAULT_KFP_EXPERIMENT,
+                "experiment_name", "KFP_EXPERIMENT", DEFAULT_KFP_EXPERIMENT,
             ),
             poll_interval_seconds=int(
-                _resolve("poll_interval_seconds", "EVALHUB_KFP_POLL_INTERVAL", str(DEFAULT_POLL_INTERVAL))
+                _resolve("poll_interval_seconds", "KFP_POLL_INTERVAL", str(DEFAULT_POLL_INTERVAL))
             ),
             s3_prefix=_resolve(
-                "s3_prefix", "EVALHUB_KFP_S3_PREFIX", DEFAULT_S3_PREFIX,
+                "s3_prefix", "KFP_S3_PREFIX", DEFAULT_S3_PREFIX,
             ),
             base_image=_resolve("base_image", "KUBEFLOW_GARAK_BASE_IMAGE"),
             verify_ssl=verify_ssl,
-            ssl_ca_cert=_resolve("ssl_ca_cert", "EVALHUB_KFP_SSL_CA_CERT"),
+            ssl_ca_cert=_resolve("ssl_ca_cert", "KFP_SSL_CA_CERT"),
         )
 
 
