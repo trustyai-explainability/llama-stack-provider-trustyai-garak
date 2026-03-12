@@ -301,8 +301,8 @@ class GarakScanConfig(BaseModel):
         },
         ## happy path intents test
         "trustyai_garak::intents": {
-            "name": "Intents Test",
-            "description": "Intents Test",
+            "name": "Intents-based Risk Assessment",
+            "description": "Risk assessment with a custom intent typology with probes of increasing complexity",
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
                     eval_threshold=0.5,
