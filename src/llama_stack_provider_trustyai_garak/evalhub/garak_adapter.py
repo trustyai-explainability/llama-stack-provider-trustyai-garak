@@ -244,37 +244,32 @@ class GarakAdapter(FrameworkAdapter):
                 "overall": overall_summary,
             }
 
-            if art_intents and execution_mode == EXECUTION_MODE_KFP:
+            if execution_mode == EXECUTION_MODE_KFP:
                 from .kfp_pipeline import DEFAULT_S3_PREFIX
                 _bc = config.parameters or {}
                 _kfp_ov = _bc.get("kfp_config", {}) if isinstance(_bc.get("kfp_config"), dict) else {}
                 _prefix = _kfp_ov.get("s3_prefix", os.getenv("KFP_S3_PREFIX", DEFAULT_S3_PREFIX))
                 _bucket = _kfp_ov.get("s3_bucket", os.getenv("AWS_S3_BUCKET", ""))
                 s3_prefix = f"{_prefix}/{config.id}"
-                s3_base = f"s3://{_bucket}/{s3_prefix}" if _bucket else s3_prefix
 
-                artifact_keys = {
-                    "sdg_raw_output": f"{s3_prefix}/sdg_raw_output.csv",
-                    "sdg_normalized_output": f"{s3_prefix}/sdg_normalized_output.csv",
-                    "intents_html_report": f"{s3_prefix}/scan.intents.html",
+                artifact_keys: dict[str, str] = {
                     "scan_report": f"{s3_prefix}/scan.report.jsonl",
+                    "scan_html_report": f"{s3_prefix}/scan.report.html",
                 }
-                verified: dict[str, str] = {}
-                if _bucket:
-                    try:
-                        from .s3_utils import create_s3_client
-                        s3 = create_s3_client()
-                        for name, key in artifact_keys.items():
-                            try:
-                                s3.head_object(Bucket=_bucket, Key=key)
-                                verified[name] = f"s3://{_bucket}/{key}"
-                            except Exception:
-                                logger.warning("Artifact not found in S3: %s", key)
-                    except Exception as exc:
-                        logger.warning("Could not verify S3 artifacts: %s", exc)
-                        verified = {n: f"{s3_base}/{k.split('/')[-1]}" for n, k in artifact_keys.items()}
+                if art_intents:
+                    artifact_keys["sdg_raw_output"] = f"{s3_prefix}/sdg_raw_output.csv"
+                    artifact_keys["sdg_normalized_output"] = f"{s3_prefix}/sdg_normalized_output.csv"
+                    artifact_keys["intents_html_report"] = f"{s3_prefix}/scan.intents.html"
 
-                eval_meta["artifacts"] = verified
+                s3_artifacts: dict[str, str] = {}
+                for name, key in artifact_keys.items():
+                    local_file = scan_dir / key.split("/")[-1]
+                    if local_file.exists():
+                        s3_artifacts[name] = f"s3://{_bucket}/{key}" if _bucket else key
+                    else:
+                        logger.debug("Artifact not downloaded locally, skipping: %s", key)
+
+                eval_meta["artifacts"] = s3_artifacts
 
             results = JobResults(
                 id=config.id,
@@ -1248,6 +1243,85 @@ class GarakAdapter(FrameworkAdapter):
             return "unknown"
 
 
+class _GarakCallbacks(DefaultCallbacks):
+    """Extends DefaultCallbacks to forward evaluation_metadata artifacts.
+
+    Workaround until the SDK natively forwards evaluation_metadata into
+    the status event's ``artifacts`` field (tracked for SDK 3.4).
+
+    Overrides ``report_results`` to merge ``evaluation_metadata["artifacts"]``
+    into the single COMPLETED status event alongside OCI refs and metrics.
+    """
+
+    def report_results(self, results: JobResults) -> None:
+        eval_artifacts = (results.evaluation_metadata or {}).get("artifacts", {})
+
+        if not eval_artifacts:
+            super().report_results(results)
+            return
+
+        if self.sidecar_url and self._httpx_available and self._http_client:
+            try:
+                url = f"{self.sidecar_url}{self._events_path_template.format(job_id=self.job_id)}"
+
+                metrics = {}
+                for result in results.results:
+                    metrics[result.metric_name] = result.metric_value
+
+                status_event: dict[str, Any] = {
+                    "id": self.benchmark_id,
+                    "benchmark_index": self.benchmark_index,
+                    "state": JobStatus.COMPLETED.value,
+                    "status": JobStatus.COMPLETED.value,
+                    "message": {
+                        "message": "Evaluation completed successfully",
+                        "message_code": "evaluation_completed",
+                    },
+                    "metrics": metrics,
+                    "completed_at": results.completed_at.isoformat(),
+                    "duration_seconds": int(results.duration_seconds),
+                }
+
+                if self.provider_id:
+                    status_event["provider_id"] = self.provider_id
+
+                artifacts_payload: dict[str, Any] = {}
+                if results.oci_artifact:
+                    artifacts_payload["oci_reference"] = results.oci_artifact.reference
+                    artifacts_payload["oci_digest"] = results.oci_artifact.digest
+                artifacts_payload.update(eval_artifacts)
+                status_event["artifacts"] = artifacts_payload
+
+                data = {"benchmark_status_event": status_event}
+                logger.debug("Events report_results body: %s", data)
+
+                response = self._http_client.post(
+                    url,
+                    json=data,
+                    headers=self._request_headers(),
+                    timeout=10.0,
+                )
+                response.raise_for_status()
+
+                logger.info(
+                    "Results reported to evalhub | Metrics: %d | Score: %s | Artifacts: %d",
+                    len(metrics), results.overall_score, len(eval_artifacts),
+                )
+
+            except Exception as exc:
+                logger.error("Failed to report results with artifacts: %s", exc)
+                logger.info("Falling back to default report_results (without artifact URLs)")
+                super().report_results(results)
+
+        logger.info(
+            "Job %s completed | Benchmark: %s | Model: %s | Score: %s | "
+            "Examples: %s | Duration: %.2fs",
+            results.id, results.benchmark_id, results.model_name,
+            results.overall_score, results.num_examples_evaluated,
+            results.duration_seconds,
+        )
+
+
 def main(adapter_cls: type[GarakAdapter] = GarakAdapter) -> None:
     """Entry point for running the adapter as a K8s Job.
 
@@ -1277,7 +1351,7 @@ def main(adapter_cls: type[GarakAdapter] = GarakAdapter) -> None:
         logger.info(f"Model: {adapter.job_spec.model.name}")
 
         oci_auth_config = os.getenv("OCI_AUTH_CONFIG_PATH")
-        callbacks = DefaultCallbacks(
+        callbacks = _GarakCallbacks(
             job_id=adapter.job_spec.id,
             benchmark_id=adapter.job_spec.benchmark_id,
             provider_id=adapter.job_spec.provider_id,
