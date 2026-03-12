@@ -321,7 +321,7 @@ class GarakScanConfig(BaseModel):
                     ]
                 ),
                 plugins=GarakPluginsConfig(
-                    detector_spec="judge.ModelAsJudge,judge.Refusal", # We use the judge detector to pick up rejections
+                    detector_spec="judge.MulticlassJudge",  # We use the judge detector to pick up rejections
                     detectors={
                         "judge": {
                             "detector_model_type": "openai.OpenAICompatible",
