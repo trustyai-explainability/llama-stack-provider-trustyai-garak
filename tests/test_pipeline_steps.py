@@ -10,9 +10,13 @@ import pandas as pd
 import pytest
 
 from llama_stack_provider_trustyai_garak.core.pipeline_steps import (
+    MODEL_AUTH_MOUNT_PATH,
+    _read_secret_file,
     log_kfp_metrics,
     normalize_prompts,
     parse_and_build_results,
+    redact_api_keys,
+    resolve_api_key,
     resolve_taxonomy_data,
     run_sdg_generation,
     setup_and_run_garak,
@@ -22,6 +26,265 @@ from llama_stack_provider_trustyai_garak.errors import (
     GarakError,
     GarakValidationError,
 )
+
+
+class TestResolveApiKey:
+
+    def test_role_specific_key(self, monkeypatch):
+        monkeypatch.setenv("SDG_API_KEY", "sdg-secret")
+        monkeypatch.delenv("API_KEY", raising=False)
+        assert resolve_api_key("sdg") == "sdg-secret"
+
+    def test_generic_fallback(self, monkeypatch):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.setenv("API_KEY", "generic-key")
+        assert resolve_api_key("judge") == "generic-key"
+
+    def test_role_over_generic(self, monkeypatch):
+        monkeypatch.setenv("TARGET_API_KEY", "target-specific")
+        monkeypatch.setenv("API_KEY", "generic-key")
+        assert resolve_api_key("target") == "target-specific"
+
+    def test_dummy_fallback(self, monkeypatch):
+        monkeypatch.delenv("EVALUATOR_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        assert resolve_api_key("evaluator") == "DUMMY"
+
+    def test_case_insensitive_role(self, monkeypatch):
+        monkeypatch.setenv("ATTACKER_API_KEY", "atk-key")
+        assert resolve_api_key("attacker") == "atk-key"
+        assert resolve_api_key("ATTACKER") == "atk-key"
+
+    def test_volume_file_fallback(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("SDG_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        (tmp_path / "SDG_API_KEY").write_text("vol-sdg-key\n")
+        assert resolve_api_key("sdg") == "vol-sdg-key"
+
+    def test_volume_generic_fallback(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        (tmp_path / "API_KEY").write_text("vol-generic\n")
+        assert resolve_api_key("judge") == "vol-generic"
+
+    def test_env_takes_precedence_over_volume(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("SDG_API_KEY", "env-key")
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        (tmp_path / "SDG_API_KEY").write_text("vol-key")
+        assert resolve_api_key("sdg") == "env-key"
+
+    def test_role_file_over_generic_file(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("TARGET_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        (tmp_path / "TARGET_API_KEY").write_text("role-vol")
+        (tmp_path / "API_KEY").write_text("generic-vol")
+        assert resolve_api_key("target") == "role-vol"
+
+    def test_evalhub_sdk_api_key_fallback(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("SDG_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        (tmp_path / "api-key").write_text("sdk-key\n")
+        assert resolve_api_key("sdg") == "sdk-key"
+
+    def test_api_key_file_takes_precedence_over_sdk_key(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("SDG_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        (tmp_path / "API_KEY").write_text("our-key")
+        (tmp_path / "api-key").write_text("sdk-key")
+        assert resolve_api_key("sdg") == "our-key"
+
+    def test_no_volume_no_env_returns_dummy(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("SDG_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        assert resolve_api_key("sdg") == "DUMMY"
+
+
+class TestRedactApiKeys:
+
+    def test_simple_redaction(self):
+        config = {"api_key": "real-secret", "uri": "http://model"}
+        result = redact_api_keys(config)
+        assert result["api_key"] == "***"
+        assert result["uri"] == "http://model"
+        assert config["api_key"] == "real-secret"
+
+    def test_nested_redaction(self):
+        config = {
+            "plugins": {
+                "generators": {"openai": {"OpenAICompatible": {"api_key": "gen-key", "uri": "http://gen"}}},
+                "detectors": {"judge": {"detector_model_config": {"api_key": "judge-key", "uri": "http://judge"}}},
+            }
+        }
+        result = redact_api_keys(config)
+        assert result["plugins"]["generators"]["openai"]["OpenAICompatible"]["api_key"] == "***"
+        assert result["plugins"]["detectors"]["judge"]["detector_model_config"]["api_key"] == "***"
+        assert config["plugins"]["generators"]["openai"]["OpenAICompatible"]["api_key"] == "gen-key"
+
+    def test_non_string_api_key_untouched(self):
+        config = {"api_key": 12345}
+        result = redact_api_keys(config)
+        assert result["api_key"] == 12345
+
+    def test_no_api_key(self):
+        config = {"model": "test", "uri": "http://test"}
+        result = redact_api_keys(config)
+        assert result == config
+
+
+class TestResolveConfigApiKeys:
+
+    def test_placeholders_resolved(self, monkeypatch):
+        from llama_stack_provider_trustyai_garak.core.pipeline_steps import _resolve_config_api_keys
+
+        monkeypatch.setenv("TARGET_API_KEY", "real-target-key")
+        monkeypatch.setenv("JUDGE_API_KEY", "real-judge-key")
+        monkeypatch.delenv("API_KEY", raising=False)
+
+        config = {
+            "plugins": {
+                "generators": {"openai": {"OpenAICompatible": {"api_key": "__FROM_ENV__", "uri": "http://gen"}}},
+                "detectors": {"judge": {"detector_model_config": {"api_key": "***", "uri": "http://judge"}}},
+            }
+        }
+        _resolve_config_api_keys(config)
+        assert config["plugins"]["generators"]["openai"]["OpenAICompatible"]["api_key"] == "real-target-key"
+        assert config["plugins"]["detectors"]["judge"]["detector_model_config"]["api_key"] == "real-judge-key"
+
+    def test_real_keys_untouched(self, monkeypatch):
+        from llama_stack_provider_trustyai_garak.core.pipeline_steps import _resolve_config_api_keys
+
+        monkeypatch.setenv("TARGET_API_KEY", "env-key")
+
+        config = {
+            "plugins": {
+                "generators": {"openai": {"OpenAICompatible": {"api_key": "already-set", "uri": "http://gen"}}},
+            }
+        }
+        _resolve_config_api_keys(config)
+        assert config["plugins"]["generators"]["openai"]["OpenAICompatible"]["api_key"] == "already-set"
+
+    def test_attacker_evaluator_roles(self, monkeypatch):
+        from llama_stack_provider_trustyai_garak.core.pipeline_steps import _resolve_config_api_keys
+
+        monkeypatch.setenv("ATTACKER_API_KEY", "atk-key")
+        monkeypatch.setenv("EVALUATOR_API_KEY", "eval-key")
+        monkeypatch.delenv("API_KEY", raising=False)
+
+        config = {
+            "plugins": {
+                "probes": {
+                    "tap": {
+                        "TAPIntent": {
+                            "attack_model_config": {"api_key": "DUMMY", "uri": "http://atk"},
+                            "evaluator_model_config": {"api_key": "", "uri": "http://eval"},
+                        }
+                    }
+                }
+            }
+        }
+        _resolve_config_api_keys(config)
+        assert config["plugins"]["probes"]["tap"]["TAPIntent"]["attack_model_config"]["api_key"] == "atk-key"
+        assert config["plugins"]["probes"]["tap"]["TAPIntent"]["evaluator_model_config"]["api_key"] == "eval-key"
+
+    def test_generic_fallback_in_config(self, monkeypatch):
+        from llama_stack_provider_trustyai_garak.core.pipeline_steps import _resolve_config_api_keys
+
+        monkeypatch.delenv("TARGET_API_KEY", raising=False)
+        monkeypatch.setenv("API_KEY", "generic-shared")
+
+        config = {
+            "plugins": {
+                "generators": {"openai": {"OpenAICompatible": {"api_key": "__FROM_ENV__"}}},
+            }
+        }
+        _resolve_config_api_keys(config)
+        assert config["plugins"]["generators"]["openai"]["OpenAICompatible"]["api_key"] == "generic-shared"
+
+    def test_case_insensitive_dummy(self, monkeypatch):
+        """'dummy', 'Dummy', 'DUMMY' should all be treated as placeholders."""
+        from llama_stack_provider_trustyai_garak.core.pipeline_steps import _resolve_config_api_keys
+
+        monkeypatch.setenv("TARGET_API_KEY", "real-key")
+        monkeypatch.setenv("JUDGE_API_KEY", "judge-key")
+
+        config = {
+            "plugins": {
+                "generators": {"openai": {"OpenAICompatible": {"api_key": "dummy"}}},
+                "detectors": {"judge": {"detector_model_config": {"api_key": "Dummy"}}},
+            }
+        }
+        _resolve_config_api_keys(config)
+        assert config["plugins"]["generators"]["openai"]["OpenAICompatible"]["api_key"] == "real-key"
+        assert config["plugins"]["detectors"]["judge"]["detector_model_config"]["api_key"] == "judge-key"
+
+    def test_full_sample_config(self, monkeypatch):
+        """Verify resolve against the real config structure."""
+        from llama_stack_provider_trustyai_garak.core.pipeline_steps import _resolve_config_api_keys
+
+        monkeypatch.setenv("API_KEY", "universal-key")
+        monkeypatch.delenv("TARGET_API_KEY", raising=False)
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("ATTACKER_API_KEY", raising=False)
+        monkeypatch.delenv("EVALUATOR_API_KEY", raising=False)
+
+        config = {
+            "plugins": {
+                "generators": {"openai": {"OpenAICompatible": {
+                    "uri": "https://example.com/v1",
+                    "model": "test-model",
+                    "api_key": "***",
+                }}},
+                "detectors": {"judge": {"detector_model_config": {
+                    "uri": "https://example.com/v1",
+                    "api_key": "***",
+                }}},
+                "probes": {"tap": {"TAPIntent": {
+                    "attack_model_config": {
+                        "uri": "https://example.com/v1",
+                        "api_key": "***",
+                        "max_tokens": 500,
+                    },
+                    "evaluator_model_config": {
+                        "uri": "https://example.com/v1",
+                        "api_key": "***",
+                        "max_tokens": 10,
+                        "temperature": 0,
+                    },
+                }}},
+            }
+        }
+        _resolve_config_api_keys(config)
+        assert config["plugins"]["generators"]["openai"]["OpenAICompatible"]["api_key"] == "universal-key"
+        assert config["plugins"]["detectors"]["judge"]["detector_model_config"]["api_key"] == "universal-key"
+        assert config["plugins"]["probes"]["tap"]["TAPIntent"]["attack_model_config"]["api_key"] == "universal-key"
+        assert config["plugins"]["probes"]["tap"]["TAPIntent"]["evaluator_model_config"]["api_key"] == "universal-key"
 
 
 class TestValidateScanConfig:
@@ -86,18 +349,38 @@ class TestRunSdgGeneration:
             run_sdg_generation(df, sdg_model="test-model", sdg_api_base="")
 
     @patch("llama_stack_provider_trustyai_garak.sdg.generate_sdg_dataset")
-    def test_calls_generate_sdg(self, mock_gen):
+    def test_calls_generate_sdg(self, mock_gen, monkeypatch):
         from llama_stack_provider_trustyai_garak.sdg import SDGResult
+
+        monkeypatch.setenv("SDG_API_KEY", "test-key")
         raw_df = pd.DataFrame({"policy_concept": ["x"], "prompt": ["test"]})
         norm_df = pd.DataFrame({"category": ["x"], "prompt": ["test"]})
         mock_gen.return_value = SDGResult(raw=raw_df, normalized=norm_df)
 
         taxonomy = pd.DataFrame({"policy_concept": ["test"], "concept_definition": ["test"]})
         result = run_sdg_generation(
-            taxonomy, sdg_model="m", sdg_api_base="http://api", sdg_api_key="key"
+            taxonomy, sdg_model="m", sdg_api_base="http://api"
         )
         assert len(result) == 1
         mock_gen.assert_called_once()
+
+    @patch("llama_stack_provider_trustyai_garak.sdg.generate_sdg_dataset")
+    def test_resolves_key_from_env(self, mock_gen, monkeypatch):
+        """resolve_api_key("sdg") reads SDG_API_KEY from env."""
+        from llama_stack_provider_trustyai_garak.sdg import SDGResult
+
+        monkeypatch.setenv("SDG_API_KEY", "env-sdg-key")
+        raw_df = pd.DataFrame({"policy_concept": ["x"], "prompt": ["test"]})
+        norm_df = pd.DataFrame({"category": ["x"], "prompt": ["test"]})
+        mock_gen.return_value = SDGResult(raw=raw_df, normalized=norm_df)
+
+        taxonomy = pd.DataFrame({"policy_concept": ["test"], "concept_definition": ["test"]})
+        result = run_sdg_generation(
+            taxonomy, sdg_model="m", sdg_api_base="http://api"
+        )
+        assert len(result) == 1
+        call_kwargs = mock_gen.call_args
+        assert call_kwargs.kwargs.get("api_key") == "env-sdg-key" or call_kwargs[1].get("api_key") == "env-sdg-key"
 
 
 class TestNormalizePrompts:

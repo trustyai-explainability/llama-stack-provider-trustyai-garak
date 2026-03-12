@@ -225,14 +225,18 @@ def sdg_generate(
     intents_file_id: str,
     sdg_model: str,
     sdg_api_base: str,
-    sdg_api_key: str,
     sdg_flow_id: str,
     taxonomy_dataset: dsl.Input[dsl.Dataset],
     sdg_dataset: dsl.Output[dsl.Dataset],
 ):
-    """Run SDG on taxonomy to produce raw prompts, or emit empty marker."""
+    """Run SDG on taxonomy to produce raw prompts, or emit empty marker.
+
+    No API key parameter — Llama Stack models handle their own auth
+    at the server level.  ``run_sdg_generation`` falls back to
+    ``resolve_api_key("sdg")`` which returns ``"DUMMY"`` when no
+    Secret is injected.
+    """
     import logging
-    import os
 
     logging.basicConfig(
         level=logging.INFO,
@@ -262,7 +266,6 @@ def sdg_generate(
         taxonomy_df=taxonomy,
         sdg_model=sdg_model,
         sdg_api_base=sdg_api_base,
-        sdg_api_key=sdg_api_key,
         sdg_flow_id=sdg_flow_id,
     )
     raw_df.to_csv(sdg_dataset.path, index=False)
@@ -405,7 +408,10 @@ def garak_scan(
 
     from llama_stack_client import LlamaStackClient
     from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
-    from llama_stack_provider_trustyai_garak.core.pipeline_steps import setup_and_run_garak
+    from llama_stack_provider_trustyai_garak.core.pipeline_steps import (
+        setup_and_run_garak,
+        redact_api_keys,
+    )
 
     scan_dir = Path(tempfile.mkdtemp(prefix="garak-scan-"))
 
@@ -418,6 +424,16 @@ def garak_scan(
         scan_dir=scan_dir,
         timeout_seconds=timeout_seconds,
     )
+
+    # Redact api_key values from config.json before uploading to Files API
+    config_file = scan_dir / "config.json"
+    if config_file.exists():
+        try:
+            cfg = json.loads(config_file.read_text())
+            config_file.write_text(json.dumps(redact_api_keys(cfg), indent=1))
+            log.info("Redacted api_key values from config.json before upload")
+        except Exception as exc:
+            log.warning("Could not redact config.json: %s", exc)
 
     # Upload scan outputs to Files API
     if verify_ssl.lower() in ("true", "1", "yes", "on"):

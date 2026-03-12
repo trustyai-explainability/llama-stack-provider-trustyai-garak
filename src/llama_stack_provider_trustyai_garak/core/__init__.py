@@ -16,6 +16,9 @@ from .config_resolution import (
 )
 from .garak_runner import run_garak_scan, GarakScanResult
 from .pipeline_steps import (
+    MODEL_AUTH_MOUNT_PATH,
+    resolve_api_key,
+    redact_api_keys,
     validate_scan_config,
     resolve_taxonomy_data,
     run_sdg_generation,
@@ -35,6 +38,9 @@ __all__ = [
     "resolve_timeout_seconds",
     "run_garak_scan",
     "GarakScanResult",
+    "MODEL_AUTH_MOUNT_PATH",
+    "resolve_api_key",
+    "redact_api_keys",
     "validate_scan_config",
     "resolve_taxonomy_data",
     "run_sdg_generation",
