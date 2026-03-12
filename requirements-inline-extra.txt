@@ -1,0 +1,2 @@
+garak @ git+https://github.com/trustyai-explainability/garak.git@automated-red-teaming
+sdg-hub @ git+https://github.com/Red-Hat-AI-Innovation-Team/sdg_hub.git@feat/redteam-promptgen
