@@ -205,10 +205,11 @@ class GarakAdapter(FrameworkAdapter):
                 try:
                     report_content = result.report_jsonl.read_text()
                     if report_content.strip():
-                        art_html = generate_art_report(report_content)
                         art_html_path = scan_dir / "scan.intents.html"
-                        art_html_path.write_text(art_html)
-                        logger.info("Generated ART HTML report: %s", art_html_path)
+                        if not art_html_path.exists():
+                            art_html = generate_art_report(report_content)
+                            art_html_path.write_text(art_html)
+                            logger.info("Generated ART HTML report: %s", art_html_path)
                 except Exception as e:
                     logger.warning("Failed to generate ART HTML report: %s", e)
 
@@ -275,7 +276,7 @@ class GarakAdapter(FrameworkAdapter):
 
                 eval_meta["artifacts"] = verified
 
-            return JobResults(
+            results = JobResults(
                 id=config.id,
                 benchmark_id=config.benchmark_id,
                 benchmark_index=config.benchmark_index,
@@ -288,6 +289,52 @@ class GarakAdapter(FrameworkAdapter):
                 evaluation_metadata=eval_meta,
                 oci_artifact=oci_artifact,
             )
+
+            # Phase 5: Save to MLflow (if experiment_name configured)
+            try:
+                from evalhub.adapter.mlflow import MlflowArtifact
+
+                mlflow_artifacts: list[MlflowArtifact] = []
+                if result.report_html.exists():
+                    mlflow_artifacts.append(MlflowArtifact(
+                        "scan.report.html",
+                        result.report_html.read_bytes(),
+                        "text/html",
+                    ))
+                art_html_path = scan_dir / "scan.intents.html"
+                if art_html_path.exists():
+                    mlflow_artifacts.append(MlflowArtifact(
+                        "scan.intents.html",
+                        art_html_path.read_bytes(),
+                        "text/html",
+                    ))
+                if result.report_jsonl.exists():
+                    mlflow_artifacts.append(MlflowArtifact(
+                        "scan.report.jsonl",
+                        result.report_jsonl.read_bytes(),
+                        "application/jsonl",
+                    ))
+                sdg_raw = scan_dir / "sdg_raw_output.csv"
+                if sdg_raw.exists():
+                    mlflow_artifacts.append(MlflowArtifact(
+                        "sdg_raw_output.csv",
+                        sdg_raw.read_bytes(),
+                        "text/csv",
+                    ))
+                sdg_norm = scan_dir / "sdg_normalized_output.csv"
+                if sdg_norm.exists():
+                    mlflow_artifacts.append(MlflowArtifact(
+                        "sdg_normalized_output.csv",
+                        sdg_norm.read_bytes(),
+                        "text/csv",
+                    ))
+
+                callbacks.mlflow.save(results, config, artifacts=mlflow_artifacts)
+                logger.info("Saved results and %d artifacts to MLflow", len(mlflow_artifacts))
+            except Exception as mlflow_exc:
+                logger.warning("MLflow save failed (non-fatal): %s", mlflow_exc)
+
+            return results
 
         except Exception as e:
             logger.exception(f"Garak job {config.id} failed")
@@ -519,6 +566,17 @@ class GarakAdapter(FrameworkAdapter):
             creds = self._read_s3_credentials_from_secret(
                 kfp_config.s3_secret_name, kfp_config.namespace,
             ) if kfp_config.s3_secret_name else {}
+            if kfp_config.s3_secret_name and not creds:
+                logger.warning(
+                    "S3 credentials from secret '%s/%s' are empty. "
+                    "Ensure the secret exists and the Job pod's service account "
+                    "has RBAC permissions to read secrets in namespace '%s'. "
+                    "Falling back to environment variables for S3 access."
+                    "If no environment variables are set, the job will fail",
+                    "as it will not be able to interact with S3.",
+                    kfp_config.namespace, kfp_config.s3_secret_name,
+                    kfp_config.namespace,
+                )
             self._download_results_from_s3(
                 s3_bucket, s3_prefix, scan_dir,
                 endpoint_url=kfp_config.s3_endpoint or None,
@@ -613,6 +671,38 @@ class GarakAdapter(FrameworkAdapter):
         Falls back gracefully if the secret cannot be read (e.g. outside a
         cluster or missing RBAC), returning an empty dict so env-var fallback
         in ``create_s3_client`` still applies.
+
+        .. note:: **RBAC requirement** — The Job pod's service account must
+           have ``get`` permission on Secrets in the target namespace.
+           Example Role/RoleBinding::
+
+               apiVersion: rbac.authorization.k8s.io/v1
+               kind: Role
+               metadata:
+                 name: secret-reader
+                 namespace: <namespace>
+               rules:
+               - apiGroups: [""]
+                 resources: ["secrets"]
+                 verbs: ["get"]
+               ---
+               apiVersion: rbac.authorization.k8s.io/v1
+               kind: RoleBinding
+               metadata:
+                 name: evalhub-secret-reader
+                 namespace: <namespace>
+               subjects:
+               - kind: ServiceAccount
+                 name: <job-service-account>
+                 namespace: <namespace>
+               roleRef:
+                 kind: Role
+                 name: secret-reader
+                 apiGroup: rbac.authorization.k8s.io
+
+           Without this, the call returns an empty dict and S3 operations
+           fall back to environment variables (which may also be empty,
+           causing job failures).
         """
         import base64
         try:
