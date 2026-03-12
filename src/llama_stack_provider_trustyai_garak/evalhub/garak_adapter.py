@@ -1309,7 +1309,9 @@ class _GarakCallbacks(DefaultCallbacks):
                 )
 
             except Exception as exc:
-                logger.error("Failed to report results to evalhub: %s", exc)
+                logger.error("Failed to report results with artifacts: %s", exc)
+                logger.info("Falling back to default report_results (without artifact URLs)")
+                super().report_results(results)
 
         logger.info(
             "Job %s completed | Benchmark: %s | Model: %s | Score: %s | "
