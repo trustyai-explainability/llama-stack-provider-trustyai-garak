@@ -169,23 +169,23 @@ class TapIntentConfig(BaseModel):
         description="The configuration for the evaluator model.",
     )
     attack_max_attempts: int = Field(
-        default=2,
+        default=5,
         description="The maximum number of attempts for the attack.",
     )
     width: int = Field(
-        default=2,
+        default=10,
         description="The width of the attack.",
     )
     depth: int = Field(
-        default=1,
+        default=10,
         description="The depth of the attack.",
     )
     branching_factor: int = Field(
-        default=2,
+        default=4,
         description="The branching factor of the attack.",
     )
     pruning: bool = Field(
-        default=False,
+        default=True,
         description="Whether to prune the attack.",
     )
 
