@@ -4,28 +4,7 @@ WORKDIR /opt/app-root
 # Switch to root only for installing packages
 USER root
 
-# For Rust-based Python packages
-RUN dnf install -y --setopt install_weak_deps=0 --nodocs \
-    cargo \
-    rust \
-    && dnf clean all
-
 COPY . .
-
-# Build argument to specify architecture
-ARG TARGETARCH=x86_64
-
-# # Install dependencies
-# RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "x86_64" ]; then \
-#         echo "Installing x86_64 dependencies ..."; \
-#         pip install --no-cache-dir -r requirements-x86_64.txt; \
-#     elif [ "$TARGETARCH" = "arm64" ] || [ "$TARGETARCH" = "aarch64" ]; then \
-#         echo "Installing ARM64 dependencies ..."; \
-#         pip install --no-cache-dir -r requirements-aarch64.txt; \
-#     else \
-#         echo "ERROR: Unsupported architecture: $TARGETARCH"; \
-#         exit 1; \
-#     fi
 
 # Install cpu torch to reduce image size
 RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
@@ -33,6 +12,7 @@ RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
 # Install the package itself
 # Use [inline] to get garak dependency
 RUN pip install --no-cache-dir ".[inline]"
+# Install midstream garak and sdg-hub dependencies (tmp fix till we get release versions)
 RUN pip install --no-cache-dir -r requirements-inline-extra.txt
 # Set XDG environment variables to use /tmp (always writable) for garak to write to
 ENV XDG_CACHE_HOME=/tmp/.cache
