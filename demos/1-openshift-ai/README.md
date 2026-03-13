@@ -83,9 +83,10 @@ Set these carefully:
 
 ### Required values in `lsd-role.yaml`
 
-- set namespace
-- verify role name (`ds-pipeline-dspa`) matches your DSP install
+- set namespace in all three resources (Role, and both RoleBindings)
+- verify role name (`ds-pipeline-dspa`) matches your DSP install in the pipeline-management RoleBinding
 - verify service account name (`<lsd-name>-sa`, default in this repo is `llamastack-garak-distribution-sa`)
+- the `lsd-garak-dspa-api-access` Role grants the service account permission to access the DSPA API proxy (required for KFP client connectivity through the external route)
 
 
 ## 4) Deploy PostgreSQL
