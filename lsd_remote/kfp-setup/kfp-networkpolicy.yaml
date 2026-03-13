@@ -1,0 +1,27 @@
+## NetworkPolicy: allow KFP pipeline pods to reach the Llama Stack service.
+##
+## The Llama Stack operator creates its own NetworkPolicy
+## (e.g. llamastack-garak-distribution-network-policy) that restricts
+## ingress. Since K8s NetworkPolicies are additive, this extra policy
+## opens port 8321 for same-namespace pods (KFP workflow pods, etc.).
+##
+## Verify the Llama Stack pod labels before applying:
+##   oc get pods -n <namespace> --show-labels | grep llamastack
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kfp-to-llamastack
+  namespace: tai-garak-lls # change this to your namespace
+spec:
+  podSelector:
+    matchLabels:
+      app: llama-stack # label set by the Llama Stack operator
+  ingress:
+  - from:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 8321
+  policyTypes:
+  - Ingress
