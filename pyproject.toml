@@ -1,6 +1,6 @@
 [project]
 name = "llama-stack-provider-trustyai-garak"
-version = "0.3.0"
+version = "0.3.1"
 description = "Out-Of-Tree Llama Stack provider for Garak Red-teaming"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -11,8 +11,8 @@ authors = [
 ]
 keywords = ["llama-stack", "garak", "red-teaming", "security", "ai-safety"]
 dependencies = [
-    "llama-stack-client>=0.5.0,<0.6.0",
-    "llama-stack-api>=0.5.0,<0.6.0",
+    "llama-stack-client>=0.5.0",
+    "llama-stack-api>=0.5.0",
     # Remote execution dependencies
     "kfp>=2.14.6",
     "kfp-kubernetes>=2.14.6",
@@ -49,7 +49,7 @@ inline = [
 # For intents, install:
 #   pip install -r requirements-inline-extra.txt
 dev = ["pytest", "pytest-cov",  "pytest-asyncio", "black", "isort"]
-server = ["llama-stack>=0.5.0,<0.6.0"]
+server = ["llama-stack>=0.5.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
