@@ -1,4 +1,28 @@
 apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lsd-garak-dspa-api-access
+  namespace: tai-garak-lls # change this to the namespace you want to deploy to
+rules:
+- apiGroups: ["datasciencepipelinesapplications.opendatahub.io"]
+  resources: ["datasciencepipelinesapplications/api"]
+  verbs: ["get", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lsd-garak-dspa-api-access
+  namespace: tai-garak-lls # change this to the namespace you want to deploy to
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lsd-garak-dspa-api-access
+subjects:
+- kind: ServiceAccount
+  name: llamastack-garak-distribution-sa # {lsd-name}-sa
+  namespace: tai-garak-lls # change this to the namespace you want to deploy to
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: lsd-garak-pipeline-management

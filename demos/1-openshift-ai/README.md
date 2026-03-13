@@ -48,6 +48,16 @@ export KFP_ENDPOINT="https://$(oc get routes ds-pipeline-dspa -o jsonpath='{.spe
 echo "$KFP_ENDPOINT"
 ```
 
+### NetworkPolicy for KFP-to-LlamaStack connectivity
+
+The Llama Stack operator creates a NetworkPolicy that restricts ingress to the Llama Stack pod. KFP pipeline pods are not in its allow-list by default, causing connection timeouts. Apply the provided NetworkPolicy to allow same-namespace pods to reach the Llama Stack service:
+
+```bash
+oc apply -f lsd_remote/kfp-setup/kfp-networkpolicy.yaml
+```
+
+If you skip this step, KFP pipeline pods might time out when trying to reach the Llama Stack service.
+
 ## 3) Prepare Manifests for Your Namespace/Environment
 
 Update all hardcoded placeholders (especially namespace `tai-garak-lls`) in:
@@ -83,9 +93,10 @@ Set these carefully:
 
 ### Required values in `lsd-role.yaml`
 
-- set namespace
-- verify role name (`ds-pipeline-dspa`) matches your DSP install
+- set namespace in all three resources (Role, and both RoleBindings)
+- verify role name (`ds-pipeline-dspa`) matches your DSP install in the pipeline-management RoleBinding
 - verify service account name (`<lsd-name>-sa`, default in this repo is `llamastack-garak-distribution-sa`)
+- the `lsd-garak-dspa-api-access` Role grants the service account permission to access the DSPA API proxy (required for KFP client connectivity through the external route)
 
 
 ## 4) Deploy PostgreSQL
@@ -182,5 +193,8 @@ Open `demos/guide.ipynb` and run it end-to-end.
 
 ### KFP jobs cannot call Llama Stack URL
 
+- check for NetworkPolicies blocking traffic: `oc get networkpolicy`
+- if pipeline pods time out reaching Llama Stack but port-forward works, apply the NetworkPolicy: `oc apply -f lsd_remote/kfp-setup/kfp-networkpolicy.yaml` (see step 2 above)
+- verify the podSelector label in `kfp-networkpolicy.yaml` matches the Llama Stack pod: `oc get pods --show-labels | grep llamastack`
 - verify `KUBEFLOW_LLAMA_STACK_URL` resolves from inside cluster
 - verify service name/port in `lsd-garak.yaml` matches URL configured in `lsd-config.yaml`
