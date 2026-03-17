@@ -6,6 +6,7 @@ built-in ``BASE_TAXONOMY`` is used.  Framework-agnostic -- can be called
 from KFP components, EvalHub integrations, or standalone scripts.
 """
 
+import os
 import re
 import logging
 from typing import List, Dict, Any, NamedTuple, Optional
@@ -167,7 +168,9 @@ def generate_sdg_dataset(
     flow = Flow.from_yaml(flow_path)
     flow.set_model_config(model=model, api_base=api_base, api_key=api_key)
 
-    result = flow.generate(df)
+    max_concurrency = int(os.environ.get("SDG_MAX_CONCURRENCY", "10"))
+    logger.info("SDG generation: max_concurrency=%d", max_concurrency)
+    result = flow.generate(df, max_concurrency=max_concurrency)
 
     raw = result.dropna(subset=["prompt"]).copy()
 
