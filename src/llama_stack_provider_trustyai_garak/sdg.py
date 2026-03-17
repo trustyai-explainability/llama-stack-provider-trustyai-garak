@@ -116,6 +116,28 @@ BASE_TAXONOMY: List[Dict[str, Any]] = [
 ]
 
 
+_DEFAULT_MAX_CONCURRENCY = 10
+
+
+def _resolve_max_concurrency() -> int:
+    """Read ``SDG_MAX_CONCURRENCY`` from the environment, with validation."""
+    raw = os.environ.get("SDG_MAX_CONCURRENCY")
+    if raw is None:
+        return _DEFAULT_MAX_CONCURRENCY
+    try:
+        value = int(raw)
+        if value < 1:
+            raise ValueError("must be >= 1")
+        return value
+    except ValueError:
+        logger.warning(
+            "Invalid SDG_MAX_CONCURRENCY=%r, falling back to %d",
+            raw,
+            _DEFAULT_MAX_CONCURRENCY,
+        )
+        return _DEFAULT_MAX_CONCURRENCY
+
+
 class SDGResult(NamedTuple):
     """Return type for :func:`generate_sdg_dataset`."""
     raw: pandas.DataFrame
@@ -168,7 +190,7 @@ def generate_sdg_dataset(
     flow = Flow.from_yaml(flow_path)
     flow.set_model_config(model=model, api_base=api_base, api_key=api_key)
 
-    max_concurrency = int(os.environ.get("SDG_MAX_CONCURRENCY", "10"))
+    max_concurrency = _resolve_max_concurrency()
     logger.info("SDG generation: max_concurrency=%d", max_concurrency)
     result = flow.generate(df, max_concurrency=max_concurrency)
 
