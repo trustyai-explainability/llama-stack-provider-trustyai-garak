@@ -962,7 +962,7 @@ class GarakAdapter(FrameworkAdapter):
         }
 
         if len(provided) == 0:
-            if self._models_preconfigured_in_garak_config(garak_config.plugins):
+            if garak_config.plugins and self._models_preconfigured_in_garak_config(garak_config.plugins):
                 logger.info(
                     "No intents_models provided but models are already "
                     "configured in garak_config — skipping intents_models "
@@ -1032,6 +1032,7 @@ class GarakAdapter(FrameworkAdapter):
             if isinstance(tap_cfg, dict):
                 tap_cfg["attack_model_name"] = attacker_name
                 existing_attack_cfg = tap_cfg.get("attack_model_config", {})
+                existing_attack_cfg.setdefault("max_tokens", 500)
                 existing_attack_cfg.update({
                     "uri": attacker_url,
                     "api_key": _PLACEHOLDER,
@@ -1040,6 +1041,8 @@ class GarakAdapter(FrameworkAdapter):
 
                 tap_cfg["evaluator_model_name"] = evaluator_name
                 existing_eval_cfg = tap_cfg.get("evaluator_model_config", {})
+                existing_eval_cfg.setdefault("max_tokens", 10)
+                existing_eval_cfg.setdefault("temperature", 0.0)
                 existing_eval_cfg.update({
                     "uri": evaluator_url,
                     "api_key": _PLACEHOLDER,

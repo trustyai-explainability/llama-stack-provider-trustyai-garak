@@ -1059,8 +1059,10 @@ class TestBuildConfigIntentsOverrides:
         tap = config_dict["plugins"]["probes"]["tap"]["TAPIntent"]
         assert tap["attack_model_name"] == "my-atk"
         assert tap["attack_model_config"]["uri"] == "http://atk:9000/v1"
+        assert tap["attack_model_config"]["api_key"] == "sk-atk"
         assert tap["evaluator_model_name"] == "my-eval"
         assert tap["evaluator_model_config"]["uri"] == "http://eval:9001/v1"
+        assert tap["evaluator_model_config"]["api_key"] == "sk-eval"
 
         assert intents_params["sdg_model"] == "my-sdg-model"
         assert intents_params["sdg_api_base"] == "http://sdg:7000/v1"
