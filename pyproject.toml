@@ -42,7 +42,7 @@ where = ["src"]
 [project.optional-dependencies]
 inline = [
     "pyasn1==0.6.2", # trivy high vul fix
-    "protobuf==6.33.5", # trivy high vul fix
+    "protobuf==7.34.1", # trivy high vul fix
     "nest_asyncio>=1.6.0",
     "garak>=0.14.0"
 ]
