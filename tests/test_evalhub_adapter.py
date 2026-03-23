@@ -849,7 +849,7 @@ class TestBuildConfigIntentsOverrides:
         )
 
         report_prefix = tmp_path / "scan"
-        with pytest.raises(ValueError, match="at least one of"):
+        with pytest.raises(ValueError, match="requires model configuration"):
             adapter._build_config_from_spec(job, report_prefix)
 
     def test_two_roles_raises_ambiguous_error(self, monkeypatch, tmp_path):
@@ -894,6 +894,361 @@ class TestBuildConfigIntentsOverrides:
         report_prefix = tmp_path / "scan"
         with pytest.raises(ValueError, match="intents_models.judge.name"):
             adapter._build_config_from_spec(job, report_prefix)
+
+    # ------------------------------------------------------------------
+    # Merge preservation tests (intents_models + garak_config overrides)
+    # ------------------------------------------------------------------
+
+    def test_multiclass_judge_config_preserved_with_intents_models(self, monkeypatch, tmp_path):
+        """MulticlassJudge sub-config in garak_config survives intents_models override."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="mcj-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            parameters={
+                **_INTENTS_MODELS_ALL_ROLES,
+                "garak_config": {
+                    "plugins": {
+                        "detectors": {
+                            "judge": {
+                                "MulticlassJudge": {
+                                    "system_prompt": "Custom safety evaluator",
+                                    "score_key": "complied",
+                                    "score_scale": 100,
+                                    "confidence_cutoff": 70,
+                                }
+                            }
+                        }
+                    }
+                },
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        judge = config_dict["plugins"]["detectors"]["judge"]
+        assert judge["detector_model_name"] == "judge-model"
+        assert judge["detector_model_config"]["uri"] == "http://judge:8000/v1"
+        assert "MulticlassJudge" in judge
+        assert judge["MulticlassJudge"]["system_prompt"] == "Custom safety evaluator"
+        assert judge["MulticlassJudge"]["score_key"] == "complied"
+        assert judge["MulticlassJudge"]["confidence_cutoff"] == 70
+
+    def test_extra_attack_evaluator_config_keys_preserved(self, monkeypatch, tmp_path):
+        """Extra keys in attack/evaluator model configs survive intents_models override."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="extra-keys-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            parameters={
+                **_INTENTS_MODELS_ALL_ROLES,
+                "garak_config": {
+                    "plugins": {
+                        "probes": {
+                            "tap": {
+                                "TAPIntent": {
+                                    "attack_model_config": {
+                                        "temperature": 0.9,
+                                        "top_p": 0.95,
+                                    },
+                                    "evaluator_model_config": {
+                                        "top_p": 0.8,
+                                        "presence_penalty": 0.5,
+                                    },
+                                }
+                            }
+                        }
+                    }
+                },
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        tap = config_dict["plugins"]["probes"]["tap"]["TAPIntent"]
+
+        atk = tap["attack_model_config"]
+        assert atk["uri"] == "http://attacker:9000/v1"
+        assert atk["api_key"] == "__FROM_ENV__"
+        assert atk["temperature"] == 0.9
+        assert atk["top_p"] == 0.95
+
+        ev = tap["evaluator_model_config"]
+        assert ev["uri"] == "http://evaluator:9001/v1"
+        assert ev["api_key"] == "__FROM_ENV__"
+        assert ev["top_p"] == 0.8
+        assert ev["presence_penalty"] == 0.5
+
+    # ------------------------------------------------------------------
+    # garak_config-only mode (no intents_models)
+    # ------------------------------------------------------------------
+
+    def test_garak_config_only_skips_intents_models_override(self, monkeypatch, tmp_path):
+        """Full model config in garak_config works without intents_models."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="gc-only-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            parameters={
+                "sdg_model": "my-sdg-model",
+                "sdg_api_base": "http://sdg:7000/v1",
+                "garak_config": {
+                    "plugins": {
+                        "detectors": {
+                            "judge": {
+                                "detector_model_name": "my-judge",
+                                "detector_model_config": {
+                                    "uri": "http://judge:8000/v1",
+                                    "api_key": "sk-judge",
+                                },
+                                "MulticlassJudge": {
+                                    "system_prompt": "Custom prompt",
+                                },
+                            }
+                        },
+                        "probes": {
+                            "tap": {
+                                "TAPIntent": {
+                                    "attack_model_name": "my-atk",
+                                    "attack_model_config": {
+                                        "uri": "http://atk:9000/v1",
+                                        "api_key": "sk-atk",
+                                    },
+                                    "evaluator_model_name": "my-eval",
+                                    "evaluator_model_config": {
+                                        "uri": "http://eval:9001/v1",
+                                        "api_key": "sk-eval",
+                                    },
+                                }
+                            }
+                        },
+                    }
+                },
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, intents_params = adapter._build_config_from_spec(job, report_prefix)
+
+        judge = config_dict["plugins"]["detectors"]["judge"]
+        assert judge["detector_model_name"] == "my-judge"
+        assert judge["detector_model_config"]["uri"] == "http://judge:8000/v1"
+        assert judge["detector_model_config"]["api_key"] == "sk-judge"
+        assert judge["MulticlassJudge"]["system_prompt"] == "Custom prompt"
+
+        tap = config_dict["plugins"]["probes"]["tap"]["TAPIntent"]
+        assert tap["attack_model_name"] == "my-atk"
+        assert tap["attack_model_config"]["uri"] == "http://atk:9000/v1"
+        assert tap["evaluator_model_name"] == "my-eval"
+        assert tap["evaluator_model_config"]["uri"] == "http://eval:9001/v1"
+
+        assert intents_params["sdg_model"] == "my-sdg-model"
+        assert intents_params["sdg_api_base"] == "http://sdg:7000/v1"
+
+    def test_partial_garak_config_missing_tap_raises(self, monkeypatch, tmp_path):
+        """Judge configured in garak_config but TAP models missing raises error."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="partial-gc-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            parameters={
+                "garak_config": {
+                    "plugins": {
+                        "detectors": {
+                            "judge": {
+                                "detector_model_name": "my-judge",
+                                "detector_model_config": {"uri": "http://judge:8000/v1"},
+                            }
+                        }
+                    }
+                },
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        with pytest.raises(ValueError, match="requires model configuration"):
+            adapter._build_config_from_spec(job, report_prefix)
+
+    # ------------------------------------------------------------------
+    # Deep-merge granularity tests: override a single leaf without
+    # clobbering siblings or ancestor dicts
+    # ------------------------------------------------------------------
+
+    def test_single_tapintent_field_override_preserves_profile_defaults(self, monkeypatch, tmp_path):
+        """Override only ``depth`` in TAPIntent; all other profile defaults survive deep-merge."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="deep-tap-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            parameters={
+                **_INTENTS_MODELS_ALL_ROLES,
+                "garak_config": {
+                    "plugins": {
+                        "probes": {
+                            "tap": {
+                                "TAPIntent": {
+                                    "depth": 20,
+                                }
+                            }
+                        }
+                    }
+                },
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        tap = config_dict["plugins"]["probes"]["tap"]["TAPIntent"]
+        assert tap["depth"] == 20, "User override for depth must take effect"
+        assert tap["width"] == 10, "Profile default width must survive"
+        assert tap["attack_max_attempts"] == 5, "Profile default attack_max_attempts must survive"
+        assert tap["branching_factor"] == 4, "Profile default branching_factor must survive"
+        assert tap["pruning"] is True, "Profile default pruning must survive"
+        assert tap["attack_model_config"]["uri"] == "http://attacker:9000/v1"
+
+    def test_extra_keys_in_detector_model_config_preserved(self, monkeypatch, tmp_path):
+        """Extra keys in ``detector_model_config`` survive ``_apply_intents_models`` overlay."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="det-cfg-extra-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            parameters={
+                **_INTENTS_MODELS_ALL_ROLES,
+                "garak_config": {
+                    "plugins": {
+                        "detectors": {
+                            "judge": {
+                                "detector_model_config": {
+                                    "max_tokens": 500,
+                                    "temperature": 0.1,
+                                }
+                            }
+                        }
+                    }
+                },
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        det_cfg = config_dict["plugins"]["detectors"]["judge"]["detector_model_config"]
+        assert det_cfg["uri"] == "http://judge:8000/v1", "intents_models uri must be injected"
+        assert det_cfg["api_key"] == "__FROM_ENV__", "placeholder api_key must be injected"
+        assert det_cfg["max_tokens"] == 500, "User-provided max_tokens must survive overlay"
+        assert det_cfg["temperature"] == 0.1, "User-provided temperature must survive overlay"
+
+    def test_single_multiclass_judge_field_override(self, monkeypatch, tmp_path):
+        """Override only ``system_prompt`` in MulticlassJudge via garak_config;
+        other MulticlassJudge fields provided alongside must survive."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="mcj-partial-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            parameters={
+                **_INTENTS_MODELS_ALL_ROLES,
+                "garak_config": {
+                    "plugins": {
+                        "detectors": {
+                            "judge": {
+                                "MulticlassJudge": {
+                                    "system_prompt": "Custom evaluator prompt",
+                                    "score_key": "complied",
+                                    "score_scale": 100,
+                                    "confidence_cutoff": 70,
+                                }
+                            }
+                        }
+                    }
+                },
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        judge = config_dict["plugins"]["detectors"]["judge"]
+        assert judge["detector_model_name"] == "judge-model"
+        assert judge["detector_model_config"]["uri"] == "http://judge:8000/v1"
+        mcj = judge["MulticlassJudge"]
+        assert mcj["system_prompt"] == "Custom evaluator prompt"
+        assert mcj["score_key"] == "complied"
+        assert mcj["score_scale"] == 100
+        assert mcj["confidence_cutoff"] == 70
+
+    def test_attack_model_config_extra_keys_survive_overlay(self, monkeypatch, tmp_path):
+        """Profile's ``max_tokens`` in ``attack_model_config`` survives ``_apply_intents_models``."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="atk-max-tokens-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            parameters={**_INTENTS_MODELS_ALL_ROLES},
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        atk = config_dict["plugins"]["probes"]["tap"]["TAPIntent"]["attack_model_config"]
+        assert atk["uri"] == "http://attacker:9000/v1"
+        assert atk["api_key"] == "__FROM_ENV__"
+        assert atk["max_tokens"] == 500, "Profile's max_tokens must survive intents_models overlay"
+
+        ev = config_dict["plugins"]["probes"]["tap"]["TAPIntent"]["evaluator_model_config"]
+        assert ev["uri"] == "http://evaluator:9001/v1"
+        assert ev["api_key"] == "__FROM_ENV__"
+        assert ev["max_tokens"] == 10, "Profile's max_tokens must survive intents_models overlay"
+        assert ev["temperature"] == 0.0, "Profile's temperature must survive intents_models overlay"
 
     def test_non_intents_profile_returns_art_intents_false(self, monkeypatch, tmp_path):
         module = _load_evalhub_garak_adapter(monkeypatch)
