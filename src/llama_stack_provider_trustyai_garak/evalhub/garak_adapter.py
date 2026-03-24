@@ -63,11 +63,12 @@ from ..utils import get_scan_base_dir
 from ..constants import (
     DEFAULT_TIMEOUT,
     DEFAULT_MODEL_TYPE,
-    DEFAULT_EVAL_THRESHOLD, 
-    EXECUTION_MODE_SIMPLE, 
-    EXECUTION_MODE_KFP, 
+    DEFAULT_EVAL_THRESHOLD,
+    EXECUTION_MODE_SIMPLE,
+    EXECUTION_MODE_KFP,
     DEFAULT_SDG_FLOW_ID,
 )
+
 logger = logging.getLogger(__name__)
 
 
@@ -95,9 +96,7 @@ class GarakAdapter(FrameworkAdapter):
         - total_attempts: Total number of probe attempts
     """
 
-    def run_benchmark_job(
-        self, config: JobSpec, callbacks: JobCallbacks
-    ) -> JobResults:
+    def run_benchmark_job(self, config: JobSpec, callbacks: JobCallbacks) -> JobResults:
         """Run a Garak security scan job.
 
         Dispatches to either local subprocess execution or KFP pipeline
@@ -108,15 +107,17 @@ class GarakAdapter(FrameworkAdapter):
 
         try:
             # Phase 1: Initialize
-            callbacks.report_status(JobStatusUpdate(
-                status=JobStatus.RUNNING,
-                phase=JobPhase.INITIALIZING,
-                progress=0.0,
-                message=MessageInfo(
-                    message="Validating configuration and building scan command",
-                    message_code="initializing",
-                ),
-            ))
+            callbacks.report_status(
+                JobStatusUpdate(
+                    status=JobStatus.RUNNING,
+                    phase=JobPhase.INITIALIZING,
+                    progress=0.0,
+                    message=MessageInfo(
+                        message="Validating configuration and building scan command",
+                        message_code="initializing",
+                    ),
+                )
+            )
 
             self._validate_config(config)
 
@@ -130,9 +131,7 @@ class GarakAdapter(FrameworkAdapter):
                 _profile = self._resolve_profile(config.benchmark_id)
                 _intents_required = _profile.get("art_intents", False) if _profile else False
             if _intents_required and execution_mode != EXECUTION_MODE_KFP:
-                raise ValueError(
-                    "Intents benchmarks are only supported in KFP execution mode. "
-                )
+                raise ValueError("Intents benchmarks are only supported in KFP execution mode. ")
 
             # Build merged garak config (common to both modes)
             scan_dir = get_scan_base_dir() / config.id
@@ -146,13 +145,13 @@ class GarakAdapter(FrameworkAdapter):
             art_intents = intents_params.get("art_intents", False)
 
             timeout = resolve_timeout_seconds(
-                benchmark_config, profile, default_timeout=DEFAULT_TIMEOUT,
+                benchmark_config,
+                profile,
+                default_timeout=DEFAULT_TIMEOUT,
             )
             logger.info("Using timeout=%ss for benchmark=%s", timeout, config.benchmark_id)
 
-            eval_threshold = float(
-                garak_config_dict.get("run", {}).get("eval_threshold", DEFAULT_EVAL_THRESHOLD)
-            )
+            eval_threshold = float(garak_config_dict.get("run", {}).get("eval_threshold", DEFAULT_EVAL_THRESHOLD))
 
             # Phase 2: Execute scan (mode-dependent)
             if execution_mode == EXECUTION_MODE_KFP:
@@ -178,25 +177,31 @@ class GarakAdapter(FrameworkAdapter):
                 if result.timed_out:
                     error_msg = f"Scan timed out after {timeout} seconds"
 
-                callbacks.report_status(JobStatusUpdate(
-                    status=JobStatus.FAILED,
-                    error=ErrorInfo(message=error_msg, message_code="scan_failed"),
-                ))
+                callbacks.report_status(
+                    JobStatusUpdate(
+                        status=JobStatus.FAILED,
+                        error=ErrorInfo(message=error_msg, message_code="scan_failed"),
+                    )
+                )
                 raise RuntimeError(error_msg)
 
             # Phase 3: Parse results (common to both modes)
-            callbacks.report_status(JobStatusUpdate(
-                status=JobStatus.RUNNING,
-                phase=JobPhase.POST_PROCESSING,
-                progress=0.8,
-                message=MessageInfo(
-                    message="Parsing scan results",
-                    message_code="parsing_results",
-                ),
-            ))
+            callbacks.report_status(
+                JobStatusUpdate(
+                    status=JobStatus.RUNNING,
+                    phase=JobPhase.POST_PROCESSING,
+                    progress=0.8,
+                    message=MessageInfo(
+                        message="Parsing scan results",
+                        message_code="parsing_results",
+                    ),
+                )
+            )
 
             metrics, overall_score, num_examples, overall_summary = self._parse_results(
-                result, eval_threshold, art_intents=art_intents,
+                result,
+                eval_threshold,
+                art_intents=art_intents,
             )
             logger.info(f"Parsed {len(metrics)} probe metrics, overall score: {overall_score}")
 
@@ -218,6 +223,7 @@ class GarakAdapter(FrameworkAdapter):
             if config_file.exists():
                 try:
                     from ..core.pipeline_steps import redact_api_keys
+
                     cfg = json.loads(config_file.read_text())
                     config_file.write_text(json.dumps(redact_api_keys(cfg), indent=1))
                 except Exception as exc:
@@ -226,10 +232,12 @@ class GarakAdapter(FrameworkAdapter):
             # Phase 4: Persist artifacts
             oci_artifact = None
             if config.exports and config.exports.oci:
-                oci_artifact = callbacks.create_oci_artifact(OCIArtifactSpec(
-                    files_path=scan_dir,
-                    coordinates=config.exports.oci.coordinates,
-                ))
+                oci_artifact = callbacks.create_oci_artifact(
+                    OCIArtifactSpec(
+                        files_path=scan_dir,
+                        coordinates=config.exports.oci.coordinates,
+                    )
+                )
                 logger.info(f"Persisted scan artifacts: {oci_artifact.reference}")
 
             # Compute duration
@@ -246,6 +254,7 @@ class GarakAdapter(FrameworkAdapter):
 
             if execution_mode == EXECUTION_MODE_KFP:
                 from .kfp_pipeline import DEFAULT_S3_PREFIX
+
                 _bc = config.parameters or {}
                 _kfp_ov = _bc.get("kfp_config", {}) if isinstance(_bc.get("kfp_config"), dict) else {}
                 _prefix = _kfp_ov.get("s3_prefix", os.getenv("KFP_S3_PREFIX", DEFAULT_S3_PREFIX))
@@ -291,38 +300,48 @@ class GarakAdapter(FrameworkAdapter):
 
                 mlflow_artifacts: list[MlflowArtifact] = []
                 if result.report_html.exists():
-                    mlflow_artifacts.append(MlflowArtifact(
-                        "scan.report.html",
-                        result.report_html.read_bytes(),
-                        "text/html",
-                    ))
+                    mlflow_artifacts.append(
+                        MlflowArtifact(
+                            "scan.report.html",
+                            result.report_html.read_bytes(),
+                            "text/html",
+                        )
+                    )
                 art_html_path = scan_dir / "scan.intents.html"
                 if art_html_path.exists():
-                    mlflow_artifacts.append(MlflowArtifact(
-                        "scan.intents.html",
-                        art_html_path.read_bytes(),
-                        "text/html",
-                    ))
+                    mlflow_artifacts.append(
+                        MlflowArtifact(
+                            "scan.intents.html",
+                            art_html_path.read_bytes(),
+                            "text/html",
+                        )
+                    )
                 if result.report_jsonl.exists():
-                    mlflow_artifacts.append(MlflowArtifact(
-                        "scan.report.jsonl",
-                        result.report_jsonl.read_bytes(),
-                        "application/jsonl",
-                    ))
+                    mlflow_artifacts.append(
+                        MlflowArtifact(
+                            "scan.report.jsonl",
+                            result.report_jsonl.read_bytes(),
+                            "application/jsonl",
+                        )
+                    )
                 sdg_raw = scan_dir / "sdg_raw_output.csv"
                 if sdg_raw.exists():
-                    mlflow_artifacts.append(MlflowArtifact(
-                        "sdg_raw_output.csv",
-                        sdg_raw.read_bytes(),
-                        "text/csv",
-                    ))
+                    mlflow_artifacts.append(
+                        MlflowArtifact(
+                            "sdg_raw_output.csv",
+                            sdg_raw.read_bytes(),
+                            "text/csv",
+                        )
+                    )
                 sdg_norm = scan_dir / "sdg_normalized_output.csv"
                 if sdg_norm.exists():
-                    mlflow_artifacts.append(MlflowArtifact(
-                        "sdg_normalized_output.csv",
-                        sdg_norm.read_bytes(),
-                        "text/csv",
-                    ))
+                    mlflow_artifacts.append(
+                        MlflowArtifact(
+                            "sdg_normalized_output.csv",
+                            sdg_norm.read_bytes(),
+                            "text/csv",
+                        )
+                    )
 
                 callbacks.mlflow.save(results, config, artifacts=mlflow_artifacts)
                 logger.info("Saved results and %d artifacts to MLflow", len(mlflow_artifacts))
@@ -333,11 +352,13 @@ class GarakAdapter(FrameworkAdapter):
 
         except Exception as e:
             logger.exception(f"Garak job {config.id} failed")
-            callbacks.report_status(JobStatusUpdate(
-                status=JobStatus.FAILED,
-                error=ErrorInfo(message=str(e), message_code="job_failed"),
-                error_details={"exception_type": type(e).__name__},
-            ))
+            callbacks.report_status(
+                JobStatusUpdate(
+                    status=JobStatus.FAILED,
+                    error=ErrorInfo(message=str(e), message_code="job_failed"),
+                    error_details={"exception_type": type(e).__name__},
+                )
+            )
             raise
 
     # ------------------------------------------------------------------
@@ -350,10 +371,7 @@ class GarakAdapter(FrameworkAdapter):
 
         Priority: benchmark_config > env var > default ("simple").
         """
-        mode = (
-            benchmark_config.get("execution_mode")
-            or os.getenv("EVALHUB_EXECUTION_MODE", EXECUTION_MODE_SIMPLE)
-        )
+        mode = benchmark_config.get("execution_mode") or os.getenv("EVALHUB_EXECUTION_MODE", EXECUTION_MODE_SIMPLE)
         mode = str(mode).strip().lower()
         if mode not in (EXECUTION_MODE_SIMPLE, EXECUTION_MODE_KFP):
             logger.warning("Unknown execution_mode '%s', falling back to simple", mode)
@@ -380,16 +398,18 @@ class GarakAdapter(FrameworkAdapter):
         with open(config_file, "w") as f:
             json.dump(garak_config_dict, f, indent=1)
 
-        callbacks.report_status(JobStatusUpdate(
-            status=JobStatus.RUNNING,
-            phase=JobPhase.RUNNING_EVALUATION,
-            progress=0.1,
-            message=MessageInfo(
-                message=f"Running Garak scan for {config.benchmark_id}",
-                message_code="running_scan",
-            ),
-            current_step="Executing probes",
-        ))
+        callbacks.report_status(
+            JobStatusUpdate(
+                status=JobStatus.RUNNING,
+                phase=JobPhase.RUNNING_EVALUATION,
+                progress=0.1,
+                message=MessageInfo(
+                    message=f"Running Garak scan for {config.benchmark_id}",
+                    message_code="running_scan",
+                ),
+                current_step="Executing probes",
+            )
+        )
 
         result = run_garak_scan(
             config_file=config_file,
@@ -400,15 +420,17 @@ class GarakAdapter(FrameworkAdapter):
 
         # AVID conversion
         if result.success:
-            callbacks.report_status(JobStatusUpdate(
-                status=JobStatus.RUNNING,
-                phase=JobPhase.POST_PROCESSING,
-                progress=0.7,
-                message=MessageInfo(
-                    message="Converting results to AVID format",
-                    message_code="post_processing",
-                ),
-            ))
+            callbacks.report_status(
+                JobStatusUpdate(
+                    status=JobStatus.RUNNING,
+                    phase=JobPhase.POST_PROCESSING,
+                    progress=0.7,
+                    message=MessageInfo(
+                        message="Converting results to AVID format",
+                        message_code="post_processing",
+                    ),
+                )
+            )
             convert_to_avid_report(result.report_jsonl)
 
         return result
@@ -439,9 +461,7 @@ class GarakAdapter(FrameworkAdapter):
         Returns:
             Tuple of (GarakScanResult, local scan_dir with downloaded results).
         """
-        from .kfp_pipeline import (
-            KFPConfig, evalhub_garak_pipeline
-        )
+        from .kfp_pipeline import KFPConfig, evalhub_garak_pipeline
 
         benchmark_config = config.parameters or {}
         kfp_config = KFPConfig.from_env_and_config(benchmark_config)
@@ -458,6 +478,7 @@ class GarakAdapter(FrameworkAdapter):
         scan_dir.mkdir(parents=True, exist_ok=True)
 
         from ..core.pipeline_steps import redact_api_keys
+
         sanitised_config = redact_api_keys(garak_config_dict)
         config_json = json.dumps(sanitised_config)
 
@@ -484,16 +505,18 @@ class GarakAdapter(FrameworkAdapter):
                         "is not provided."
                     )
 
-        callbacks.report_status(JobStatusUpdate(
-            status=JobStatus.RUNNING,
-            phase=JobPhase.RUNNING_EVALUATION,
-            progress=0.1,
-            message=MessageInfo(
-                message=f"Submitting KFP pipeline for {config.benchmark_id}",
-                message_code="kfp_submitting",
-            ),
-            current_step="Submitting to Kubeflow Pipelines",
-        ))
+        callbacks.report_status(
+            JobStatusUpdate(
+                status=JobStatus.RUNNING,
+                phase=JobPhase.RUNNING_EVALUATION,
+                progress=0.1,
+                message=MessageInfo(
+                    message=f"Submitting KFP pipeline for {config.benchmark_id}",
+                    message_code="kfp_submitting",
+                ),
+                current_step="Submitting to Kubeflow Pipelines",
+            )
+        )
 
         # Resolve model auth secret from EvalHub SDK model.auth.secret_ref
         # Falls back to pipeline default ("model-auth") when not specified.
@@ -540,7 +563,10 @@ class GarakAdapter(FrameworkAdapter):
 
         poll_timeout = int(timeout * 2) if timeout > 0 else 0
         final_state = self._poll_kfp_run(
-            kfp_client, kfp_run_id, callbacks, kfp_config.poll_interval_seconds,
+            kfp_client,
+            kfp_run_id,
+            callbacks,
+            kfp_config.poll_interval_seconds,
             timeout=poll_timeout,
         )
 
@@ -548,19 +574,26 @@ class GarakAdapter(FrameworkAdapter):
         success = final_state == "SUCCEEDED"
 
         if success:
-            callbacks.report_status(JobStatusUpdate(
-                status=JobStatus.RUNNING,
-                phase=JobPhase.POST_PROCESSING,
-                progress=0.7,
-                message=MessageInfo(
-                    message="Downloading scan results from S3",
-                    message_code="downloading_results",
-                ),
-            ))
+            callbacks.report_status(
+                JobStatusUpdate(
+                    status=JobStatus.RUNNING,
+                    phase=JobPhase.POST_PROCESSING,
+                    progress=0.7,
+                    message=MessageInfo(
+                        message="Downloading scan results from S3",
+                        message_code="downloading_results",
+                    ),
+                )
+            )
             s3_bucket = kfp_config.s3_bucket or os.getenv("AWS_S3_BUCKET", "")
-            creds = self._read_s3_credentials_from_secret(
-                kfp_config.s3_secret_name, kfp_config.namespace,
-            ) if kfp_config.s3_secret_name else {}
+            creds = (
+                self._read_s3_credentials_from_secret(
+                    kfp_config.s3_secret_name,
+                    kfp_config.namespace,
+                )
+                if kfp_config.s3_secret_name
+                else {}
+            )
             if kfp_config.s3_secret_name and not creds:
                 logger.warning(
                     "S3 credentials from secret '%s/%s' are empty. "
@@ -569,11 +602,14 @@ class GarakAdapter(FrameworkAdapter):
                     "Falling back to environment variables for S3 access."
                     "If no environment variables are set, the job will fail",
                     "as it will not be able to interact with S3.",
-                    kfp_config.namespace, kfp_config.s3_secret_name,
+                    kfp_config.namespace,
+                    kfp_config.s3_secret_name,
                     kfp_config.namespace,
                 )
             self._download_results_from_s3(
-                s3_bucket, s3_prefix, scan_dir,
+                s3_bucket,
+                s3_prefix,
+                scan_dir,
                 endpoint_url=kfp_config.s3_endpoint or None,
                 **creds,
             )
@@ -642,20 +678,24 @@ class GarakAdapter(FrameworkAdapter):
             if deadline and time.monotonic() >= deadline:
                 logger.error(
                     "KFP run %s timed out after %ss (last state: %s)",
-                    run_id, timeout, state,
+                    run_id,
+                    timeout,
+                    state,
                 )
                 return "TIMED_OUT"
 
-            callbacks.report_status(JobStatusUpdate(
-                status=JobStatus.RUNNING,
-                phase=JobPhase.RUNNING_EVALUATION,
-                progress=0.3,
-                message=MessageInfo(
-                    message=f"KFP pipeline running (state: {state})",
-                    message_code="kfp_running",
-                ),
-                current_step=f"KFP state: {state}",
-            ))
+            callbacks.report_status(
+                JobStatusUpdate(
+                    status=JobStatus.RUNNING,
+                    phase=JobPhase.RUNNING_EVALUATION,
+                    progress=0.3,
+                    message=MessageInfo(
+                        message=f"KFP pipeline running (state: {state})",
+                        message_code="kfp_running",
+                    ),
+                    current_step=f"KFP state: {state}",
+                )
+            )
 
             time.sleep(poll_interval)
 
@@ -700,8 +740,10 @@ class GarakAdapter(FrameworkAdapter):
            causing job failures).
         """
         import base64
+
         try:
             from kubernetes import client as k8s_client, config as k8s_config
+
             try:
                 k8s_config.load_incluster_config()
             except Exception:
@@ -737,6 +779,7 @@ class GarakAdapter(FrameworkAdapter):
         when they are not present in its own environment.
         """
         from .s3_utils import create_s3_client
+
         return create_s3_client(
             endpoint_url=endpoint_url,
             access_key=access_key,
@@ -775,7 +818,7 @@ class GarakAdapter(FrameworkAdapter):
         for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
             for obj in page.get("Contents", []):
                 key = obj["Key"]
-                relative = key[len(prefix):].lstrip("/")
+                relative = key[len(prefix) :].lstrip("/")
                 if not relative:
                     continue
                 local_path = local_dir / relative
@@ -785,7 +828,10 @@ class GarakAdapter(FrameworkAdapter):
 
         logger.info(
             "Downloaded %d files from s3://%s/%s to %s",
-            downloaded, bucket, prefix, local_dir,
+            downloaded,
+            bucket,
+            prefix,
+            local_dir,
         )
 
     def _resolve_profile(self, benchmark_id: str) -> dict:
@@ -814,14 +860,8 @@ class GarakAdapter(FrameworkAdapter):
         if not isinstance(explicit_garak_cfg, dict):
             explicit_garak_cfg = {}
 
-        explicit_probes = (
-            benchmark_config.get("probes")
-            or explicit_garak_cfg.get("plugins", {}).get("probe_spec")
-        )
-        explicit_tags = (
-            benchmark_config.get("probe_tags")
-            or explicit_garak_cfg.get("run", {}).get("probe_tags")
-        )
+        explicit_probes = benchmark_config.get("probes") or explicit_garak_cfg.get("plugins", {}).get("probe_spec")
+        explicit_tags = benchmark_config.get("probe_tags") or explicit_garak_cfg.get("run", {}).get("probe_tags")
 
         if not explicit_probes and not explicit_tags and not profile:
             logger.warning(
@@ -879,7 +919,11 @@ class GarakAdapter(FrameworkAdapter):
         garak_config.plugins.target_name = config.model.name
         garak_config.reporting.report_prefix = str(report_prefix)
 
-        art_intents = bool(benchmark_config.get("art_intents")) if "art_intents" in benchmark_config else bool(profile.get("art_intents", False))
+        art_intents = (
+            bool(benchmark_config.get("art_intents"))
+            if "art_intents" in benchmark_config
+            else bool(profile.get("art_intents", False))
+        )
         intents_params: dict[str, Any] = {
             "art_intents": art_intents,
             "policy_s3_key": benchmark_config.get("policy_s3_key", profile.get("policy_s3_key", "")),
@@ -982,10 +1026,7 @@ class GarakAdapter(FrameworkAdapter):
 
         for role, cfg in [("judge", judge_cfg), ("attacker", attacker_cfg), ("evaluator", evaluator_cfg)]:
             if not cfg.get("name"):
-                raise ValueError(
-                    f"intents_models.{role}.name is required. "
-                    f"Provide a model identifier for the {role}."
-                )
+                raise ValueError(f"intents_models.{role}.name is required. Provide a model identifier for the {role}.")
 
         judge_url = judge_cfg["url"]
         judge_name = judge_cfg["name"]
@@ -1066,6 +1107,7 @@ class GarakAdapter(FrameworkAdapter):
         _read_secret: Any = None
         try:
             from evalhub.adapter.auth import read_model_auth_key
+
             _read_secret = read_model_auth_key
         except ImportError:
             pass
@@ -1103,6 +1145,7 @@ class GarakAdapter(FrameworkAdapter):
     def _normalize_url(self, url: str) -> str:
         """Normalize model URL to include /v1 suffix if needed."""
         import re
+
         url = url.strip().rstrip("/")
         if not re.match(r"^.*\/v\d+$", url):
             url = f"{url}/v1"
@@ -1113,12 +1156,12 @@ class GarakAdapter(FrameworkAdapter):
     #     env = {
     #         "GARAK_TLS_VERIFY": os.getenv("GARAK_TLS_VERIFY", "True"),
     #     }
-        
+
     #     # Pass through relevant env vars
     #     for var in ["MODEL_API_KEY", "OPENAI_API_KEY", "OPENAICOMPATIBLE_API_KEY"]:
     #         if val := os.getenv(var):
     #             env[var] = val
-        
+
     #     return env
 
     def _parse_results(
@@ -1140,7 +1183,7 @@ class GarakAdapter(FrameworkAdapter):
         """
         metrics: list[EvaluationResult] = []
         total_attempts = 0
-        
+
         # Read report content
         report_content = ""
         if result.report_jsonl.exists():
@@ -1148,7 +1191,7 @@ class GarakAdapter(FrameworkAdapter):
             if not report_content.strip():
                 logger.warning("Report file is empty")
                 return metrics, None, 0, {}
-        
+
         avid_content = ""
         if result.avid_jsonl.exists():
             avid_content = result.avid_jsonl.read_text()
@@ -1158,7 +1201,7 @@ class GarakAdapter(FrameworkAdapter):
         )
         aggregated_by_probe = parse_aggregated_from_avid_content(avid_content)
         digest = parse_digest_from_report_content(report_content)
-        
+
         # Combine results
         combined = combine_parsed_results(
             generations,
@@ -1169,12 +1212,8 @@ class GarakAdapter(FrameworkAdapter):
             art_intents=art_intents,
             raw_entries_by_probe=raw_entries_by_probe,
         )
-        overall_summary = (
-            combined.get("scores", {})
-            .get("_overall", {})
-            .get("aggregated_results", {})
-        )
-        
+        overall_summary = combined.get("scores", {}).get("_overall", {}).get("aggregated_results", {})
+
         # Convert to EvaluationResult format (one per probe)
         for probe_name, score_data in combined["scores"].items():
             if probe_name == "_overall":
@@ -1186,29 +1225,35 @@ class GarakAdapter(FrameworkAdapter):
 
             probe_metadata: dict[str, Any] = {"probe": probe_name}
             if art_intents:
-                probe_metadata.update({
-                    "total_attempts": agg.get("total_attempts", 0),
-                    "unsafe_stubs": agg.get("unsafe_stubs", 0),
-                    "safe_stubs": agg.get("safe_stubs", 0),
-                    "intent_breakdown": agg.get("intent_breakdown", {}),
-                })
+                probe_metadata.update(
+                    {
+                        "total_attempts": agg.get("total_attempts", 0),
+                        "unsafe_stubs": agg.get("unsafe_stubs", 0),
+                        "safe_stubs": agg.get("safe_stubs", 0),
+                        "intent_breakdown": agg.get("intent_breakdown", {}),
+                    }
+                )
             else:
                 probe_attempts = agg.get("total_attempts", agg.get("total_attacks", 0))
                 total_attempts += probe_attempts
-                probe_metadata.update({
-                    "vulnerable_responses": agg.get("vulnerable_responses", 0),
-                    "benign_responses": agg.get("benign_responses", 0),
-                    "detector_scores": agg.get("detector_scores", {}),
-                    "avid_taxonomy": agg.get("metadata", {}).get("avid_taxonomy", {}),
-                })
+                probe_metadata.update(
+                    {
+                        "vulnerable_responses": agg.get("vulnerable_responses", 0),
+                        "benign_responses": agg.get("benign_responses", 0),
+                        "detector_scores": agg.get("detector_scores", {}),
+                        "avid_taxonomy": agg.get("metadata", {}).get("avid_taxonomy", {}),
+                    }
+                )
 
-            metrics.append(EvaluationResult(
-                metric_name=f"{probe_name}_asr",
-                metric_value=attack_success_rate,
-                metric_type="percentage",
-                num_samples=probe_attempts if not art_intents else None,
-                metadata=probe_metadata,
-            ))
+            metrics.append(
+                EvaluationResult(
+                    metric_name=f"{probe_name}_asr",
+                    metric_value=attack_success_rate,
+                    metric_type="percentage",
+                    num_samples=probe_attempts if not art_intents else None,
+                    metadata=probe_metadata,
+                )
+            )
 
         overall_score = overall_summary.get("attack_success_rate")
         if overall_score is not None:
@@ -1230,14 +1275,14 @@ class GarakAdapter(FrameworkAdapter):
             num_examples = int(num_examples)
         except (TypeError, ValueError):
             num_examples = total_attempts
-        
-        return metrics, overall_score, num_examples, overall_summary
 
+        return metrics, overall_score, num_examples, overall_summary
 
     def _get_garak_version(self) -> str:
         """Get Garak version string."""
         try:
             from ..version_utils import get_garak_version
+
             return get_garak_version()
         except Exception:
             return "unknown"
@@ -1305,7 +1350,9 @@ class _GarakCallbacks(DefaultCallbacks):
 
                 logger.info(
                     "Results reported to evalhub | Metrics: %d | Score: %s | Artifacts: %d",
-                    len(metrics), results.overall_score, len(eval_artifacts),
+                    len(metrics),
+                    results.overall_score,
+                    len(eval_artifacts),
                 )
 
             except Exception as exc:
@@ -1314,10 +1361,12 @@ class _GarakCallbacks(DefaultCallbacks):
                 super().report_results(results)
 
         logger.info(
-            "Job %s completed | Benchmark: %s | Model: %s | Score: %s | "
-            "Examples: %s | Duration: %.2fs",
-            results.id, results.benchmark_id, results.model_name,
-            results.overall_score, results.num_examples_evaluated,
+            "Job %s completed | Benchmark: %s | Model: %s | Score: %s | Examples: %s | Duration: %.2fs",
+            results.id,
+            results.benchmark_id,
+            results.model_name,
+            results.overall_score,
+            results.num_examples_evaluated,
             results.duration_seconds,
         )
 

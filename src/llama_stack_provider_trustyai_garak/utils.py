@@ -8,11 +8,11 @@ from .constants import XDG_CACHE_HOME, XDG_DATA_HOME, XDG_CONFIG_HOME
 def _ensure_xdg_vars() -> None:
     """
     Ensure XDG environment variables are set to writable locations.
-    
+
     For production/container environments where the default
     XDG directories might not be writable. Garak use these
     directories for cache, config, and data storage.
-    
+
     This function is idempotent and safe to call multiple times.
     It only sets variables that are not already set.
     """
@@ -22,7 +22,7 @@ def _ensure_xdg_vars() -> None:
         "XDG_DATA_HOME": XDG_DATA_HOME,
         "XDG_CONFIG_HOME": XDG_CONFIG_HOME,
     }
-    
+
     for var, default_path in xdg_defaults.items():
         if var not in os.environ:
             os.environ[var] = default_path
@@ -33,24 +33,24 @@ def _ensure_xdg_vars() -> None:
 def get_scan_base_dir() -> Path:
     """
     Get the base directory for scan files.
-    
+
     This uses XDG_CACHE_HOME which is automatically set to /tmp/.cache,
     ensuring it's always writable.
-    
+
     Can be overridden with GARAK_SCAN_DIR environment variable.
-    
+
     XDG variables are lazily initialized on first call to avoid
     side effects at module import time.
-    
+
     Returns:
         Path: Base directory for scan operations
     """
     # Lazy initialization of XDG vars (only on first use)
     _ensure_xdg_vars()
-    
+
     if scan_dir := os.environ.get("GARAK_SCAN_DIR"):
         return Path(scan_dir)
-    
+
     # Use XDG_CACHE_HOME/trustyai_garak_scans
     return Path(os.environ["XDG_CACHE_HOME"]) / "trustyai_garak_scans"
 

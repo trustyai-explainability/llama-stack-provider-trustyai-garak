@@ -20,13 +20,13 @@ def build_generator_options(
     extra_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build generator options for OpenAI-compatible endpoints.
-    
+
     Args:
         model_endpoint: The model API endpoint URL (must end with /v1 or similar)
         model_name: The model name/identifier
         api_key: API key for authentication (default: "DUMMY" for local endpoints)
         extra_params: Additional parameters (temperature, max_tokens, etc.)
-    
+
     Returns:
         Generator options dict for garak's --generator_options flag
     """
@@ -39,10 +39,10 @@ def build_generator_options(
             }
         }
     }
-    
+
     if extra_params:
         options["openai"]["OpenAICompatible"].update(extra_params)
-    
+
     return options
 
 
@@ -72,9 +72,9 @@ def build_garak_command(
     generate_autodan: str | None = None,
 ) -> list[str]:
     """Build a garak CLI command from configuration.
-    
+
     This is a pure function with no framework dependencies.
-    
+
     Args:
         model_type: Garak model type (e.g., 'openai.OpenAICompatible')
         model_name: Model name or function path
@@ -98,74 +98,79 @@ def build_garak_command(
         harness_options: Harness-specific configuration
         taxonomy: Taxonomy to use for reporting
         generate_autodan: AutoDAN generation flag
-    
+
     Returns:
         List of command-line arguments for garak
     """
     cmd = [
         "garak",
-        "--model_type", model_type,
-        "--model_name", model_name,
-        "--generator_options", json.dumps(generator_options),
-        "--parallel_attempts", str(parallel_attempts),
-        "--generations", str(generations),
+        "--model_type",
+        model_type,
+        "--model_name",
+        model_name,
+        "--generator_options",
+        json.dumps(generator_options),
+        "--parallel_attempts",
+        str(parallel_attempts),
+        "--generations",
+        str(generations),
     ]
-    
+
     # Add report prefix if provided
     if report_prefix:
         cmd.extend(["--report_prefix", report_prefix.strip()])
-    
+
     # Optional parameters
     if parallel_requests is not None:
         cmd.extend(["--parallel_requests", str(parallel_requests)])
-    
+
     if skip_unknown:
         cmd.append("--skip_unknown")
-    
+
     if seed is not None:
         cmd.extend(["--seed", str(seed)])
-    
+
     if deprefix is not None:
         cmd.extend(["--deprefix", deprefix])
-    
+
     if eval_threshold is not None:
         cmd.extend(["--eval_threshold", str(eval_threshold)])
-    
+
     if probe_tags is not None:
         cmd.extend(["--probe_tags", probe_tags])
-    
+
     if probe_options is not None:
         cmd.extend(["--probe_options", json.dumps(probe_options)])
-    
+
     if detectors is not None:
         cmd.extend(["--detectors", _normalize_list_arg(detectors)])
-    
+
     if extended_detectors:
         cmd.append("--extended_detectors")
-    
+
     if detector_options is not None:
         cmd.extend(["--detector_options", json.dumps(detector_options)])
-    
+
     if buffs is not None:
         cmd.extend(["--buffs", _normalize_list_arg(buffs)])
-    
+
     if buff_options is not None:
         cmd.extend(["--buff_options", json.dumps(buff_options)])
-    
+
     if harness_options is not None:
         cmd.extend(["--harness_options", json.dumps(harness_options)])
-    
+
     if taxonomy is not None:
         cmd.extend(["--taxonomy", taxonomy])
-    
+
     if generate_autodan is not None:
         cmd.extend(["--generate_autodan", generate_autodan])
-    
+
     # Add probes (if not 'all' as 'all' is the default)
     if not probe_tags and probes and probes != ["all"]:
         # Normalize probes to list
         if isinstance(probes, str):
             probes = probes.split(",") if "," in probes else [probes]
         cmd.extend(["--probes", ",".join(probes)])
-    
+
     return cmd

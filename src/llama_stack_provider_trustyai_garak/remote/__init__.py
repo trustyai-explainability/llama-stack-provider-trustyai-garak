@@ -9,6 +9,7 @@ from .garak_remote_eval import GarakRemoteEvalAdapter
 # Set up logging
 logger = logging.getLogger(__name__)
 
+
 async def get_adapter_impl(
     config: GarakRemoteConfig,
     deps: Optional[Dict[Api, ProviderSpec]] = None,
@@ -28,7 +29,7 @@ async def get_adapter_impl(
 
 
 __all__ = [
-     # Factory methods
+    # Factory methods
     "get_adapter_impl",
     # Configurations
     "GarakRemoteEvalAdapter",

@@ -11,16 +11,18 @@ from .constants import XDG_DATA_HOME
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_POOL_COLUMNS = frozenset({
-    "demographics_pool",
-    "expertise_pool",
-    "geography_pool",
-    "language_styles_pool",
-    "exploit_stages_pool",
-    "task_medium_pool",
-    "temporal_pool",
-    "trust_signals_pool",
-})
+ALLOWED_POOL_COLUMNS = frozenset(
+    {
+        "demographics_pool",
+        "expertise_pool",
+        "geography_pool",
+        "language_styles_pool",
+        "exploit_stages_pool",
+        "task_medium_pool",
+        "temporal_pool",
+        "trust_signals_pool",
+    }
+)
 
 _MANDATORY_COLUMNS = ("policy_concept", "concept_definition")
 _MIN_RECOMMENDED_POOLS = 2
@@ -55,17 +57,12 @@ def load_taxonomy_dataset(
     elif fmt == "json":
         df = pandas.read_json(io.StringIO(content))
     else:
-        raise ValueError(
-            f"Unsupported policy file format: '{format}'. Use 'csv' or 'json'."
-        )
+        raise ValueError(f"Unsupported policy file format: '{format}'. Use 'csv' or 'json'.")
 
     # --- mandatory columns ---------------------------------------------------
     missing = set(_MANDATORY_COLUMNS) - set(df.columns)
     if missing:
-        raise ValueError(
-            f"Taxonomy missing required columns: {sorted(missing)}. "
-            f"Found columns: {sorted(df.columns)}"
-        )
+        raise ValueError(f"Taxonomy missing required columns: {sorted(missing)}. Found columns: {sorted(df.columns)}")
 
     for col in _MANDATORY_COLUMNS:
         df[col] = df[col].astype(str).str.strip()
@@ -75,25 +72,20 @@ def load_taxonomy_dataset(
     df = df.drop_duplicates(subset=list(_MANDATORY_COLUMNS))
 
     if df.empty:
-        raise ValueError(
-            "Taxonomy dataset is empty after removing null, empty, and "
-            "duplicate rows."
-        )
+        raise ValueError("Taxonomy dataset is empty after removing null, empty, and duplicate rows.")
 
     # --- pool columns ---------------------------------------------------------
     user_pool_cols = {c for c in df.columns if c.endswith("_pool")}
     disallowed = user_pool_cols - ALLOWED_POOL_COLUMNS
     if disallowed:
         raise ValueError(
-            f"Unrecognised pool columns: {sorted(disallowed)}. "
-            f"Allowed pool columns: {sorted(ALLOWED_POOL_COLUMNS)}"
+            f"Unrecognised pool columns: {sorted(disallowed)}. Allowed pool columns: {sorted(ALLOWED_POOL_COLUMNS)}"
         )
 
     recognized_pools = user_pool_cols & ALLOWED_POOL_COLUMNS
     if len(recognized_pools) < _MIN_RECOMMENDED_POOLS:
         logger.warning(
-            "Only %d pool column(s) provided; recommend at least %d for "
-            "diverse SDG output.",
+            "Only %d pool column(s) provided; recommend at least %d for diverse SDG output.",
             len(recognized_pools),
             _MIN_RECOMMENDED_POOLS,
         )
@@ -107,9 +99,7 @@ def load_taxonomy_dataset(
             row[col] = _parse_pool_value(row.get(col), col, row_idx)
 
         # keep only mandatory + recognised pool columns, add missing pools
-        cleaned = {
-            mc: row[mc] for mc in _MANDATORY_COLUMNS
-        }
+        cleaned = {mc: row[mc] for mc in _MANDATORY_COLUMNS}
         for pool_col in sorted(ALLOWED_POOL_COLUMNS):
             cleaned[pool_col] = row.get(pool_col)
         records[row_idx] = cleaned
@@ -117,8 +107,7 @@ def load_taxonomy_dataset(
     result = pandas.DataFrame(records)
 
     logger.info(
-        "Loaded taxonomy: %d entries, user-provided pools: %s, "
-        "empty pools (defaults): %s",
+        "Loaded taxonomy: %d entries, user-provided pools: %s, empty pools (defaults): %s",
         len(result),
         sorted(recognized_pools) or "(none)",
         sorted(ALLOWED_POOL_COLUMNS - recognized_pools) or "(none)",
@@ -129,8 +118,8 @@ def load_taxonomy_dataset(
 def _parse_pool_value(value, col: str, row_idx: int):
     """Parse a single pool cell into a native ``dict`` or ``list``.
 
-    Strings are tried with``json.loads`` first, 
-    then ``ast.literal_eval`` (for Python-repr strings that pandas 
+    Strings are tried with``json.loads`` first,
+    then ``ast.literal_eval`` (for Python-repr strings that pandas
     produces when writing lists/dicts to CSV).
     Sets are normalised to sorted lists.  Returns ``None`` for
     null / empty values.
@@ -161,8 +150,7 @@ def _parse_pool_value(value, col: str, row_idx: int):
             parsed = sorted(parsed)
         if not isinstance(parsed, (dict, list)):
             raise ValueError(
-                f"Pool column '{col}' at row {row_idx} must be a dict, list, "
-                f"or set, got {type(parsed).__name__}"
+                f"Pool column '{col}' at row {row_idx} must be a dict, list, or set, got {type(parsed).__name__}"
             )
         return parsed
 
@@ -172,10 +160,7 @@ def _parse_pool_value(value, col: str, row_idx: int):
             return None
     except (ValueError, TypeError):
         pass
-    raise ValueError(
-        f"Pool column '{col}' at row {row_idx} must be a dict, list, "
-        f"or set, got {type(value).__name__}"
-    )
+    raise ValueError(f"Pool column '{col}' at row {row_idx} must be a dict, list, or set, got {type(value).__name__}")
 
 
 def load_intents_dataset(
@@ -210,15 +195,10 @@ def load_intents_dataset(
     elif fmt == "json":
         df = pandas.read_json(io.StringIO(content))
     else:
-        raise ValueError(
-            f"Unsupported intents file format: '{format}'. Use 'csv' or 'json'."
-        )
+        raise ValueError(f"Unsupported intents file format: '{format}'. Use 'csv' or 'json'.")
 
     if "prompt" not in df.columns:
-        raise ValueError(
-            f"Intents dataset must contain a 'prompt' column. "
-            f"Found columns: {sorted(df.columns)}"
-        )
+        raise ValueError(f"Intents dataset must contain a 'prompt' column. Found columns: {sorted(df.columns)}")
 
     if "category" in df.columns:
         # Already-normalised schema
@@ -230,15 +210,9 @@ def load_intents_dataset(
             df["description"] = ""
     elif "policy_concept" in df.columns:
         # Raw SDG output schema -- normalise column names
-        df["category"] = df["policy_concept"].apply(
-            lambda v: re.sub(r"[^a-z]", "", str(v).lower())
-        )
+        df["category"] = df["policy_concept"].apply(lambda v: re.sub(r"[^a-z]", "", str(v).lower()))
         df["prompt"] = df["prompt"].astype(str)
-        df["description"] = (
-            df["concept_definition"].astype(str)
-            if "concept_definition" in df.columns
-            else ""
-        )
+        df["description"] = df["concept_definition"].astype(str) if "concept_definition" in df.columns else ""
         df = df[["category", "prompt", "description"]]
     else:
         raise ValueError(
@@ -256,17 +230,20 @@ def load_intents_dataset(
 
     logger.info(
         "Loaded intents dataset (bypass SDG): %d prompts across %d categories",
-        len(df), df["category"].nunique(),
+        len(df),
+        df["category"].nunique(),
     )
     return df
 
 
-def generate_intents_from_dataset(dataset: pandas.DataFrame,
-                                  category_column_name="category",
-                                  prompt_column_name="prompt",
-                                  category_description_column_name=None,
-                                  take_per_category: Optional[int] = None,
-                                  sample_per_category: Optional[int] = None, ):
+def generate_intents_from_dataset(
+    dataset: pandas.DataFrame,
+    category_column_name="category",
+    prompt_column_name="prompt",
+    category_description_column_name=None,
+    take_per_category: Optional[int] = None,
+    sample_per_category: Optional[int] = None,
+):
     """
     Given a dataset of prompts that we want to test the model against (input taxonomy),
     creates the corresponding Garak topology and intent stub files.
@@ -283,12 +260,12 @@ def generate_intents_from_dataset(dataset: pandas.DataFrame,
        `$XDG_DATA_HOME/garak/data/cas/intent_stubs/S002fraud.json` with the prompts as a JSON list of strings
     """
     _ensure_xdg_vars()
-    xdg_data_home = os.environ.get('XDG_DATA_HOME', XDG_DATA_HOME)
+    xdg_data_home = os.environ.get("XDG_DATA_HOME", XDG_DATA_HOME)
 
     # Define paths
-    garak_data_dir = Path(xdg_data_home) / 'garak' / 'data' / 'cas'
-    typology_file = garak_data_dir / 'trait_typology.json'
-    intent_stubs_dir = garak_data_dir / 'intent_stubs'
+    garak_data_dir = Path(xdg_data_home) / "garak" / "data" / "cas"
+    typology_file = garak_data_dir / "trait_typology.json"
+    intent_stubs_dir = garak_data_dir / "intent_stubs"
 
     # Create directories if they don't exist
     intent_stubs_dir.mkdir(parents=True, exist_ok=True)
@@ -299,17 +276,14 @@ def generate_intents_from_dataset(dataset: pandas.DataFrame,
 
     for idx, (category, group) in enumerate(grouped):
         # Sanitize category to match Garak's intent name regex: [CTMS]([0-9]{3}([a-z]+)?)?
-        sanitized = re.sub(r'[^a-z]', '', str(category).lower())
+        sanitized = re.sub(r"[^a-z]", "", str(category).lower())
 
         # Generate intent ID (S001, S002, etc.)
         intent_id = f"S{idx + 1:03d}{sanitized}"
 
         # Add to typology
         descr = group[category_description_column_name].iloc[0] if category_description_column_name else ""
-        typology_dict[intent_id] = {
-            "name": category,
-            "descr": descr
-        }
+        typology_dict[intent_id] = {"name": category, "descr": descr}
 
         # Combine all prompts for this category into one file
         if take_per_category is not None:
@@ -321,9 +295,9 @@ def generate_intents_from_dataset(dataset: pandas.DataFrame,
 
         # Create intent stub file
         intent_file = intent_stubs_dir / f"{intent_id}.json"
-        with open(intent_file, 'w') as f:
+        with open(intent_file, "w") as f:
             json.dump(prompts, f, indent=2)
 
     # Write typology file
-    with open(typology_file, 'w') as f:
+    with open(typology_file, "w") as f:
         json.dump(typology_dict, f, indent=2)

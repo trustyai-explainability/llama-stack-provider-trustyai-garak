@@ -50,25 +50,23 @@ except ModuleNotFoundError:  # fallback to legacy llama_stack layout
     # common datatypes
     from llama_stack.apis.datatypes import Api
     from llama_stack.providers.datatypes import (
-        ProviderSpec, 
+        ProviderSpec,
         BenchmarksProtocolPrivate,
         RemoteProviderSpec,
         InlineProviderSpec,
     )
-    
-    from llama_stack.apis.common.job_types import (
-        Job, 
-        JobStatus
-    )
+
+    from llama_stack.apis.common.job_types import Job, JobStatus
     from llama_stack.schema_utils import json_schema_type
 
     # evals
     from llama_stack.apis.benchmarks import (
-        Benchmark, Benchmarks,
+        Benchmark,
+        Benchmarks,
     )
     from llama_stack.apis.eval import (
-        Eval, 
-        BenchmarkConfig, 
+        Eval,
+        BenchmarkConfig,
         EvaluateResponse,
         RunEvalRequest,
         EvaluateRowsRequest,
@@ -90,7 +88,7 @@ except ModuleNotFoundError:  # fallback to legacy llama_stack layout
     # safety
     from llama_stack.apis.safety import (
         Safety,
-        RunShieldResponse, 
+        RunShieldResponse,
         ViolationLevel,
         GetShieldRequest,
     )
@@ -104,7 +102,7 @@ except ModuleNotFoundError:  # fallback to legacy llama_stack layout
         SamplingParams,
         SamplingStrategy,
         TopPSamplingStrategy,
-        TopKSamplingStrategy
+        TopKSamplingStrategy,
     )
 
     # scoring
@@ -114,8 +112,8 @@ finally:
     # This enables additional context in Job responses
     # The client-side Job model already has extra='allow', so this ensures
     # the server-side model doesn't strip out extra fields during serialization
-    if not Job.model_config.get('extra'):
-        Job.model_config['extra'] = 'allow'
+    if not Job.model_config.get("extra"):
+        Job.model_config["extra"] = "allow"
         # Rebuild the model to apply the config change
         Job.model_rebuild(force=True)
 

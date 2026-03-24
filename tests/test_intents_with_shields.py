@@ -40,10 +40,7 @@ def remote_config():
         namespace="test-namespace",
         garak_base_image="test:latest",
     )
-    return GarakRemoteConfig(
-        kubeflow_config=kubeflow_config,
-        llama_stack_url="http://test-llama-stack.com/v1"
-    )
+    return GarakRemoteConfig(kubeflow_config=kubeflow_config, llama_stack_url="http://test-llama-stack.com/v1")
 
 
 @pytest.fixture
@@ -67,9 +64,9 @@ def create_adapter(remote_config, mock_deps):
     """Helper to create GarakRemoteEvalAdapter with standard patches."""
     from llama_stack_provider_trustyai_garak.remote.garak_remote_eval import GarakRemoteEvalAdapter
 
-    with patch.object(GarakRemoteEvalAdapter, '_ensure_garak_installed'):
-        with patch.object(GarakRemoteEvalAdapter, '_get_all_probes', return_value=set()):
-            with patch.object(GarakRemoteEvalAdapter, '_create_kfp_client'):
+    with patch.object(GarakRemoteEvalAdapter, "_ensure_garak_installed"):
+        with patch.object(GarakRemoteEvalAdapter, "_get_all_probes", return_value=set()):
+            with patch.object(GarakRemoteEvalAdapter, "_create_kfp_client"):
                 adapter = GarakRemoteEvalAdapter(remote_config, mock_deps)
                 adapter._initialized = True
                 yield adapter
@@ -82,9 +79,8 @@ def create_benchmark_config(model="test-model"):
             "type": "model",
             "model": model,
             "sampling_params": SamplingParams(
-                strategy=TopPSamplingStrategy(temperature=0.7, top_p=0.95),
-                max_tokens=100
-            )
+                strategy=TopPSamplingStrategy(temperature=0.7, top_p=0.95), max_tokens=100
+            ),
         }
     )
 
@@ -98,36 +94,32 @@ class TestIntentsWithShieldsConfiguration:
         with create_adapter(remote_config, mock_deps_with_shields) as adapter:
             # Register intents benchmark with shields
             benchmark = Benchmark(
-            identifier="test_intents_with_shield",
-            dataset_id="garak",
-            scoring_functions=["garak_scoring"],
-            provider_id="trustyai_garak",
-            provider_benchmark_id="trustyai_garak::intents",
-            metadata={
-                "art_intents": True,
-                "shield_ids": ["llama-guard"],
-                "sdg_model": "test-sdg-model",
-                "sdg_api_base": "http://sdg.example.com/v1",
-                "sdg_api_key": "test-key",
-                "intents_models": {
-                    "judge": {
-                        "name": "test-judge-model",
-                        "url": "http://judge.example.com/v1",
-                        "api_key": "judge-key"
+                identifier="test_intents_with_shield",
+                dataset_id="garak",
+                scoring_functions=["garak_scoring"],
+                provider_id="trustyai_garak",
+                provider_benchmark_id="trustyai_garak::intents",
+                metadata={
+                    "art_intents": True,
+                    "shield_ids": ["llama-guard"],
+                    "sdg_model": "test-sdg-model",
+                    "sdg_api_base": "http://sdg.example.com/v1",
+                    "sdg_api_key": "test-key",
+                    "intents_models": {
+                        "judge": {
+                            "name": "test-judge-model",
+                            "url": "http://judge.example.com/v1",
+                            "api_key": "judge-key",
+                        },
+                        "attack": {
+                            "name": "test-attack-model",
+                            "url": "http://attack.example.com/v1",
+                            "api_key": "attack-key",
+                        },
+                        "sdg": {"name": "test-sdg-model", "url": "http://sdg.example.com/v1", "api_key": "test-key"},
                     },
-                    "attack": {
-                        "name": "test-attack-model",
-                        "url": "http://attack.example.com/v1",
-                        "api_key": "attack-key"
-                    },
-                    "sdg": {
-                        "name": "test-sdg-model",
-                        "url": "http://sdg.example.com/v1",
-                        "api_key": "test-key"
-                    }
+                    "garak_config": GarakCommandConfig().to_dict(),
                 },
-                "garak_config": GarakCommandConfig().to_dict(),
-            }
             )
 
             await adapter.register_benchmark(benchmark)
@@ -151,24 +143,15 @@ class TestIntentsWithShieldsConfiguration:
                 provider_benchmark_id="trustyai_garak::intents",
                 metadata={
                     "art_intents": True,
-                    "shield_config": {
-                        "input": ["llama-guard"],
-                        "output": ["llama-guard"]
-                    },
+                    "shield_config": {"input": ["llama-guard"], "output": ["llama-guard"]},
                     "sdg_model": "test-sdg-model",
                     "sdg_api_base": "http://sdg.example.com/v1",
                     "intents_models": {
-                        "judge": {
-                            "name": "test-judge-model",
-                            "url": "http://judge.example.com/v1"
-                        },
-                        "sdg": {
-                            "name": "test-sdg-model",
-                            "url": "http://sdg.example.com/v1"
-                        }
+                        "judge": {"name": "test-judge-model", "url": "http://judge.example.com/v1"},
+                        "sdg": {"name": "test-sdg-model", "url": "http://sdg.example.com/v1"},
                     },
                     "garak_config": GarakCommandConfig().to_dict(),
-                }
+                },
             )
 
             await adapter.register_benchmark(benchmark)
@@ -198,7 +181,7 @@ class TestIntentsWithShieldsConfiguration:
                             "detector_model_config": {
                                 "uri": "http://judge.example.com/v1",
                                 "api_key": "test-key",
-                            }
+                            },
                         }
                     }
                 )
@@ -207,20 +190,14 @@ class TestIntentsWithShieldsConfiguration:
             # Provider params with shields and intents
             provider_params = {
                 "art_intents": True,
-                "shield_config": {
-                    "input": ["llama-guard"],
-                    "output": ["llama-guard"]
-                },
+                "shield_config": {"input": ["llama-guard"], "output": ["llama-guard"]},
                 "sdg_model": "test-sdg-model",
                 "intents_file_id": None,  # Force SDG to run
             }
 
             # Build command
             cmd_config = await adapter._build_command(
-                benchmark_config,
-                garak_config,
-                provider_params,
-                scan_report_prefix="test_scan"
+                benchmark_config, garak_config, provider_params, scan_report_prefix="test_scan"
             )
 
             # Verify that function-based generator is configured (shields require this)
@@ -292,7 +269,7 @@ class TestIntentsWithShieldsValidation:
                             "detector_model_config": {
                                 "uri": "http://judge.example.com/v1",
                                 "api_key": "test-key",
-                            }
+                            },
                         }
                     }
                 )
@@ -339,12 +316,12 @@ class TestIntentsWithShieldsValidation:
                                     "detector_model_config": {
                                         "uri": "http://judge.example.com/v1",
                                         "api_key": "test-key",
-                                    }
+                                    },
                                 }
                             }
                         )
                     ).to_dict(),
-                }
+                },
             )
 
             await adapter.register_benchmark(benchmark)
@@ -352,8 +329,7 @@ class TestIntentsWithShieldsValidation:
             benchmark_config = create_benchmark_config()
 
             garak_config, provider_params = await adapter._validate_run_eval_request(
-                "test_intents_missing_config",
-                benchmark_config
+                "test_intents_missing_config", benchmark_config
             )
 
             # Should raise error about missing sdg_model
@@ -381,25 +357,13 @@ class TestIntentsWithShieldsIntegration:
                 provider_benchmark_id="trustyai_garak::intents",
                 metadata={
                     "art_intents": True,
-                    "shield_config": {
-                        "input": ["llama-guard"],
-                        "output": ["llama-guard"]
-                    },
+                    "shield_config": {"input": ["llama-guard"], "output": ["llama-guard"]},
                     "sdg_model": "sdg-model",
                     "sdg_api_base": "http://sdg.example.com/v1",
                     "intents_models": {
-                        "judge": {
-                            "name": "judge-model",
-                            "url": "http://judge.example.com/v1"
-                        },
-                        "attack": {
-                            "name": "attack-model",
-                            "url": "http://attack.example.com/v1"
-                        },
-                        "sdg": {
-                            "name": "sdg-model",
-                            "url": "http://sdg.example.com/v1"
-                        }
+                        "judge": {"name": "judge-model", "url": "http://judge.example.com/v1"},
+                        "attack": {"name": "attack-model", "url": "http://attack.example.com/v1"},
+                        "sdg": {"name": "sdg-model", "url": "http://sdg.example.com/v1"},
                     },
                     "garak_config": GarakCommandConfig(
                         plugins=GarakPluginsConfig(
@@ -410,12 +374,12 @@ class TestIntentsWithShieldsIntegration:
                                     "detector_model_config": {
                                         "uri": "http://judge.example.com/v1",
                                         "api_key": "test-key",
-                                    }
+                                    },
                                 }
                             }
                         )
                     ).to_dict(),
-                }
+                },
             )
 
             await adapter.register_benchmark(benchmark)
@@ -424,8 +388,7 @@ class TestIntentsWithShieldsIntegration:
             benchmark_config = create_benchmark_config()
 
             garak_config, provider_params = await adapter._validate_run_eval_request(
-                "intents_shield_workflow",
-                benchmark_config
+                "intents_shield_workflow", benchmark_config
             )
 
             # Verify intents params
@@ -435,10 +398,7 @@ class TestIntentsWithShieldsIntegration:
 
             # Step 3: Build command configuration
             cmd_config = await adapter._build_command(
-                benchmark_config,
-                garak_config,
-                provider_params,
-                scan_report_prefix="test_workflow"
+                benchmark_config, garak_config, provider_params, scan_report_prefix="test_workflow"
             )
 
             # Step 4: Verify final configuration

@@ -34,10 +34,7 @@ class TestGetGarakVersion:
         from llama_stack_provider_trustyai_garak import get_garak_version
 
         mock_dist = MagicMock()
-        mock_dist.requires = [
-            "garak==0.12.0; python_version >= '3.12'",
-            "other-package==1.0.0"
-        ]
+        mock_dist.requires = ["garak==0.12.0; python_version >= '3.12'", "other-package==1.0.0"]
 
         with patch("importlib.metadata.distribution", return_value=mock_dist):
             version = get_garak_version()
@@ -89,9 +86,7 @@ dependencies = [
                 with patch("pathlib.Path.exists", return_value=True):
                     with patch("tomllib.load") as mock_toml:
                         mock_toml.return_value = {
-                            "project": {
-                                "dependencies": ["garak==0.12.0", "other-package==1.0.0"]
-                            }
+                            "project": {"dependencies": ["garak==0.12.0", "other-package==1.0.0"]}
                         }
                         version = get_garak_version()
                         assert version == "garak==0.12.0"
@@ -105,12 +100,7 @@ dependencies = [
                 with patch("pathlib.Path.exists", return_value=True):
                     with patch("tomllib.load") as mock_toml:
                         mock_toml.return_value = {
-                            "project": {
-                                "dependencies": [
-                                    "garak==0.12.0; python_version >= '3.12'",
-                                    "other-package"
-                                ]
-                            }
+                            "project": {"dependencies": ["garak==0.12.0; python_version >= '3.12'", "other-package"]}
                         }
                         version = get_garak_version()
                         # Should strip environment markers
@@ -159,11 +149,7 @@ dependencies = [
             with patch("builtins.open", mock_open()):
                 with patch("pathlib.Path.exists", return_value=True):
                     with patch("tomllib.load") as mock_toml:
-                        mock_toml.return_value = {
-                            "project": {
-                                "dependencies": ["other-package==1.0.0"]
-                            }
-                        }
+                        mock_toml.return_value = {"project": {"dependencies": ["other-package==1.0.0"]}}
                         version = get_garak_version()
                         # Should return unversioned fallback
                         assert version == "garak"
@@ -190,8 +176,8 @@ dependencies = [
                                         "langchain==0.3.27",
                                         "garak==0.12.0",  # Should be read from here
                                     ],
-                                    "dev": ["pytest"]
-                                }
+                                    "dev": ["pytest"],
+                                },
                             }
                         }
                         version = get_garak_version()
@@ -216,7 +202,7 @@ dependencies = [
                                     "inline": [
                                         "garak==0.12.0",  # Should use this one
                                     ]
-                                }
+                                },
                             }
                         }
                         version = get_garak_version()
@@ -242,7 +228,7 @@ dependencies = [
                                         "langchain==0.3.27",
                                         # No garak here
                                     ]
-                                }
+                                },
                             }
                         }
                         version = get_garak_version()
@@ -353,4 +339,3 @@ class TestProviderSpecsUseGarakVersion:
         # - "garak~=0.12.0"
         version_pattern = r"^garak(==|>=|<=|~=|!=)?\d*\.?\d*\.?\d*$"
         assert re.match(version_pattern, garak_package), f"Invalid garak version format: {garak_package}"
-

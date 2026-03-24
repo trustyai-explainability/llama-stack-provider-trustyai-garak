@@ -9,9 +9,10 @@ from .garak_eval import GarakInlineEvalAdapter
 # Set up logging
 logger = logging.getLogger(__name__)
 
+
 async def get_provider_impl(
-        config: GarakInlineConfig,
-        deps: Optional[Dict[Api, ProviderSpec]] = None,
+    config: GarakInlineConfig,
+    deps: Optional[Dict[Api, ProviderSpec]] = None,
 ) -> GarakInlineEvalAdapter:
     """Get an inline Garak implementation from the configuration.
 
@@ -39,12 +40,11 @@ async def get_provider_impl(
         await impl.initialize()
         return impl
     except Exception as e:
-        raise Exception(
-            f"Failed to create inline Garak implementation: {str(e)}"
-        ) from e
+        raise Exception(f"Failed to create inline Garak implementation: {str(e)}") from e
+
 
 __all__ = [
-     # Factory methods
+    # Factory methods
     "get_provider_impl",
     # Configurations
     "GarakInlineEvalAdapter",

@@ -19,6 +19,7 @@ from llama_stack_provider_trustyai_garak.core.config_resolution import (
 )
 from llama_stack_provider_trustyai_garak.core.garak_runner import convert_to_avid_report
 
+
 def _load_evalhub_garak_adapter(monkeypatch) -> types.ModuleType:
     """Import the eval-hub adapter module with lightweight evalhub stubs."""
 
@@ -82,10 +83,7 @@ def test_resolve_scan_profile_accepts_prefixed_and_unprefixed_ids():
 
     assert prefixed["name"] == "OWASP LLM Top 10"
     assert unprefixed["name"] == "OWASP LLM Top 10"
-    assert (
-        unprefixed["garak_config"]["run"]["probe_tags"]
-        == prefixed["garak_config"]["run"]["probe_tags"]
-    )
+    assert unprefixed["garak_config"]["run"]["probe_tags"] == prefixed["garak_config"]["run"]["probe_tags"]
 
 
 def test_build_effective_garak_config_honors_precedence():
@@ -275,6 +273,7 @@ def test_convert_to_avid_report_imports_garak_report(monkeypatch, tmp_path):
 # KFP mode tests
 # ---------------------------------------------------------------------------
 
+
 class TestResolveExecutionMode:
     """Tests for _resolve_execution_mode static method."""
 
@@ -323,14 +322,16 @@ class TestKFPConfig:
 
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import KFPConfig
 
-        cfg = KFPConfig.from_env_and_config({
-            "kfp_config": {
-                "endpoint": "https://override.example.com",
-                "namespace": "override-ns",
-                "s3_secret_name": "custom-s3-conn",
-                "s3_bucket": "override-bucket",
+        cfg = KFPConfig.from_env_and_config(
+            {
+                "kfp_config": {
+                    "endpoint": "https://override.example.com",
+                    "namespace": "override-ns",
+                    "s3_secret_name": "custom-s3-conn",
+                    "s3_bucket": "override-bucket",
+                }
             }
-        })
+        )
         assert cfg.endpoint == "https://override.example.com"
         assert cfg.namespace == "override-ns"
         assert cfg.s3_secret_name == "custom-s3-conn"
@@ -388,14 +389,19 @@ class TestKFPModeExecution:
         report_prefix = tmp_path / "scan"
         report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
 
-        def _fake_run_via_kfp(self, config, callbacks, garak_config_dict, timeout, intents_params=None, eval_threshold=0.5):
+        def _fake_run_via_kfp(
+            self, config, callbacks, garak_config_dict, timeout, intents_params=None, eval_threshold=0.5
+        ):
             captured["called"] = True
             captured["timeout"] = timeout
             captured["config_json"] = garak_config_dict
             captured["intents_params"] = intents_params
             captured["eval_threshold"] = eval_threshold
             return module.GarakScanResult(
-                returncode=0, stdout="", stderr="", report_prefix=report_prefix,
+                returncode=0,
+                stdout="",
+                stderr="",
+                report_prefix=report_prefix,
             ), tmp_path
 
         monkeypatch.setattr(module.GarakAdapter, "_run_via_kfp", _fake_run_via_kfp)
@@ -408,6 +414,7 @@ class TestKFPModeExecution:
         class _Callbacks:
             def report_status(self, _update):
                 return None
+
             def create_oci_artifact(self, _spec):
                 return SimpleNamespace(reference="oci://ref", digest="sha256:test")
 
@@ -445,7 +452,10 @@ class TestKFPModeExecution:
         def _fake_run_garak_scan(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
             report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
             return module.GarakScanResult(
-                returncode=0, stdout="", stderr="", report_prefix=report_prefix,
+                returncode=0,
+                stdout="",
+                stderr="",
+                report_prefix=report_prefix,
             )
 
         monkeypatch.setattr(module, "run_garak_scan", _fake_run_garak_scan)
@@ -459,6 +469,7 @@ class TestKFPModeExecution:
         class _Callbacks:
             def report_status(self, _update):
                 return None
+
             def create_oci_artifact(self, _spec):
                 return SimpleNamespace(reference="oci://ref", digest="sha256:test")
 
@@ -493,21 +504,24 @@ class TestS3Download:
                 return self
 
             def paginate(self, Bucket, Prefix):
-                return [{
-                    "Contents": [
-                        {"Key": f"{Prefix}/scan.report.jsonl"},
-                        {"Key": f"{Prefix}/scan.avid.jsonl"},
-                        {"Key": f"{Prefix}/scan.log"},
-                        {"Key": f"{Prefix}/config.json"},
-                    ]
-                }]
+                return [
+                    {
+                        "Contents": [
+                            {"Key": f"{Prefix}/scan.report.jsonl"},
+                            {"Key": f"{Prefix}/scan.avid.jsonl"},
+                            {"Key": f"{Prefix}/scan.log"},
+                            {"Key": f"{Prefix}/config.json"},
+                        ]
+                    }
+                ]
 
             def download_file(self, bucket, key, local_path):
                 downloaded_files.append(key)
                 Path(local_path).write_text(f"content of {key}")
 
         monkeypatch.setattr(
-            module.GarakAdapter, "_create_s3_client",
+            module.GarakAdapter,
+            "_create_s3_client",
             staticmethod(lambda **kwargs: _FakeS3Client()),
         )
 
@@ -515,7 +529,9 @@ class TestS3Download:
         local_dir.mkdir()
 
         module.GarakAdapter._download_results_from_s3(
-            "test-bucket", "evalhub-garak/job-123", local_dir,
+            "test-bucket",
+            "evalhub-garak/job-123",
+            local_dir,
         )
 
         assert len(downloaded_files) == 4
@@ -547,7 +563,8 @@ class TestS3Download:
                 return [{"Contents": []}]
 
         monkeypatch.setattr(
-            module.GarakAdapter, "_create_s3_client",
+            module.GarakAdapter,
+            "_create_s3_client",
             staticmethod(lambda **kwargs: _FakeS3Client()),
         )
 
@@ -555,7 +572,9 @@ class TestS3Download:
         local_dir.mkdir()
 
         module.GarakAdapter._download_results_from_s3(
-            "test-bucket", "evalhub-garak/job-empty", local_dir,
+            "test-bucket",
+            "evalhub-garak/job-empty",
+            local_dir,
         )
         assert list(local_dir.iterdir()) == []
 
@@ -577,6 +596,7 @@ class TestPollKFPRun:
 
         class _Callbacks:
             statuses = []
+
             def report_status(self, update):
                 self.statuses.append(update)
 
@@ -585,7 +605,10 @@ class TestPollKFPRun:
 
         callbacks = _Callbacks()
         state = module.GarakAdapter._poll_kfp_run(
-            _FakeClient(), "run-123", callbacks, poll_interval=0,
+            _FakeClient(),
+            "run-123",
+            callbacks,
+            poll_interval=0,
         )
         assert state == "SUCCEEDED"
         assert call_count["n"] == 3
@@ -603,7 +626,10 @@ class TestPollKFPRun:
                 pass
 
         state = module.GarakAdapter._poll_kfp_run(
-            _FakeClient(), "run-456", _Callbacks(), poll_interval=0,
+            _FakeClient(),
+            "run-456",
+            _Callbacks(),
+            poll_interval=0,
         )
         assert state == "FAILED"
 
@@ -620,6 +646,7 @@ class TestPollKFPRun:
 
         class _Callbacks:
             statuses = []
+
             def report_status(self, update):
                 self.statuses.append(update)
 
@@ -627,7 +654,10 @@ class TestPollKFPRun:
 
         callbacks = _Callbacks()
         state = module.GarakAdapter._poll_kfp_run(
-            _FakeClient(), "run-789", callbacks, poll_interval=0,
+            _FakeClient(),
+            "run-789",
+            callbacks,
+            poll_interval=0,
         )
         assert state == terminal_state
         assert call_count["n"] == 1
@@ -649,7 +679,11 @@ class TestPollKFPRun:
                 pass
 
         state = module.GarakAdapter._poll_kfp_run(
-            _FakeClient(), "run-timeout", _Callbacks(), poll_interval=0, timeout=100,
+            _FakeClient(),
+            "run-timeout",
+            _Callbacks(),
+            poll_interval=0,
+            timeout=100,
         )
         assert state == "TIMED_OUT"
 
@@ -1017,7 +1051,8 @@ class TestResolveIntentsApiKey:
         monkeypatch.setenv("JUDGE_API_KEY", "from-env")
 
         result = module.GarakAdapter._resolve_intents_api_key(
-            "judge", {"api_key": "direct-key"},
+            "judge",
+            {"api_key": "direct-key"},
         )
         assert result == "direct-key"
 
@@ -1026,7 +1061,8 @@ class TestResolveIntentsApiKey:
         monkeypatch.setenv("MY_CUSTOM_KEY", "custom-val")
 
         result = module.GarakAdapter._resolve_intents_api_key(
-            "judge", {"api_key_env": "MY_CUSTOM_KEY"},
+            "judge",
+            {"api_key_env": "MY_CUSTOM_KEY"},
         )
         assert result == "custom-val"
 
@@ -1065,6 +1101,7 @@ class TestResolveIntentsApiKey:
         monkeypatch.setenv("OPENAICOMPATIBLE_API_KEY", "env-openai")
 
         calls = []
+
         def fake_read(name):
             calls.append(name)
             return "secret-from-custom" if name == "custom-secret" else None
@@ -1072,7 +1109,8 @@ class TestResolveIntentsApiKey:
         self._install_auth_stub(monkeypatch, fake_read)
 
         result = module.GarakAdapter._resolve_intents_api_key(
-            "judge", {"api_key_name": "custom-secret"},
+            "judge",
+            {"api_key_name": "custom-secret"},
         )
         assert result == "secret-from-custom"
         assert calls == ["custom-secret"]
@@ -1109,7 +1147,8 @@ class TestResolveIntentsApiKey:
         monkeypatch.setenv("CUSTOM_KEY", "env-custom")
 
         result = module.GarakAdapter._resolve_intents_api_key(
-            "judge", {"api_key_env": "CUSTOM_KEY"},
+            "judge",
+            {"api_key_env": "CUSTOM_KEY"},
         )
         assert result == "env-custom"
 
@@ -1122,7 +1161,8 @@ class TestResolveIntentsApiKey:
         self._install_auth_stub(monkeypatch, fake_read)
 
         result = module.GarakAdapter._resolve_intents_api_key(
-            "judge", {"api_key": "direct-wins", "api_key_name": "some-secret"},
+            "judge",
+            {"api_key": "direct-wins", "api_key_name": "some-secret"},
         )
         assert result == "direct-wins"
 
@@ -1170,11 +1210,16 @@ class TestKFPIntentsMode:
         report_prefix = tmp_path / "scan"
         report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
 
-        def _fake_run_via_kfp(self, config, callbacks, garak_config_dict, timeout, intents_params=None, eval_threshold=0.5):
+        def _fake_run_via_kfp(
+            self, config, callbacks, garak_config_dict, timeout, intents_params=None, eval_threshold=0.5
+        ):
             captured["intents_params"] = intents_params
             captured["eval_threshold"] = eval_threshold
             return module.GarakScanResult(
-                returncode=0, stdout="", stderr="", report_prefix=report_prefix,
+                returncode=0,
+                stdout="",
+                stderr="",
+                report_prefix=report_prefix,
             ), tmp_path
 
         monkeypatch.setattr(module.GarakAdapter, "_run_via_kfp", _fake_run_via_kfp)
@@ -1187,6 +1232,7 @@ class TestKFPIntentsMode:
         class _Callbacks:
             def report_status(self, _update):
                 return None
+
             def create_oci_artifact(self, _spec):
                 return SimpleNamespace(reference="oci://ref", digest="sha256:test")
 
@@ -1223,9 +1269,14 @@ class TestKFPIntentsMode:
             encoding="utf-8",
         )
 
-        def _fake_run_via_kfp(self, config, callbacks, garak_config_dict, timeout, intents_params=None, eval_threshold=0.5):
+        def _fake_run_via_kfp(
+            self, config, callbacks, garak_config_dict, timeout, intents_params=None, eval_threshold=0.5
+        ):
             return module.GarakScanResult(
-                returncode=0, stdout="", stderr="", report_prefix=report_prefix,
+                returncode=0,
+                stdout="",
+                stderr="",
+                report_prefix=report_prefix,
             ), scan_dir
 
         monkeypatch.setattr(module.GarakAdapter, "_run_via_kfp", _fake_run_via_kfp)
@@ -1246,6 +1297,7 @@ class TestKFPIntentsMode:
         class _Callbacks:
             def report_status(self, _update):
                 return None
+
             def create_oci_artifact(self, _spec):
                 return SimpleNamespace(reference="oci://ref", digest="sha256:test")
 
@@ -1277,6 +1329,7 @@ class TestKFPIntentsMode:
         class _Callbacks:
             def report_status(self, _update):
                 return None
+
             def create_oci_artifact(self, _spec):
                 return SimpleNamespace(reference="oci://ref", digest="sha256:test")
 
@@ -1320,10 +1373,14 @@ class TestParseResultsIntentsMode:
             ),
         )
         monkeypatch.setattr(
-            module, "parse_aggregated_from_avid_content", lambda _content: {},
+            module,
+            "parse_aggregated_from_avid_content",
+            lambda _content: {},
         )
         monkeypatch.setattr(
-            module, "parse_digest_from_report_content", lambda _content: {},
+            module,
+            "parse_digest_from_report_content",
+            lambda _content: {},
         )
         monkeypatch.setattr(
             module,
@@ -1367,10 +1424,15 @@ class TestParseResultsIntentsMode:
         )
 
         result = module.GarakScanResult(
-            returncode=0, stdout="", stderr="", report_prefix=report_prefix,
+            returncode=0,
+            stdout="",
+            stderr="",
+            report_prefix=report_prefix,
         )
         metrics, overall_score, num_examples, _ = adapter._parse_results(
-            result, 0.5, art_intents=True,
+            result,
+            0.5,
+            art_intents=True,
         )
 
         assert len(metrics) == 1
@@ -1390,14 +1452,17 @@ class TestParseResultsIntentsMode:
 # Targeted KFP component tests
 # ---------------------------------------------------------------------------
 
+
 class _FakeArtifact:
     """Minimal stand-in for KFP dsl.Output / dsl.Input artifacts."""
+
     def __init__(self, path: str):
         self.path = path
 
 
 class _FakeMetrics:
     """Minimal stand-in for dsl.Output[dsl.Metrics]."""
+
     def __init__(self):
         self.logged: dict[str, float] = {}
 
@@ -1417,7 +1482,7 @@ class TestValidateComponent:
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import validate
 
         # Mock garak module so import succeeds
-        monkeypatch.setitem(sys.modules, 'garak', types.ModuleType('garak'))
+        monkeypatch.setitem(sys.modules, "garak", types.ModuleType("garak"))
 
         monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "fake")
@@ -1483,7 +1548,7 @@ class TestValidateComponent:
         from llama_stack_provider_trustyai_garak.errors import GarakValidationError
 
         # Mock garak module so import succeeds
-        monkeypatch.setitem(sys.modules, 'garak', types.ModuleType('garak'))
+        monkeypatch.setitem(sys.modules, "garak", types.ModuleType("garak"))
 
         monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
 
@@ -1496,13 +1561,14 @@ class TestValidateComponent:
         from llama_stack_provider_trustyai_garak.errors import GarakValidationError
 
         # Mock garak module so import succeeds
-        monkeypatch.setitem(sys.modules, 'garak', types.ModuleType('garak'))
+        monkeypatch.setitem(sys.modules, "garak", types.ModuleType("garak"))
 
         monkeypatch.setenv("AWS_S3_BUCKET", "bad-bucket")
 
         def _fake_create_s3_client():
             def _fail(**kwargs):
                 raise ConnectionError("unreachable")
+
             return SimpleNamespace(head_bucket=_fail)
 
         monkeypatch.setattr(
@@ -1542,6 +1608,7 @@ class TestResolveTaxonomyComponent:
         def _fake_create_s3_client():
             def _get_object(Bucket, Key):
                 return {"Body": SimpleNamespace(read=lambda: taxonomy_csv.encode())}
+
             return SimpleNamespace(get_object=_get_object)
 
         monkeypatch.setattr(
@@ -1669,17 +1736,21 @@ class TestSdgGenerateComponent:
         Path(taxonomy.path).write_text("policy_concept,concept_definition\nHarm,Harm def\n")
         sdg_out = _FakeArtifact(str(tmp_path / "sdg.csv"))
 
-        raw_df = pd.DataFrame({
-            "policy_concept": ["Harm"],
-            "concept_definition": ["Harm def"],
-            "prompt": ["generated"],
-            "demographics_pool": [["Teens"]],
-        })
-        norm_df = pd.DataFrame({
-            "category": ["harm"],
-            "prompt": ["generated"],
-            "description": ["Harm def"],
-        })
+        raw_df = pd.DataFrame(
+            {
+                "policy_concept": ["Harm"],
+                "concept_definition": ["Harm def"],
+                "prompt": ["generated"],
+                "demographics_pool": [["Teens"]],
+            }
+        )
+        norm_df = pd.DataFrame(
+            {
+                "category": ["harm"],
+                "prompt": ["generated"],
+                "description": ["Harm def"],
+            }
+        )
 
         def _fake_generate_sdg(model, api_base, flow_id, api_key="dummy", taxonomy=None):
             return SDGResult(raw=raw_df, normalized=norm_df)
@@ -1743,8 +1814,10 @@ class TestPreparePromptsComponent:
         def _fake_create_s3_client():
             def _put_object(Bucket, Key, Body):
                 uploaded[Key] = Body.decode("utf-8") if isinstance(Body, bytes) else Body
+
             def _upload_file(filepath, bucket, key):
                 uploaded[key] = Path(filepath).read_text()
+
             return SimpleNamespace(put_object=_put_object, upload_file=_upload_file)
 
         monkeypatch.setattr(
@@ -1790,10 +1863,13 @@ class TestPreparePromptsComponent:
         def _fake_create_s3_client():
             def _get_object(Bucket, Key):
                 return {"Body": SimpleNamespace(read=lambda: user_csv.encode())}
+
             def _put_object(Bucket, Key, Body):
                 uploaded[Key] = Body.decode("utf-8") if isinstance(Body, bytes) else Body
+
             def _upload_file(filepath, bucket, key):
                 uploaded[key] = Path(filepath).read_text()
+
             return SimpleNamespace(
                 get_object=_get_object,
                 put_object=_put_object,
@@ -1975,9 +2051,11 @@ class TestArtifactMetadataSurfacing:
         }
 
         mock_s3 = MagicMock()
+
         def _head_object(Bucket, Key):
             if Key not in existing_keys:
                 raise Exception("Not found")
+
         mock_s3.head_object = MagicMock(side_effect=_head_object)
 
         mock_create = MagicMock(return_value=mock_s3)
@@ -2074,6 +2152,7 @@ class TestWriteKfpOutputsComponent:
         def _fake_create_s3_client():
             def _get_object(**kwargs):
                 return {"Body": SimpleNamespace(read=lambda: b"")}
+
             return SimpleNamespace(get_object=_get_object, upload_file=lambda *a: None)
 
         monkeypatch.setattr(
@@ -2112,6 +2191,7 @@ class TestWriteKfpOutputsComponent:
                 if Key.endswith(".report.html"):
                     return {"Body": SimpleNamespace(read=lambda: html_content.encode())}
                 raise Exception(f"unexpected key: {Key}")
+
             return SimpleNamespace(get_object=_get_object, upload_file=lambda *a: None)
 
         monkeypatch.setattr(
@@ -2178,8 +2258,10 @@ class TestWriteKfpOutputsComponent:
                 if Key.endswith(".report.jsonl"):
                     return {"Body": SimpleNamespace(read=lambda: report_content.encode())}
                 return {"Body": SimpleNamespace(read=lambda: b"")}
+
             def _upload_file(filepath, bucket, key):
                 uploaded_keys.append(key)
+
             return SimpleNamespace(get_object=_get_object, upload_file=_upload_file)
 
         monkeypatch.setattr(
@@ -2200,13 +2282,7 @@ class TestWriteKfpOutputsComponent:
         )
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.result_utils.combine_parsed_results",
-            lambda *args, **kwargs: {
-                "scores": {
-                    "_overall": {
-                        "aggregated_results": {"attack_success_rate": 25.0}
-                    }
-                }
-            },
+            lambda *args, **kwargs: {"scores": {"_overall": {"aggregated_results": {"attack_success_rate": 25.0}}}},
         )
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.result_utils.generate_art_report",
@@ -2241,6 +2317,7 @@ class TestWriteKfpOutputsComponent:
                 if Key.endswith(".report.jsonl"):
                     return {"Body": SimpleNamespace(read=lambda: report_content.encode())}
                 return {"Body": SimpleNamespace(read=lambda: b"")}
+
             return SimpleNamespace(get_object=_get_object, upload_file=lambda *a: None)
 
         monkeypatch.setattr(
@@ -2302,6 +2379,7 @@ class TestWriteKfpOutputsComponent:
                 if Key.endswith(".report.jsonl"):
                     return {"Body": SimpleNamespace(read=lambda: b'{"data": true}\n')}
                 return {"Body": SimpleNamespace(read=lambda: b"")}
+
             return SimpleNamespace(get_object=_get_object, upload_file=lambda *a: None)
 
         monkeypatch.setattr(

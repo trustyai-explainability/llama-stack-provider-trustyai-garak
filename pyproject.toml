@@ -48,7 +48,7 @@ inline = [
 ]
 # For intents, install:
 #   pip install -r requirements-inline-extra.txt
-dev = ["pytest", "pytest-cov",  "pytest-asyncio", "black", "isort"]
+dev = ["pytest", "pytest-cov", "pytest-asyncio", "ruff", "pre-commit"]
 server = ["llama-stack>=0.5.0"]
 
 [tool.pytest.ini_options]
@@ -56,3 +56,29 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 pythonpath = ["src"]
 addopts = "-v"
+
+[tool.coverage.run]
+source = ["llama_stack_provider_trustyai_garak"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 60
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E501",   # line too long — enforced by formatter instead
+    "W291",   # trailing whitespace — pre-existing, will clean up incrementally
+    "W293",   # blank line with whitespace — pre-existing
+    "F811",   # redefined-while-unused — some test fixtures
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/*" = ["F401", "F841"]
+"src/*/inline/garak_eval.py" = ["F841"]
+"src/*/remote/garak_remote_eval.py" = ["F841"]
