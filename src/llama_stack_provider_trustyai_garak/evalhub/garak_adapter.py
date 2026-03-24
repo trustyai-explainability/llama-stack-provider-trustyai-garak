@@ -1017,10 +1017,10 @@ class GarakAdapter(FrameworkAdapter):
 
         plugins.detectors = plugins.detectors or {}
         existing_judge = plugins.detectors.get("judge", {})
-        existing_judge.setdefault("detector_model_type", "openai.OpenAICompatible")
-        existing_judge.setdefault("detector_model_name", judge_name)
+        existing_judge["detector_model_type"] = existing_judge.get("detector_model_type") or "openai.OpenAICompatible"
+        existing_judge["detector_model_name"] = existing_judge.get("detector_model_name") or judge_name
         existing_det_cfg = existing_judge.get("detector_model_config", {})
-        existing_det_cfg.setdefault("uri", judge_url)
+        existing_det_cfg["uri"] = existing_det_cfg.get("uri") or judge_url
         existing_det_cfg["api_key"] = _PLACEHOLDER
         existing_judge["detector_model_config"] = existing_det_cfg
         plugins.detectors["judge"] = existing_judge
@@ -1028,18 +1028,18 @@ class GarakAdapter(FrameworkAdapter):
         if plugins.probes and plugins.probes.get("tap"):
             tap_cfg = plugins.probes["tap"].get("TAPIntent", {})
             if isinstance(tap_cfg, dict):
-                tap_cfg.setdefault("attack_model_name", attacker_name)
+                tap_cfg["attack_model_name"] = tap_cfg.get("attack_model_name") or attacker_name
                 existing_attack_cfg = tap_cfg.get("attack_model_config", {})
                 existing_attack_cfg.setdefault("max_tokens", 500)
-                existing_attack_cfg.setdefault("uri", attacker_url)
+                existing_attack_cfg["uri"] = existing_attack_cfg.get("uri") or attacker_url
                 existing_attack_cfg["api_key"] = _PLACEHOLDER
                 tap_cfg["attack_model_config"] = existing_attack_cfg
 
-                tap_cfg.setdefault("evaluator_model_name", evaluator_name)
+                tap_cfg["evaluator_model_name"] = tap_cfg.get("evaluator_model_name") or evaluator_name
                 existing_eval_cfg = tap_cfg.get("evaluator_model_config", {})
                 existing_eval_cfg.setdefault("max_tokens", 10)
                 existing_eval_cfg.setdefault("temperature", 0.0)
-                existing_eval_cfg.setdefault("uri", evaluator_url)
+                existing_eval_cfg["uri"] = existing_eval_cfg.get("uri") or evaluator_url
                 existing_eval_cfg["api_key"] = _PLACEHOLDER
                 tap_cfg["evaluator_model_config"] = existing_eval_cfg
 
