@@ -1017,36 +1017,30 @@ class GarakAdapter(FrameworkAdapter):
 
         plugins.detectors = plugins.detectors or {}
         existing_judge = plugins.detectors.get("judge", {})
-        existing_judge["detector_model_type"] = "openai.OpenAICompatible"
-        existing_judge["detector_model_name"] = judge_name
+        existing_judge.setdefault("detector_model_type", "openai.OpenAICompatible")
+        existing_judge.setdefault("detector_model_name", judge_name)
         existing_det_cfg = existing_judge.get("detector_model_config", {})
-        existing_det_cfg.update({
-            "uri": judge_url,
-            "api_key": _PLACEHOLDER,
-        })
+        existing_det_cfg.setdefault("uri", judge_url)
+        existing_det_cfg["api_key"] = _PLACEHOLDER
         existing_judge["detector_model_config"] = existing_det_cfg
         plugins.detectors["judge"] = existing_judge
 
         if plugins.probes and plugins.probes.get("tap"):
             tap_cfg = plugins.probes["tap"].get("TAPIntent", {})
             if isinstance(tap_cfg, dict):
-                tap_cfg["attack_model_name"] = attacker_name
+                tap_cfg.setdefault("attack_model_name", attacker_name)
                 existing_attack_cfg = tap_cfg.get("attack_model_config", {})
                 existing_attack_cfg.setdefault("max_tokens", 500)
-                existing_attack_cfg.update({
-                    "uri": attacker_url,
-                    "api_key": _PLACEHOLDER,
-                })
+                existing_attack_cfg.setdefault("uri", attacker_url)
+                existing_attack_cfg["api_key"] = _PLACEHOLDER
                 tap_cfg["attack_model_config"] = existing_attack_cfg
 
-                tap_cfg["evaluator_model_name"] = evaluator_name
+                tap_cfg.setdefault("evaluator_model_name", evaluator_name)
                 existing_eval_cfg = tap_cfg.get("evaluator_model_config", {})
                 existing_eval_cfg.setdefault("max_tokens", 10)
                 existing_eval_cfg.setdefault("temperature", 0.0)
-                existing_eval_cfg.update({
-                    "uri": evaluator_url,
-                    "api_key": _PLACEHOLDER,
-                })
+                existing_eval_cfg.setdefault("uri", evaluator_url)
+                existing_eval_cfg["api_key"] = _PLACEHOLDER
                 tap_cfg["evaluator_model_config"] = existing_eval_cfg
 
                 plugins.probes["tap"]["TAPIntent"] = tap_cfg
