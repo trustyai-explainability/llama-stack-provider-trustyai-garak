@@ -82,3 +82,23 @@ ignore = [
 "tests/*" = ["F401", "F841"]
 "src/*/inline/garak_eval.py" = ["F841"]
 "src/*/remote/garak_remote_eval.py" = ["F841"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_configs = true
+ignore_missing_imports = true
+check_untyped_defs = false
+disable_error_code = [
+    "union-attr",
+    "assignment",
+    "no-any-return",
+    "arg-type",
+    "attr-defined",
+    "valid-type",
+    "no-redef",
+    "call-arg",
+    "var-annotated",
+    "return-value",
+    "index",
+    "override",
+]

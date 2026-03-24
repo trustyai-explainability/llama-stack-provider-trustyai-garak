@@ -19,6 +19,27 @@ pip install -e ".[dev]"
 pre-commit install
 ```
 
+## Dependency Management
+
+Dependencies are declared in `pyproject.toml` with optional extras:
+
+| Extra | Install Command | What You Get |
+|-------|----------------|-------------|
+| (none) | `pip install -e .` | Core provider (Llama Stack remote mode) |
+| `[inline]` | `pip install -e ".[inline]"` | Core + garak for local scans |
+| `[dev]` | `pip install -e ".[dev]"` | Tests + ruff + pre-commit |
+| `[server]` | `pip install -e ".[server]"` | Llama Stack server |
+
+**Lockfile**: `requirements.txt` is a pinned lockfile generated from the
+[RH AI PyPI index](https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9-test/simple/)
+via `uv pip compile`. It's used by downstream production builds for hermetic
+dependency pre-fetching. Regenerate with `make lock`.
+
+**Container image**: The dev `Containerfile` installs from standard PyPI with
+garak from the midstream git branch. Production images use the AIPCC base image
+with the RH AI index. See `Containerfile` for the dev build and
+`Dockerfile.konflux` (downstream) for production.
+
 ## Development Workflow
 
 ### Running Tests

@@ -1,0 +1,31 @@
+# Sample garak config used in tests.
+# Mirrors the structure of GarakCommandConfig.
+system:
+  verbose: false
+  parallel_requests: 0
+  parallel_attempts: 1
+
+run:
+  seed: 42
+  eval_threshold: 0.5
+  generations: 5
+  deprefix: true
+  extended_detectors: false
+
+plugins:
+  model_type: openai.OpenAICompatible
+  model_name: target-llm
+
+  probe_spec:
+    - encoding.InjectBase64
+    - promptinject.HijackHateHumans
+
+  extended_detectors: false
+
+  probes: {}
+  detectors: {}
+  buffs: {}
+
+reporting:
+  taxonomy: owasp
+  report_prefix: scan

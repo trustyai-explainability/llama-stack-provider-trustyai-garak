@@ -1,4 +1,4 @@
-.PHONY: test coverage lint format build lock install install-dev
+.PHONY: test coverage lint format typecheck check build lock install install-dev
 
 test:
 	pytest tests -v
@@ -11,6 +11,11 @@ lint:
 
 format:
 	ruff format src/ tests/
+
+typecheck:
+	mypy src/
+
+check: lint typecheck test
 
 build:
 	docker build -f Containerfile -t trustyai-garak:dev .

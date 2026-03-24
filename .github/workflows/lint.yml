@@ -20,11 +20,14 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install ruff
-        run: pip install ruff
+      - name: Install tools
+        run: pip install ruff mypy
 
       - name: Ruff check
         run: ruff check src/ tests/
 
       - name: Ruff format check
         run: ruff format --check src/ tests/
+
+      - name: Mypy type check
+        run: mypy src/
