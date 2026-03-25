@@ -337,5 +337,7 @@ class TestProviderSpecsUseGarakVersion:
         # - "garak==0.12.0"
         # - "garak>=0.12.0"
         # - "garak~=0.12.0"
-        version_pattern = r"^garak(==|>=|<=|~=|!=)?\d*\.?\d*\.?\d*$"
+        # - "garak==0.14.1+rhaiv.5"  (PEP 440 local version)
+        # - "garak>0.14.1,<0.14.2"   (range specifier)
+        version_pattern = r"^garak([><=!~]=?[\d\.]+(\+[\w\.]+)?(,[><=!~]=?[\d\.]+(\+[\w\.]+)?)*)?$"
         assert re.match(version_pattern, garak_package), f"Invalid garak version format: {garak_package}"

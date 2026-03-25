@@ -1,4 +1,4 @@
-name: Run Tests
+name: Tier 1 - Unit Tests
 
 on:
   pull_request:
@@ -7,10 +7,10 @@ on:
     branches: [main]
 
 jobs:
-  test:
-    name: Run Tests
+  unit-tests:
+    name: Unit Tests
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -18,12 +18,18 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev,inline,server]"
+          python -m pip install --no-cache-dir -e ".[test]"
+
+      - name: Smoke-test imports
+        run: |
+          python -c "import numpy; print('numpy OK')"
+          python -c "import pandas; print('pandas OK')"
+          python -c "import llama_stack_provider_trustyai_garak; print('provider OK')"
 
       - name: Run tests
         env:

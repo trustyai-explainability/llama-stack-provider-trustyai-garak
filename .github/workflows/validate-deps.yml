@@ -1,0 +1,116 @@
+name: Validate Dependencies
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  sync-requirements:
+    name: Auto-sync requirements.txt
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Regenerate requirements.txt
+        run: |
+          uv pip compile \
+            --python-platform linux \
+            --extra inline \
+            --emit-index-url \
+            --default-index https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9-test/simple/ \
+            pyproject.toml \
+            --index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9-test/simple/ \
+            -o requirements.txt
+
+      - name: Commit if changed
+        run: |
+          git diff --quiet requirements.txt && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add requirements.txt
+          git commit -m "chore: auto-sync requirements.txt from pyproject.toml"
+          git push
+
+  check-garak-drift:
+    name: Check garak midstream version drift
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Compare pyproject.toml garak version with latest midstream tag
+        run: |
+          PYPROJECT_VER=$(grep -oP 'garak==\K[^\s"]+' pyproject.toml)
+          echo "pyproject.toml garak version: $PYPROJECT_VER"
+
+          LATEST_TAG=$(git ls-remote --tags \
+            https://github.com/trustyai-explainability/garak.git \
+            | grep 'refs/tags/v' \
+            | grep -v '\^{}' \
+            | sed 's|.*refs/tags/v||' \
+            | sort -V \
+            | tail -1)
+          echo "Latest midstream tag: $LATEST_TAG"
+
+          if [ "$PYPROJECT_VER" != "$LATEST_TAG" ]; then
+            echo "::error::Garak version drift detected!"
+            echo "  pyproject.toml pins: $PYPROJECT_VER"
+            echo "  Latest midstream:    $LATEST_TAG"
+            echo "Update pyproject.toml, regenerate requirements.txt, and commit."
+            exit 1
+          fi
+
+          echo "Garak version is up-to-date with midstream."
+
+  container-build:
+    name: Container Build + Import Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build container image
+        run: |
+          docker build -f Containerfile -t provider-smoke-test:ci .
+
+      - name: Verify full import chain
+        run: |
+          docker run --rm provider-smoke-test:ci bash -c "\
+            python -c \"import numpy; print('numpy OK')\" && \
+            python -c \"import pandas; print('pandas OK')\" && \
+            python -c \"import garak; print('garak OK')\" && \
+            python -c \"import sdg_hub; print('sdg-hub OK')\" && \
+            python -c \"import llama_stack_provider_trustyai_garak; print('provider OK')\""
+
+      - name: Verify garak version matches pyproject.toml
+        run: |
+          EXPECTED=$(grep -oP 'garak==\K[^\s"]+' pyproject.toml)
+          INSTALLED=$(docker run --rm provider-smoke-test:ci python -c "from importlib.metadata import version; print(version('garak'))")
+          echo "Expected: $EXPECTED"
+          echo "Installed: $INSTALLED"
+          if [ "$EXPECTED" != "$INSTALLED" ]; then
+            echo "::error::Garak version mismatch! Containerfile installs $INSTALLED but pyproject.toml expects $EXPECTED"
+            exit 1
+          fi
+          echo "Garak version in container matches pyproject.toml."

@@ -1,2 +1,0 @@
-garak @ git+https://github.com/trustyai-explainability/garak.git@automated-red-teaming
-sdg-hub>=0.8.8
