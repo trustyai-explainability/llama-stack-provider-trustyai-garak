@@ -968,8 +968,11 @@ class GarakAdapter(FrameworkAdapter):
 
         - **1 provided**: the configured role is used for all three.
         - **3 provided**: each role uses its own config.
-        - **0 provided**: raises ``ValueError`` — the target model cannot be
-          used as judge/attacker/evaluator.
+        - **0 provided, but models pre-configured in garak_config**: the
+          override is skipped and models from garak_config are used as-is.
+          SDG params are extracted from flat keys (``sdg_model``,
+          ``sdg_api_base``).
+        - **0 provided, no garak_config models**: raises ``ValueError``.
         - **2 provided**: raises ``ValueError`` — ambiguous which should fill
           the missing role.
 
@@ -1003,12 +1006,23 @@ class GarakAdapter(FrameworkAdapter):
         }
 
         if len(provided) == 0:
+            if garak_config.plugins and self._models_preconfigured_in_garak_config(garak_config.plugins):
+                logger.info(
+                    "No intents_models provided but models are already "
+                    "configured in garak_config — skipping intents_models "
+                    "override. API keys will be resolved by "
+                    "_resolve_config_api_keys in the KFP pod."
+                )
+                return self._extract_sdg_params(sdg_cfg, benchmark_config, profile)
+
             raise ValueError(
-                "Intents benchmark requires at least one of "
-                "intents_models.judge, intents_models.attacker, or "
-                "intents_models.evaluator with a 'url' and 'name'. "
-                "The target model (config.model) cannot be used as "
-                "judge/attacker/evaluator."
+                "Intents benchmark requires model configuration for "
+                "judge/attacker/evaluator roles. Either:\n"
+                "  1. Provide intents_models with at least one role "
+                "(url + name), or\n"
+                "  2. Configure models directly in garak_config "
+                "(plugins.detectors.judge with detector_model_name and "
+                "detector_model_config.uri)."
             )
         if len(provided) == 2:
             missing = {"judge", "attacker", "evaluator"} - set(provided)
@@ -1043,33 +1057,70 @@ class GarakAdapter(FrameworkAdapter):
         plugins = garak_config.plugins
 
         plugins.detectors = plugins.detectors or {}
-        plugins.detectors["judge"] = {
-            "detector_model_type": "openai.OpenAICompatible",
-            "detector_model_name": judge_name,
-            "detector_model_config": {
-                "uri": judge_url,
-                "api_key": _PLACEHOLDER,
-            },
-        }
+        existing_judge = plugins.detectors.get("judge", {})
+        existing_judge["detector_model_type"] = existing_judge.get("detector_model_type") or "openai.OpenAICompatible"
+        existing_judge["detector_model_name"] = existing_judge.get("detector_model_name") or judge_name
+        existing_det_cfg = existing_judge.get("detector_model_config", {})
+        existing_det_cfg["uri"] = existing_det_cfg.get("uri") or judge_url
+        existing_det_cfg["api_key"] = _PLACEHOLDER
+        existing_judge["detector_model_config"] = existing_det_cfg
+        plugins.detectors["judge"] = existing_judge
 
         if plugins.probes and plugins.probes.get("tap"):
             tap_cfg = plugins.probes["tap"].get("TAPIntent", {})
             if isinstance(tap_cfg, dict):
-                tap_cfg["attack_model_name"] = attacker_name
-                tap_cfg["attack_model_config"] = {
-                    "uri": attacker_url,
-                    "api_key": _PLACEHOLDER,
-                    "max_tokens": tap_cfg.get("attack_model_config", {}).get("max_tokens", 500),
-                }
-                tap_cfg["evaluator_model_name"] = evaluator_name
-                tap_cfg["evaluator_model_config"] = {
-                    "uri": evaluator_url,
-                    "api_key": _PLACEHOLDER,
-                    "max_tokens": tap_cfg.get("evaluator_model_config", {}).get("max_tokens", 10),
-                    "temperature": tap_cfg.get("evaluator_model_config", {}).get("temperature", 0.0),
-                }
+                tap_cfg["attack_model_name"] = tap_cfg.get("attack_model_name") or attacker_name
+                existing_attack_cfg = tap_cfg.get("attack_model_config", {})
+                existing_attack_cfg.setdefault("max_tokens", 500)
+                existing_attack_cfg["uri"] = existing_attack_cfg.get("uri") or attacker_url
+                existing_attack_cfg["api_key"] = _PLACEHOLDER
+                tap_cfg["attack_model_config"] = existing_attack_cfg
+
+                tap_cfg["evaluator_model_name"] = tap_cfg.get("evaluator_model_name") or evaluator_name
+                existing_eval_cfg = tap_cfg.get("evaluator_model_config", {})
+                existing_eval_cfg.setdefault("max_tokens", 10)
+                existing_eval_cfg.setdefault("temperature", 0.0)
+                existing_eval_cfg["uri"] = existing_eval_cfg.get("uri") or evaluator_url
+                existing_eval_cfg["api_key"] = _PLACEHOLDER
+                tap_cfg["evaluator_model_config"] = existing_eval_cfg
+
                 plugins.probes["tap"]["TAPIntent"] = tap_cfg
 
+        return self._extract_sdg_params(sdg_cfg, benchmark_config, profile)
+
+    @staticmethod
+    def _models_preconfigured_in_garak_config(plugins: Any) -> bool:
+        """Check if intents models are already configured in garak_config.
+
+        Returns True when the judge detector has a non-empty
+        ``detector_model_name`` and ``detector_model_config.uri``.
+        If TAPIntent is present in the probes, also requires non-empty
+        attack and evaluator model names and URIs.
+        """
+        detectors = plugins.detectors or {}
+        judge = detectors.get("judge", {})
+        if not judge.get("detector_model_name") or not judge.get("detector_model_config", {}).get("uri"):
+            return False
+
+        probes = plugins.probes or {}
+        tap_cfg = probes.get("tap", {}).get("TAPIntent")
+        if tap_cfg and isinstance(tap_cfg, dict):
+            for name_key, cfg_key in [
+                ("attack_model_name", "attack_model_config"),
+                ("evaluator_model_name", "evaluator_model_config"),
+            ]:
+                if not tap_cfg.get(name_key) or not tap_cfg.get(cfg_key, {}).get("uri"):
+                    return False
+
+        return True
+
+    @staticmethod
+    def _extract_sdg_params(
+        sdg_cfg: dict,
+        benchmark_config: dict,
+        profile: dict,
+    ) -> dict[str, str]:
+        """Extract SDG model params from intents_models.sdg or flat keys."""
         sdg_params: dict[str, str] = {
             "sdg_model": "",
             "sdg_api_base": "",
@@ -1083,7 +1134,6 @@ class GarakAdapter(FrameworkAdapter):
             if sdg_model and sdg_api_base:
                 sdg_params["sdg_model"] = sdg_model
                 sdg_params["sdg_api_base"] = sdg_api_base
-
         return sdg_params
 
     @staticmethod

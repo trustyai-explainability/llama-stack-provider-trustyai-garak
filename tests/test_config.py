@@ -10,6 +10,7 @@ from llama_stack_provider_trustyai_garak.config import (
     KubeflowConfig,
     GarakScanConfig,
 )
+from llama_stack_provider_trustyai_garak.core.config_resolution import deep_merge_dicts
 
 
 class TestGarakInlineConfig:
@@ -398,3 +399,112 @@ class TestGarakScanConfig:
 
         # (2) Validate taxonomy wiring
         assert garak_config["reporting"]["taxonomy"] == expected_taxonomy
+
+
+class TestDeepMergeDicts:
+    """Verify deep_merge_dicts honours leaf-level overrides without clobbering siblings."""
+
+    def test_override_single_leaf_preserves_siblings(self):
+        base = {
+            "plugins": {
+                "probes": {
+                    "tap": {
+                        "TAPIntent": {
+                            "depth": 10,
+                            "width": 10,
+                            "branching_factor": 4,
+                            "attack_model_config": {"uri": "", "max_tokens": 500},
+                        }
+                    }
+                }
+            }
+        }
+        override = {
+            "plugins": {
+                "probes": {
+                    "tap": {
+                        "TAPIntent": {
+                            "depth": 20,
+                        }
+                    }
+                }
+            }
+        }
+        result = deep_merge_dicts(base, override)
+        tap = result["plugins"]["probes"]["tap"]["TAPIntent"]
+        assert tap["depth"] == 20
+        assert tap["width"] == 10
+        assert tap["branching_factor"] == 4
+        assert tap["attack_model_config"]["max_tokens"] == 500
+
+    def test_override_nested_dict_leaf_preserves_sibling_keys(self):
+        base = {
+            "plugins": {
+                "detectors": {
+                    "judge": {
+                        "detector_model_config": {"uri": "http://old", "api_key": "k1", "max_tokens": 200},
+                        "MulticlassJudge": {
+                            "system_prompt": "Default prompt",
+                            "score_key": "complied",
+                            "confidence_cutoff": 70,
+                        }
+                    }
+                }
+            }
+        }
+        override = {
+            "plugins": {
+                "detectors": {
+                    "judge": {
+                        "MulticlassJudge": {
+                            "system_prompt": "New custom prompt",
+                        }
+                    }
+                }
+            }
+        }
+        result = deep_merge_dicts(base, override)
+        judge = result["plugins"]["detectors"]["judge"]
+        assert judge["detector_model_config"]["uri"] == "http://old"
+        assert judge["detector_model_config"]["max_tokens"] == 200
+        mcj = judge["MulticlassJudge"]
+        assert mcj["system_prompt"] == "New custom prompt"
+        assert mcj["score_key"] == "complied"
+        assert mcj["confidence_cutoff"] == 70
+
+    def test_override_does_not_mutate_base(self):
+        base = {"a": {"b": 1, "c": 2}}
+        override = {"a": {"b": 99}}
+        result = deep_merge_dicts(base, override)
+        assert result["a"]["b"] == 99
+        assert result["a"]["c"] == 2
+        assert base["a"]["b"] == 1, "Original base must not be mutated"
+
+    def test_adding_new_key_at_deep_level(self):
+        base = {"plugins": {"detectors": {"judge": {"detector_model_name": "m1"}}}}
+        override = {
+            "plugins": {
+                "detectors": {
+                    "judge": {
+                        "MulticlassJudge": {"system_prompt": "Added later"}
+                    }
+                }
+            }
+        }
+        result = deep_merge_dicts(base, override)
+        judge = result["plugins"]["detectors"]["judge"]
+        assert judge["detector_model_name"] == "m1"
+        assert judge["MulticlassJudge"]["system_prompt"] == "Added later"
+
+    def test_dict_override_merges_preserving_siblings(self):
+        base = {"run": {"generations": 5, "eval_threshold": 0.5}}
+        override = {"run": {"generations": 100}}
+        result = deep_merge_dicts(base, override)
+        assert result["run"]["generations"] == 100
+        assert result["run"]["eval_threshold"] == 0.5
+
+    def test_non_dict_override_replaces_entirely(self):
+        base = {"run": {"generations": 5, "eval_threshold": 0.5}}
+        override = {"run": "disabled"}
+        result = deep_merge_dicts(base, override)
+        assert result["run"] == "disabled"
