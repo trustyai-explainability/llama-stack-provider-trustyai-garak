@@ -18,11 +18,7 @@ def deep_merge_dicts(base: Mapping[str, Any], override: Mapping[str, Any]) -> di
     merged = deepcopy(dict(base))
 
     for key, value in dict(override).items():
-        if (
-            key in merged
-            and isinstance(merged[key], dict)
-            and isinstance(value, dict)
-        ):
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
             merged[key] = deep_merge_dicts(merged[key], value)
         else:
             merged[key] = deepcopy(value)
@@ -36,11 +32,7 @@ def resolve_scan_profile(
     """Resolve a benchmark id to a predefined scan/framework profile."""
     _cfg = GarakScanConfig()
     all_profiles = {**_cfg.FRAMEWORK_PROFILES, **_cfg.SCAN_PROFILES}
-    resolved = (
-        all_profiles.get(benchmark_id)
-        or all_profiles.get(f"trustyai_garak::{benchmark_id}")
-        or {}
-    )
+    resolved = all_profiles.get(benchmark_id) or all_profiles.get(f"trustyai_garak::{benchmark_id}") or {}
     if resolved and isinstance(resolved, GarakCommandConfig):
         resolved = resolved.to_dict(exclude_none=True)
     return deepcopy(resolved)
@@ -148,6 +140,7 @@ def resolve_timeout_seconds(
                 pass
 
     return default_timeout
+
 
 __all__ = [
     "build_effective_garak_config",

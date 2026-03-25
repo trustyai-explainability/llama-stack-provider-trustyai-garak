@@ -1,7 +1,7 @@
 """Shared S3 client factory for Data Connection credentials.
 
 All KFP components and the evalhub adapter need to create boto3 S3 clients
-from the same set of environment variables injected by a Data Connection secret.  
+from the same set of environment variables injected by a Data Connection secret.
 This module centralises that logic so it isn't
 duplicated across every call-site.
 """

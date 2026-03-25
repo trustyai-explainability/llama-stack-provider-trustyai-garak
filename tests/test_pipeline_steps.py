@@ -29,7 +29,6 @@ from llama_stack_provider_trustyai_garak.errors import (
 
 
 class TestResolveApiKey:
-
     def test_role_specific_key(self, monkeypatch):
         monkeypatch.setenv("SDG_API_KEY", "sdg-secret")
         monkeypatch.delenv("API_KEY", raising=False)
@@ -127,7 +126,6 @@ class TestResolveApiKey:
 
 
 class TestRedactApiKeys:
-
     def test_simple_redaction(self):
         config = {"api_key": "real-secret", "uri": "http://model"}
         result = redact_api_keys(config)
@@ -159,7 +157,6 @@ class TestRedactApiKeys:
 
 
 class TestResolveConfigApiKeys:
-
     def test_placeholders_resolved(self, monkeypatch):
         from llama_stack_provider_trustyai_garak.core.pipeline_steps import _resolve_config_api_keys
 
@@ -256,28 +253,40 @@ class TestResolveConfigApiKeys:
 
         config = {
             "plugins": {
-                "generators": {"openai": {"OpenAICompatible": {
-                    "uri": "https://example.com/v1",
-                    "model": "test-model",
-                    "api_key": "***",
-                }}},
-                "detectors": {"judge": {"detector_model_config": {
-                    "uri": "https://example.com/v1",
-                    "api_key": "***",
-                }}},
-                "probes": {"tap": {"TAPIntent": {
-                    "attack_model_config": {
-                        "uri": "https://example.com/v1",
-                        "api_key": "***",
-                        "max_tokens": 500,
-                    },
-                    "evaluator_model_config": {
-                        "uri": "https://example.com/v1",
-                        "api_key": "***",
-                        "max_tokens": 10,
-                        "temperature": 0,
-                    },
-                }}},
+                "generators": {
+                    "openai": {
+                        "OpenAICompatible": {
+                            "uri": "https://example.com/v1",
+                            "model": "test-model",
+                            "api_key": "***",
+                        }
+                    }
+                },
+                "detectors": {
+                    "judge": {
+                        "detector_model_config": {
+                            "uri": "https://example.com/v1",
+                            "api_key": "***",
+                        }
+                    }
+                },
+                "probes": {
+                    "tap": {
+                        "TAPIntent": {
+                            "attack_model_config": {
+                                "uri": "https://example.com/v1",
+                                "api_key": "***",
+                                "max_tokens": 500,
+                            },
+                            "evaluator_model_config": {
+                                "uri": "https://example.com/v1",
+                                "api_key": "***",
+                                "max_tokens": 10,
+                                "temperature": 0,
+                            },
+                        }
+                    }
+                },
             }
         }
         _resolve_config_api_keys(config)
@@ -288,7 +297,6 @@ class TestResolveConfigApiKeys:
 
 
 class TestValidateScanConfig:
-
     def test_valid_config(self):
         config = json.dumps({"plugins": {"probes": []}})
         validate_scan_config(config)
@@ -317,7 +325,6 @@ class TestValidateScanConfig:
 
 
 class TestResolveTaxonomyData:
-
     def test_default_taxonomy(self):
         df = resolve_taxonomy_data(None)
         assert isinstance(df, pd.DataFrame)
@@ -337,7 +344,6 @@ class TestResolveTaxonomyData:
 
 
 class TestRunSdgGeneration:
-
     def test_missing_model_raises(self):
         df = pd.DataFrame({"policy_concept": ["test"], "concept_definition": ["test"]})
         with pytest.raises(GarakValidationError, match="sdg_model is required"):
@@ -358,9 +364,7 @@ class TestRunSdgGeneration:
         mock_gen.return_value = SDGResult(raw=raw_df, normalized=norm_df)
 
         taxonomy = pd.DataFrame({"policy_concept": ["test"], "concept_definition": ["test"]})
-        result = run_sdg_generation(
-            taxonomy, sdg_model="m", sdg_api_base="http://api"
-        )
+        result = run_sdg_generation(taxonomy, sdg_model="m", sdg_api_base="http://api")
         assert len(result) == 1
         mock_gen.assert_called_once()
 
@@ -375,16 +379,13 @@ class TestRunSdgGeneration:
         mock_gen.return_value = SDGResult(raw=raw_df, normalized=norm_df)
 
         taxonomy = pd.DataFrame({"policy_concept": ["test"], "concept_definition": ["test"]})
-        result = run_sdg_generation(
-            taxonomy, sdg_model="m", sdg_api_base="http://api"
-        )
+        result = run_sdg_generation(taxonomy, sdg_model="m", sdg_api_base="http://api")
         assert len(result) == 1
         call_kwargs = mock_gen.call_args
         assert call_kwargs.kwargs.get("api_key") == "env-sdg-key" or call_kwargs[1].get("api_key") == "env-sdg-key"
 
 
 class TestNormalizePrompts:
-
     def test_normalize_csv(self):
         csv_content = "category,prompt,description\nHarm,Do bad,A bad thing\n"
         df = normalize_prompts(csv_content, format="csv")
@@ -394,16 +395,13 @@ class TestNormalizePrompts:
 
 
 class TestSetupAndRunGarak:
-
     @patch("llama_stack_provider_trustyai_garak.core.garak_runner.convert_to_avid_report")
     @patch("llama_stack_provider_trustyai_garak.core.garak_runner.run_garak_scan")
     def test_success_flow(self, mock_scan, mock_avid):
         from llama_stack_provider_trustyai_garak.core.garak_runner import GarakScanResult
 
         scan_dir = Path(tempfile.mkdtemp())
-        mock_result = GarakScanResult(
-            returncode=0, stdout="ok", stderr="", report_prefix=scan_dir / "scan"
-        )
+        mock_result = GarakScanResult(returncode=0, stdout="ok", stderr="", report_prefix=scan_dir / "scan")
         mock_scan.return_value = mock_result
         mock_avid.return_value = True
 
@@ -418,7 +416,9 @@ class TestSetupAndRunGarak:
 
         scan_dir = Path(tempfile.mkdtemp())
         mock_result = GarakScanResult(
-            returncode=1, stdout="", stderr="error occurred",
+            returncode=1,
+            stdout="",
+            stderr="error occurred",
             report_prefix=scan_dir / "scan",
         )
         mock_scan.return_value = mock_result
@@ -434,28 +434,21 @@ class TestSetupAndRunGarak:
 
         scan_dir = Path(tempfile.mkdtemp())
         prompts_path = scan_dir / "prompts.csv"
-        pd.DataFrame({"category": ["harm"], "prompt": ["bad"], "description": ["d"]}).to_csv(
-            prompts_path, index=False
-        )
+        pd.DataFrame({"category": ["harm"], "prompt": ["bad"], "description": ["d"]}).to_csv(prompts_path, index=False)
 
-        mock_result = GarakScanResult(
-            returncode=0, stdout="ok", stderr="", report_prefix=scan_dir / "scan"
-        )
+        mock_result = GarakScanResult(returncode=0, stdout="ok", stderr="", report_prefix=scan_dir / "scan")
         mock_scan.return_value = mock_result
         mock_avid.return_value = True
 
         config = json.dumps({"plugins": {"probes": []}, "reporting": {}})
 
-        with patch(
-            "llama_stack_provider_trustyai_garak.intents.generate_intents_from_dataset"
-        ) as mock_gen_intents:
+        with patch("llama_stack_provider_trustyai_garak.intents.generate_intents_from_dataset") as mock_gen_intents:
             result = setup_and_run_garak(config, prompts_path, scan_dir, 300)
             mock_gen_intents.assert_called_once()
             assert result.success
 
 
 class TestParseAndBuildResults:
-
     @patch("llama_stack_provider_trustyai_garak.result_utils.combine_parsed_results")
     @patch("llama_stack_provider_trustyai_garak.result_utils.parse_digest_from_report_content")
     @patch("llama_stack_provider_trustyai_garak.result_utils.parse_aggregated_from_avid_content")
@@ -466,15 +459,12 @@ class TestParseAndBuildResults:
         mock_parse_dig.return_value = {}
         mock_combine.return_value = {"scores": {}, "generations": []}
 
-        result = parse_and_build_results(
-            "report", "avid", art_intents=False, eval_threshold=0.5
-        )
+        result = parse_and_build_results("report", "avid", art_intents=False, eval_threshold=0.5)
         mock_combine.assert_called_once()
         assert "scores" in result
 
 
 class TestLogKfpMetrics:
-
     def test_intents_mode(self):
         mock_metrics = MagicMock()
         result_dict = {
@@ -542,9 +532,7 @@ class TestBaseEvalIntentsValidation:
 
             deps = {Api.files: Mock(), Api.benchmarks: Mock()}
 
-            with patch(
-                "llama_stack_provider_trustyai_garak.base_eval.GarakEvalBase._ensure_garak_installed"
-            ):
+            with patch("llama_stack_provider_trustyai_garak.base_eval.GarakEvalBase._ensure_garak_installed"):
                 with patch(
                     "llama_stack_provider_trustyai_garak.base_eval.GarakEvalBase._get_all_probes",
                     return_value=set(),
@@ -564,6 +552,7 @@ class TestBaseEvalIntentsValidation:
 
     def _make_benchmark(self, metadata):
         from llama_stack_provider_trustyai_garak.compat import Benchmark
+
         return Benchmark(
             identifier="test",
             provider_id="trustyai_garak",
@@ -575,13 +564,15 @@ class TestBaseEvalIntentsValidation:
     @pytest.mark.asyncio
     async def test_mutual_exclusivity_raises(self, _make_adapter):
         adapter = _make_adapter()
-        benchmark = self._make_benchmark({
-            "art_intents": True,
-            "policy_file_id": "some-policy",
-            "intents_file_id": "some-intents",
-            "sdg_model": "m",
-            "garak_config": {"run": {}, "plugins": {"detectors": {"judge": {}}}},
-        })
+        benchmark = self._make_benchmark(
+            {
+                "art_intents": True,
+                "policy_file_id": "some-policy",
+                "intents_file_id": "some-intents",
+                "sdg_model": "m",
+                "garak_config": {"run": {}, "plugins": {"detectors": {"judge": {}}}},
+            }
+        )
         with pytest.raises(GarakValidationError, match="mutually exclusive"):
             await adapter.register_benchmark(benchmark)
 
@@ -589,10 +580,12 @@ class TestBaseEvalIntentsValidation:
     async def test_sdg_model_not_required_at_registration(self, _make_adapter):
         """sdg_model is validated at run-eval time, not registration time."""
         adapter = _make_adapter()
-        benchmark = self._make_benchmark({
-            "art_intents": True,
-            "garak_config": {"run": {}, "plugins": {"detectors": {"judge": {}}}},
-        })
+        benchmark = self._make_benchmark(
+            {
+                "art_intents": True,
+                "garak_config": {"run": {}, "plugins": {"detectors": {"judge": {}}}},
+            }
+        )
         # Should NOT raise at registration — sdg_model is provided at run_eval time
         await adapter.register_benchmark(benchmark)
         assert "test" in adapter.benchmarks
@@ -600,10 +593,12 @@ class TestBaseEvalIntentsValidation:
     @pytest.mark.asyncio
     async def test_bypass_skips_sdg_model_check(self, _make_adapter):
         adapter = _make_adapter()
-        benchmark = self._make_benchmark({
-            "art_intents": True,
-            "intents_file_id": "some-intents",
-            "garak_config": {"run": {}, "plugins": {"detectors": {"judge": {}}}},
-        })
+        benchmark = self._make_benchmark(
+            {
+                "art_intents": True,
+                "intents_file_id": "some-intents",
+                "garak_config": {"run": {}, "plugins": {"detectors": {"judge": {}}}},
+            }
+        )
         await adapter.register_benchmark(benchmark)
         assert "test" in adapter.benchmarks

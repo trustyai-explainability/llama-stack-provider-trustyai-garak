@@ -9,15 +9,15 @@ Steps: validate -> resolve_taxonomy -> sdg_generate -> prepare_prompts
 """
 
 from kfp import dsl
-from typing import NamedTuple, List, Dict
+from typing import NamedTuple, Dict
 import os
 from .utils import _load_kube_config
 from ...constants import (
     GARAK_PROVIDER_IMAGE_CONFIGMAP_NAME,
     GARAK_PROVIDER_IMAGE_CONFIGMAP_KEY,
     KUBEFLOW_CANDIDATE_NAMESPACES,
-    DEFAULT_GARAK_PROVIDER_IMAGE
-    )
+    DEFAULT_GARAK_PROVIDER_IMAGE,
+)
 from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 import logging
@@ -74,6 +74,7 @@ def get_base_image() -> str:
 # Helper: parse verify_ssl string from pipeline param
 # ---------------------------------------------------------------------------
 
+
 def _parse_verify_ssl(verify_ssl: str):
     """Convert pipeline string param to bool or cert path."""
     if verify_ssl.lower() in ("true", "1", "yes", "on"):
@@ -87,10 +88,11 @@ def _parse_verify_ssl(verify_ssl: str):
 # Component 1: Validation
 # ---------------------------------------------------------------------------
 
+
 @dsl.component(
     base_image=get_base_image(),
     install_kfp_package=False,  # All dependencies pre-installed in base image
-    packages_to_install=[]  # No additional packages needed
+    packages_to_install=[],  # No additional packages needed
 )
 def validate(
     command: str,
@@ -132,9 +134,7 @@ def validate(
         ls_client.files.list(limit=1)
         log.info("Llama Stack Files API is reachable")
     except Exception as exc:
-        raise GarakValidationError(
-            f"Cannot connect to Llama Stack at {llama_stack_url}: {exc}"
-        ) from exc
+        raise GarakValidationError(f"Cannot connect to Llama Stack at {llama_stack_url}: {exc}") from exc
     finally:
         try:
             ls_client.close()
@@ -149,6 +149,7 @@ def validate(
 # ---------------------------------------------------------------------------
 # Component 2: Resolve taxonomy
 # ---------------------------------------------------------------------------
+
 
 @dsl.component(
     base_image=get_base_image(),
@@ -215,6 +216,7 @@ def resolve_taxonomy(
 # Component 3: SDG generation
 # ---------------------------------------------------------------------------
 
+
 @dsl.component(
     base_image=get_base_image(),
     install_kfp_package=False,
@@ -275,6 +277,7 @@ def sdg_generate(
 # ---------------------------------------------------------------------------
 # Component 4: Prepare prompts (normalise + persist artifacts)
 # ---------------------------------------------------------------------------
+
 
 @dsl.component(
     base_image=get_base_image(),
@@ -376,6 +379,7 @@ def prepare_prompts(
 # Component 5: Garak scan
 # ---------------------------------------------------------------------------
 
+
 @dsl.component(
     base_image=get_base_image(),
     install_kfp_package=False,
@@ -388,11 +392,14 @@ def garak_scan(
     timeout_seconds: int,
     verify_ssl: str,
     prompts_dataset: dsl.Input[dsl.Dataset],
-) -> NamedTuple("Outputs", [
-    ("exit_code", int),
-    ("success", bool),
-    ("file_id_mapping", Dict[str, str]),
-]):
+) -> NamedTuple(
+    "Outputs",
+    [
+        ("exit_code", int),
+        ("success", bool),
+        ("file_id_mapping", Dict[str, str]),
+    ],
+):
     """Run Garak scan via core runner and upload outputs to Files API."""
     import json
     import logging
@@ -487,10 +494,11 @@ def garak_scan(
 # Component 6: Parse results
 # ---------------------------------------------------------------------------
 
+
 @dsl.component(
     base_image=get_base_image(),
     install_kfp_package=False,  # All dependencies pre-installed in base image
-    packages_to_install=[]  # No additional packages needed
+    packages_to_install=[],  # No additional packages needed
 )
 def parse_results(
     file_id_mapping: Dict[str, str],
@@ -505,7 +513,6 @@ def parse_results(
     """Parse scan results, build EvaluateResponse, log KFP metrics, upload artifacts."""
     import json
     import logging
-    from pathlib import Path
 
     logging.basicConfig(
         level=logging.INFO,

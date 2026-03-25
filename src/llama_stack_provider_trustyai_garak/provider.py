@@ -7,6 +7,7 @@ def _has_inline_dependencies() -> bool:
     """Check if inline dependencies are available."""
     try:
         import garak  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -31,6 +32,7 @@ def get_provider_spec():
     # Remote provider loads by default
     if _has_remote_dependencies():
         from .remote.provider import get_provider_spec as get_remote_provider_spec
+
         providers.append(get_remote_provider_spec())
     else:
         logger.info(
@@ -42,13 +44,14 @@ def get_provider_spec():
     # Inline provider is optional (for local development/testing)
     if _has_inline_dependencies():
         from .inline.provider import get_provider_spec as get_inline_provider_spec
+
         providers.append(get_inline_provider_spec())
     else:
         logger.info(
             "Inline provider dependencies not found, skipping inline provider. "
             "Enable inline evaluation with 'pip install llama-stack-provider-trustyai-garak[inline]'."
         )
-    
+
     if not providers:
         logger.error(
             "No provider dependencies found. This is likely a broken installation. "
@@ -59,4 +62,3 @@ def get_provider_spec():
 
 
 __all__ = ["get_provider_spec"]
-

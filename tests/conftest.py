@@ -55,18 +55,15 @@ def mock_shields_api():
 def mock_deps(mock_file_api, mock_benchmarks_api):
     """Standard mock dependencies"""
     from llama_stack_provider_trustyai_garak.compat import Api
-    
-    return {
-        Api.files: mock_file_api,
-        Api.benchmarks: mock_benchmarks_api
-    }
+
+    return {Api.files: mock_file_api, Api.benchmarks: mock_benchmarks_api}
 
 
 @pytest.fixture
 def mock_deps_with_safety(mock_deps, mock_safety_api, mock_shields_api):
     """Mock dependencies including safety and shields"""
     from llama_stack_provider_trustyai_garak.compat import Api
-    
+
     mock_deps[Api.safety] = mock_safety_api
     mock_deps[Api.shields] = mock_shields_api
     return mock_deps

@@ -223,15 +223,13 @@ def validate_scan_config(config_json: str) -> None:
             errors.append(f"Dangerous flag detected: {flag}")
 
     if errors:
-        raise GarakValidationError(
-            "Pre-flight validation failed:\n"
-            + "\n".join(f"  - {e}" for e in errors)
-        )
+        raise GarakValidationError("Pre-flight validation failed:\n" + "\n".join(f"  - {e}" for e in errors))
 
 
 # ---------------------------------------------------------------------------
 # Step 2: Taxonomy resolution
 # ---------------------------------------------------------------------------
+
 
 def resolve_taxonomy_data(
     content: bytes | None,
@@ -265,6 +263,7 @@ def resolve_taxonomy_data(
 # Step 3: SDG generation
 # ---------------------------------------------------------------------------
 
+
 def run_sdg_generation(
     taxonomy_df: pd.DataFrame,
     sdg_model: str,
@@ -280,13 +279,9 @@ def run_sdg_generation(
     from ..sdg import generate_sdg_dataset
 
     if not sdg_model or not sdg_model.strip():
-        raise GarakValidationError(
-            "sdg_model is required for intents scans when SDG must run."
-        )
+        raise GarakValidationError("sdg_model is required for intents scans when SDG must run.")
     if not sdg_api_base or not sdg_api_base.strip():
-        raise GarakValidationError(
-            "sdg_api_base is required for intents scans when SDG must run."
-        )
+        raise GarakValidationError("sdg_api_base is required for intents scans when SDG must run.")
 
     effective_key = resolve_api_key("sdg")
 
@@ -317,6 +312,7 @@ def run_sdg_generation(
 # Step 4: Prompt normalisation
 # ---------------------------------------------------------------------------
 
+
 def normalize_prompts(
     raw_content: str,
     format: str = "csv",
@@ -336,6 +332,7 @@ def normalize_prompts(
 # ---------------------------------------------------------------------------
 # Step 5: Garak scan execution
 # ---------------------------------------------------------------------------
+
 
 def setup_and_run_garak(
     config_json: str,
@@ -420,6 +417,7 @@ def setup_and_run_garak(
 # Step 6: Result parsing & metrics
 # ---------------------------------------------------------------------------
 
+
 def parse_and_build_results(
     report_content: str,
     avid_content: str | None,
@@ -434,14 +432,10 @@ def parse_and_build_results(
     """
     from .. import result_utils
 
-    generations, score_rows_by_probe, parsed_raw = (
-        result_utils.parse_generations_from_report_content(
-            report_content, eval_threshold
-        )
+    generations, score_rows_by_probe, parsed_raw = result_utils.parse_generations_from_report_content(
+        report_content, eval_threshold
     )
-    aggregated_by_probe = result_utils.parse_aggregated_from_avid_content(
-        avid_content or ""
-    )
+    aggregated_by_probe = result_utils.parse_aggregated_from_avid_content(avid_content or "")
     digest = result_utils.parse_digest_from_report_content(report_content)
 
     effective_raw = raw_entries_by_probe if raw_entries_by_probe is not None else parsed_raw
@@ -466,11 +460,7 @@ def log_kfp_metrics(
 
     Works with ``dsl.Output[dsl.Metrics]`` — call ``metrics_output.log_metric``.
     """
-    overall = (
-        result_dict.get("scores", {})
-        .get("_overall", {})
-        .get("aggregated_results", {})
-    )
+    overall = result_dict.get("scores", {}).get("_overall", {}).get("aggregated_results", {})
 
     if art_intents:
         metrics_output.log_metric(

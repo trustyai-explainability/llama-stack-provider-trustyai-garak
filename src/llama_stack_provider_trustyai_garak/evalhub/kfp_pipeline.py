@@ -89,15 +89,13 @@ class KFPConfig:
         endpoint = _resolve("endpoint", "KFP_ENDPOINT")
         if not endpoint:
             raise ValueError(
-                "KFP endpoint is required. Set KFP_ENDPOINT or "
-                "provide kfp_config.endpoint in benchmark_config."
+                "KFP endpoint is required. Set KFP_ENDPOINT or provide kfp_config.endpoint in benchmark_config."
             )
 
         namespace = _resolve("namespace", "KFP_NAMESPACE")
         if not namespace:
             raise ValueError(
-                "KFP namespace is required. Set KFP_NAMESPACE or "
-                "provide kfp_config.namespace in benchmark_config."
+                "KFP namespace is required. Set KFP_NAMESPACE or provide kfp_config.namespace in benchmark_config."
             )
 
         verify_ssl_raw = _resolve("verify_ssl", "KFP_VERIFY_SSL", "true")
@@ -111,13 +109,17 @@ class KFPConfig:
             s3_bucket=_resolve("s3_bucket", "AWS_S3_BUCKET"),
             s3_endpoint=_resolve("s3_endpoint", "AWS_S3_ENDPOINT"),
             experiment_name=_resolve(
-                "experiment_name", "KFP_EXPERIMENT", DEFAULT_KFP_EXPERIMENT,
+                "experiment_name",
+                "KFP_EXPERIMENT",
+                DEFAULT_KFP_EXPERIMENT,
             ),
             poll_interval_seconds=int(
                 _resolve("poll_interval_seconds", "KFP_POLL_INTERVAL", str(DEFAULT_POLL_INTERVAL))
             ),
             s3_prefix=_resolve(
-                "s3_prefix", "KFP_S3_PREFIX", DEFAULT_S3_PREFIX,
+                "s3_prefix",
+                "KFP_S3_PREFIX",
+                DEFAULT_S3_PREFIX,
             ),
             base_image=_resolve("base_image", "KUBEFLOW_GARAK_BASE_IMAGE"),
             verify_ssl=verify_ssl,
@@ -134,12 +136,14 @@ def _resolve_base_image(kfp_config: KFPConfig | None = None) -> str:
         return kfp_config.base_image
 
     from ..remote.kfp_utils.components import get_base_image
+
     return get_base_image()
 
 
 # ---------------------------------------------------------------------------
 # KFP Components
 # ---------------------------------------------------------------------------
+
 
 @dsl.component(
     install_kfp_package=False,
@@ -177,9 +181,7 @@ def validate(
         s3.head_bucket(Bucket=s3_bucket)
         log.info("S3 bucket '%s' is reachable", s3_bucket)
     except Exception as exc:
-        raise GarakValidationError(
-            f"S3 bucket '{s3_bucket}' is not reachable: {exc}"
-        ) from exc
+        raise GarakValidationError(f"S3 bucket '{s3_bucket}' is not reachable: {exc}") from exc
 
     log.info("All pre-flight checks passed")
     Outputs = namedtuple("Outputs", ["valid"])
@@ -191,11 +193,7 @@ def validate(
     packages_to_install=[],
     base_image=_resolve_base_image(),
 )
-def resolve_taxonomy(
-    taxonomy_dataset: dsl.Output[dsl.Dataset],
-    policy_s3_key: str = "",
-    policy_format: str = "csv"
-):
+def resolve_taxonomy(taxonomy_dataset: dsl.Output[dsl.Dataset], policy_s3_key: str = "", policy_format: str = "csv"):
     """Resolve taxonomy: custom from S3 or built-in BASE_TAXONOMY."""
     import logging
     import os
@@ -214,14 +212,11 @@ def resolve_taxonomy(
         from llama_stack_provider_trustyai_garak.evalhub.s3_utils import create_s3_client
 
         if policy_s3_key.startswith("s3://"):
-            parts = policy_s3_key[len("s3://"):].split("/", 1)
+            parts = policy_s3_key[len("s3://") :].split("/", 1)
             s3_bucket = parts[0]
             s3_key = parts[1] if len(parts) > 1 else ""
             if not s3_key:
-                raise GarakValidationError(
-                    f"Invalid policy_s3_key '{policy_s3_key}': "
-                    "expected s3://bucket/key format"
-                )
+                raise GarakValidationError(f"Invalid policy_s3_key '{policy_s3_key}': expected s3://bucket/key format")
         else:
             s3_bucket = os.environ.get("AWS_S3_BUCKET", "")
             s3_key = policy_s3_key
@@ -235,7 +230,9 @@ def resolve_taxonomy(
 
         log.info(
             "Fetching policy taxonomy from S3 (bucket=%s, key=%s, format=%s)",
-            s3_bucket, s3_key, policy_format,
+            s3_bucket,
+            s3_key,
+            policy_format,
         )
         s3 = create_s3_client()
         response = s3.get_object(Bucket=s3_bucket, Key=s3_key)
@@ -366,15 +363,9 @@ def prepare_prompts(
 
     s3_bucket = os.environ.get("AWS_S3_BUCKET", "")
     if not s3_bucket:
-        raise GarakValidationError(
-            "AWS_S3_BUCKET is required. "
-            "Ensure the Data Connection secret is configured."
-        )
+        raise GarakValidationError("AWS_S3_BUCKET is required. Ensure the Data Connection secret is configured.")
     if not s3_prefix:
-        raise GarakValidationError(
-            "s3_prefix is required. "
-            "Ensure the s3_prefix is configured in the benchmark_config."
-        )
+        raise GarakValidationError("s3_prefix is required. Ensure the s3_prefix is configured in the benchmark_config.")
 
     s3 = create_s3_client()
 
@@ -383,13 +374,12 @@ def prepare_prompts(
     # Bypass SDG: fetch user's pre-generated dataset from S3
     if intents_s3_key and intents_s3_key.strip():
         if intents_s3_key.startswith("s3://"):
-            parts = intents_s3_key[len("s3://"):].split("/", 1)
+            parts = intents_s3_key[len("s3://") :].split("/", 1)
             fetch_bucket = parts[0]
             fetch_key = parts[1] if len(parts) > 1 else ""
             if not fetch_key:
                 raise GarakValidationError(
-                    f"Invalid intents_s3_key '{intents_s3_key}': "
-                    "expected s3://bucket/key format"
+                    f"Invalid intents_s3_key '{intents_s3_key}': expected s3://bucket/key format"
                 )
         else:
             fetch_bucket = s3_bucket
@@ -397,7 +387,9 @@ def prepare_prompts(
 
         log.info(
             "Bypass mode — fetching from S3 (bucket=%s, key=%s, format=%s)",
-            fetch_bucket, fetch_key, intents_format,
+            fetch_bucket,
+            fetch_key,
+            intents_format,
         )
         response = s3.get_object(Bucket=fetch_bucket, Key=fetch_key)
         raw_content = response["Body"].read().decode("utf-8")
@@ -505,9 +497,7 @@ def garak_scan(
         except Exception as e:
             raise GarakError(f"Failed to upload results to S3: {e}") from e
     else:
-        raise GarakError(
-            f"S3 not configured (bucket={s3_bucket}, prefix={s3_prefix}); results not uploaded"
-        )
+        raise GarakError(f"S3 not configured (bucket={s3_bucket}, prefix={s3_prefix}); results not uploaded")
 
     Outputs = namedtuple("Outputs", ["success", "return_code"])
     return Outputs(success=result.success, return_code=result.returncode)
@@ -597,7 +587,8 @@ def write_kfp_outputs(
             if art_intents and s3_prefix:
                 try:
                     s3.upload_file(
-                        html_report.path, s3_bucket,
+                        html_report.path,
+                        s3_bucket,
                         f"{s3_prefix}/scan.intents.html",
                     )
                     log.info("Uploaded intents HTML to S3")
@@ -616,6 +607,7 @@ def write_kfp_outputs(
 # ---------------------------------------------------------------------------
 # KFP Pipeline
 # ---------------------------------------------------------------------------
+
 
 @dsl.pipeline(name="evalhub-garak-scan")
 def evalhub_garak_pipeline(

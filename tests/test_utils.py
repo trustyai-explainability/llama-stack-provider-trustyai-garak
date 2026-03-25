@@ -13,7 +13,7 @@ class TestXDGFunctions:
     def test_ensure_xdg_vars_sets_defaults(self, monkeypatch):
         """Test that _ensure_xdg_vars sets default XDG variables when missing"""
         # Clear existing XDG variables
-        for var in ['XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME']:
+        for var in ["XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME"]:
             monkeypatch.delenv(var, raising=False)
 
         from llama_stack_provider_trustyai_garak.utils import _ensure_xdg_vars
@@ -22,9 +22,9 @@ class TestXDGFunctions:
         _ensure_xdg_vars()
 
         # Check that XDG variables are set to /tmp defaults
-        assert os.environ.get('XDG_CACHE_HOME') == '/tmp/.cache'
-        assert os.environ.get('XDG_DATA_HOME') == '/tmp/.local/share'
-        assert os.environ.get('XDG_CONFIG_HOME') == '/tmp/.config'
+        assert os.environ.get("XDG_CACHE_HOME") == "/tmp/.cache"
+        assert os.environ.get("XDG_DATA_HOME") == "/tmp/.local/share"
+        assert os.environ.get("XDG_CONFIG_HOME") == "/tmp/.config"
 
     def test_ensure_xdg_vars_preserves_existing(self, monkeypatch, tmp_path):
         """Test that _ensure_xdg_vars preserves existing XDG variables"""
@@ -32,37 +32,38 @@ class TestXDGFunctions:
         custom_cache = tmp_path / "my_cache"
         custom_cache.mkdir(parents=True, exist_ok=True)
 
-        monkeypatch.setenv('XDG_CACHE_HOME', str(custom_cache))
-        monkeypatch.setenv('XDG_DATA_HOME', '/custom/data')
-        monkeypatch.setenv('XDG_CONFIG_HOME', '/custom/config')
+        monkeypatch.setenv("XDG_CACHE_HOME", str(custom_cache))
+        monkeypatch.setenv("XDG_DATA_HOME", "/custom/data")
+        monkeypatch.setenv("XDG_CONFIG_HOME", "/custom/config")
 
         # Reload utils
         from importlib import reload
         from llama_stack_provider_trustyai_garak import utils
+
         reload(utils)
 
         # Should preserve existing values
-        assert os.environ.get('XDG_CACHE_HOME') == str(custom_cache)
-        assert os.environ.get('XDG_DATA_HOME') == '/custom/data'
-        assert os.environ.get('XDG_CONFIG_HOME') == '/custom/config'
+        assert os.environ.get("XDG_CACHE_HOME") == str(custom_cache)
+        assert os.environ.get("XDG_DATA_HOME") == "/custom/data"
+        assert os.environ.get("XDG_CONFIG_HOME") == "/custom/config"
 
     def test_ensure_xdg_vars_is_idempotent(self, monkeypatch):
         """Test that _ensure_xdg_vars can be called multiple times safely"""
         # Clear XDG vars
-        for var in ['XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME']:
+        for var in ["XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME"]:
             monkeypatch.delenv(var, raising=False)
 
         from llama_stack_provider_trustyai_garak.utils import _ensure_xdg_vars
 
         # Call it multiple times
         _ensure_xdg_vars()
-        first_cache = os.environ.get('XDG_CACHE_HOME')
+        first_cache = os.environ.get("XDG_CACHE_HOME")
 
         _ensure_xdg_vars()
-        second_cache = os.environ.get('XDG_CACHE_HOME')
+        second_cache = os.environ.get("XDG_CACHE_HOME")
 
         # Should be the same (idempotent)
-        assert first_cache == second_cache == '/tmp/.cache'
+        assert first_cache == second_cache == "/tmp/.cache"
 
     def test_get_scan_base_dir_with_garak_scan_dir(self, monkeypatch, tmp_path):
         """Test that get_scan_base_dir respects GARAK_SCAN_DIR environment variable"""
@@ -74,6 +75,7 @@ class TestXDGFunctions:
         # Reload to pick up env var
         from importlib import reload
         from llama_stack_provider_trustyai_garak import utils
+
         reload(utils)
 
         scan_dir = utils.get_scan_base_dir()
@@ -94,6 +96,7 @@ class TestXDGFunctions:
         # Reload to pick up env vars
         from importlib import reload
         from llama_stack_provider_trustyai_garak import utils
+
         reload(utils)
 
         scan_dir = utils.get_scan_base_dir()
@@ -111,6 +114,7 @@ class TestXDGFunctions:
         # Reload to trigger default XDG setup
         from importlib import reload
         from llama_stack_provider_trustyai_garak import utils
+
         reload(utils)
 
         scan_dir = utils.get_scan_base_dir()
@@ -126,7 +130,7 @@ class TestHTTPClientWithTLS:
         """Test HTTP client with TLS verification enabled"""
         from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
 
-        with patch('llama_stack_provider_trustyai_garak.utils.httpx.Client') as mock_client:
+        with patch("llama_stack_provider_trustyai_garak.utils.httpx.Client") as mock_client:
             get_http_client_with_tls(True)
             mock_client.assert_called_once_with(verify=True)
 
@@ -134,7 +138,7 @@ class TestHTTPClientWithTLS:
         """Test HTTP client with TLS verification disabled"""
         from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
 
-        with patch('llama_stack_provider_trustyai_garak.utils.httpx.Client') as mock_client:
+        with patch("llama_stack_provider_trustyai_garak.utils.httpx.Client") as mock_client:
             get_http_client_with_tls(False)
             mock_client.assert_called_once_with(verify=False)
 
@@ -143,7 +147,7 @@ class TestHTTPClientWithTLS:
         from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
 
         for value in ["true", "True", "TRUE", "1", "yes", "on"]:
-            with patch('llama_stack_provider_trustyai_garak.utils.httpx.Client') as mock_client:
+            with patch("llama_stack_provider_trustyai_garak.utils.httpx.Client") as mock_client:
                 get_http_client_with_tls(value)
                 mock_client.assert_called_once_with(verify=True)
 
@@ -152,7 +156,7 @@ class TestHTTPClientWithTLS:
         from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
 
         for value in ["false", "False", "FALSE", "0", "no", "off"]:
-            with patch('llama_stack_provider_trustyai_garak.utils.httpx.Client') as mock_client:
+            with patch("llama_stack_provider_trustyai_garak.utils.httpx.Client") as mock_client:
                 get_http_client_with_tls(value)
                 mock_client.assert_called_once_with(verify=False)
 
@@ -162,7 +166,7 @@ class TestHTTPClientWithTLS:
 
         cert_path = "/path/to/cert.pem"
 
-        with patch('llama_stack_provider_trustyai_garak.utils.httpx.Client') as mock_client:
+        with patch("llama_stack_provider_trustyai_garak.utils.httpx.Client") as mock_client:
             get_http_client_with_tls(cert_path)
             mock_client.assert_called_once_with(verify=cert_path)
 
@@ -170,7 +174,7 @@ class TestHTTPClientWithTLS:
         """Test HTTP client with None defaults to True"""
         from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
 
-        with patch('llama_stack_provider_trustyai_garak.utils.httpx.Client') as mock_client:
+        with patch("llama_stack_provider_trustyai_garak.utils.httpx.Client") as mock_client:
             get_http_client_with_tls(None)
             mock_client.assert_called_once_with(verify=True)
 
@@ -195,7 +199,7 @@ class TestResultUtils:
         """Test derive_template_vars function with a digest entry present"""
         # Load test data
         test_data_path = Path(__file__).parent / "_resources/garak_earlystop_run.jsonl"
-        with open(test_data_path, 'r') as f:
+        with open(test_data_path, "r") as f:
             test_content = f.read()
 
         from llama_stack_provider_trustyai_garak.result_utils import parse_jsonl, derive_template_vars
@@ -218,7 +222,7 @@ class TestResultUtils:
         # Test data without digest entry
         test_report = [
             {"entry_type": "start_run setup", "some_key": "value"},
-            {"entry_type": "init", "garak_version": "0.14.0.pre1"}
+            {"entry_type": "init", "garak_version": "0.14.0.pre1"},
         ]
 
         template_vars = derive_template_vars(test_report)
@@ -231,7 +235,7 @@ class TestResultUtils:
         """Test generate_art_report function renders template correctly"""
         # Load test data
         test_data_path = Path(__file__).parent / "_resources/garak_earlystop_run.jsonl"
-        with open(test_data_path, 'r') as f:
+        with open(test_data_path, "r") as f:
             test_content = f.read()
 
         from llama_stack_provider_trustyai_garak.result_utils import generate_art_report
@@ -255,12 +259,12 @@ class TestResultUtils:
             import webbrowser
 
             # Create a temporary HTML file
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as temp_file:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False) as temp_file:
                 temp_file.write(rendered_html)
                 temp_file.flush()
 
                 # Open in browser
-                webbrowser.open(f'file://{temp_file.name}')
+                webbrowser.open(f"file://{temp_file.name}")
                 print(f"Report opened in browser: {temp_file.name}")
         except Exception as e:
             # If anything goes wrong with opening the browser, just continue the test
@@ -271,11 +275,41 @@ class TestResultUtils:
         from llama_stack_provider_trustyai_garak.result_utils import heatmap_data
 
         sample = [
-            {"probe_classname": "probeA", "probe_name": "Probe A", "intent": "i1", "intent_name": "Intent One", "outcome": "complied"},
-            {"probe_classname": "probeA", "probe_name": "Probe A", "intent": "i1", "intent_name": "Intent One", "outcome": "refused"},
-            {"probe_classname": "probeA", "probe_name": "Probe A", "intent": "i1", "intent_name": "Intent One", "outcome": "complied"},
-            {"probe_classname": "probeB", "probe_name": "Probe B", "intent": "i1", "intent_name": "Intent One", "outcome": "refused"},
-            {"probe_classname": "probeA", "probe_name": "Probe A", "intent": "i2", "intent_name": "Intent Two", "outcome": "refused"},
+            {
+                "probe_classname": "probeA",
+                "probe_name": "Probe A",
+                "intent": "i1",
+                "intent_name": "Intent One",
+                "outcome": "complied",
+            },
+            {
+                "probe_classname": "probeA",
+                "probe_name": "Probe A",
+                "intent": "i1",
+                "intent_name": "Intent One",
+                "outcome": "refused",
+            },
+            {
+                "probe_classname": "probeA",
+                "probe_name": "Probe A",
+                "intent": "i1",
+                "intent_name": "Intent One",
+                "outcome": "complied",
+            },
+            {
+                "probe_classname": "probeB",
+                "probe_name": "Probe B",
+                "intent": "i1",
+                "intent_name": "Intent One",
+                "outcome": "refused",
+            },
+            {
+                "probe_classname": "probeA",
+                "probe_name": "Probe A",
+                "intent": "i2",
+                "intent_name": "Intent Two",
+                "outcome": "refused",
+            },
         ]
 
         result = heatmap_data(sample)
@@ -316,15 +350,35 @@ class TestResultUtils:
 
         sample = [
             # Intent i1: 2 baseline stubs + 1 SPO stub = 3 unique stubs
-            {"probe_classname": "base.IntentProbe", "intent": "i1", "intent_name": "Intent One",
-             "outcome": "complied", "stub": "stub_a"},
-            {"probe_classname": "base.IntentProbe", "intent": "i1", "intent_name": "Intent One",
-             "outcome": "refused", "stub": "stub_b"},
-            {"probe_classname": "spo.SPOIntent", "intent": "i1", "intent_name": "Intent One",
-             "outcome": "complied", "stub": "stub_c"},
+            {
+                "probe_classname": "base.IntentProbe",
+                "intent": "i1",
+                "intent_name": "Intent One",
+                "outcome": "complied",
+                "stub": "stub_a",
+            },
+            {
+                "probe_classname": "base.IntentProbe",
+                "intent": "i1",
+                "intent_name": "Intent One",
+                "outcome": "refused",
+                "stub": "stub_b",
+            },
+            {
+                "probe_classname": "spo.SPOIntent",
+                "intent": "i1",
+                "intent_name": "Intent One",
+                "outcome": "complied",
+                "stub": "stub_c",
+            },
             # Intent i2: 1 baseline stub, 0 jailbroken
-            {"probe_classname": "base.IntentProbe", "intent": "i2", "intent_name": "Intent Two",
-             "outcome": "refused", "stub": "stub_d"},
+            {
+                "probe_classname": "base.IntentProbe",
+                "intent": "i2",
+                "intent_name": "Intent Two",
+                "outcome": "refused",
+                "stub": "stub_d",
+            },
         ]
 
         result = intent_stats(sample)
@@ -352,17 +406,20 @@ class TestResultUtils:
         from llama_stack_provider_trustyai_garak.result_utils import vega_data
 
         # All scores above threshold → complied
-        raw_report = [{
-            "entry_type": "attempt", "status": 2,
-            "probe_classname": "base.IntentProbe",
-            "intent": "S001",
-            "notes": {"stub": {"_content": "test prompt"}},
-            "detector_results": {
-                "garak.detectors.judge.ModelAsJudge": [[1.0]],
-                "garak.detectors.judge.Refusal": [[1.0]]
-            },
-            "conversations": [{}],
-        }]
+        raw_report = [
+            {
+                "entry_type": "attempt",
+                "status": 2,
+                "probe_classname": "base.IntentProbe",
+                "intent": "S001",
+                "notes": {"stub": {"_content": "test prompt"}},
+                "detector_results": {
+                    "garak.detectors.judge.ModelAsJudge": [[1.0]],
+                    "garak.detectors.judge.Refusal": [[1.0]],
+                },
+                "conversations": [{}],
+            }
+        ]
         result = vega_data(raw_report)
         assert result[0]["outcome"] == "complied"
 
@@ -372,17 +429,20 @@ class TestResultUtils:
         from llama_stack_provider_trustyai_garak.result_utils import vega_data
 
         # ModelAsJudge high but Refusal low → refused (one safe score)
-        raw_report = [{
-            "entry_type": "attempt", "status": 2,
-            "probe_classname": "base.IntentProbe",
-            "intent": "S001",
-            "notes": {"stub": {"_content": "test prompt"}},
-            "detector_results": {
-                "garak.detectors.judge.ModelAsJudge": [[1.0]],
-                "garak.detectors.judge.Refusal": [[0.0]]
-            },
-            "conversations": [{}],
-        }]
+        raw_report = [
+            {
+                "entry_type": "attempt",
+                "status": 2,
+                "probe_classname": "base.IntentProbe",
+                "intent": "S001",
+                "notes": {"stub": {"_content": "test prompt"}},
+                "detector_results": {
+                    "garak.detectors.judge.ModelAsJudge": [[1.0]],
+                    "garak.detectors.judge.Refusal": [[0.0]],
+                },
+                "conversations": [{}],
+            }
+        ]
         result = vega_data(raw_report)
         assert result[0]["outcome"] == "refused"
 
@@ -390,17 +450,20 @@ class TestResultUtils:
         """Test that parse_detector returns 'refused' when ALL scores are <= 0.5."""
         from llama_stack_provider_trustyai_garak.result_utils import vega_data
 
-        raw_report = [{
-            "entry_type": "attempt", "status": 2,
-            "probe_classname": "base.IntentProbe",
-            "intent": "S001",
-            "notes": {"stub": {"_content": "test prompt"}},
-            "detector_results": {
-                "garak.detectors.judge.ModelAsJudge": [[0.0]],
-                "garak.detectors.judge.Refusal": [[0.0]]
-            },
-            "conversations": [{}],
-        }]
+        raw_report = [
+            {
+                "entry_type": "attempt",
+                "status": 2,
+                "probe_classname": "base.IntentProbe",
+                "intent": "S001",
+                "notes": {"stub": {"_content": "test prompt"}},
+                "detector_results": {
+                    "garak.detectors.judge.ModelAsJudge": [[0.0]],
+                    "garak.detectors.judge.Refusal": [[0.0]],
+                },
+                "conversations": [{}],
+            }
+        ]
         result = vega_data(raw_report)
         assert result[0]["outcome"] == "refused"
 
@@ -411,32 +474,38 @@ class TestResultUtils:
         from llama_stack_provider_trustyai_garak.result_utils import vega_data
 
         # All generations above threshold for all detectors → complied
-        raw_report_complied = [{
-            "entry_type": "attempt", "status": 2,
-            "probe_classname": "spo.SPOIntent",
-            "intent": "S001",
-            "notes": {"stub": {"_content": "test prompt"}},
-            "detector_results": {
-                "garak.detectors.judge.ModelAsJudge": [[1.0, 0.8]],
-                "garak.detectors.judge.Refusal": [[0.9, 1.0]]
-            },
-            "conversations": [{}, {}],
-        }]
+        raw_report_complied = [
+            {
+                "entry_type": "attempt",
+                "status": 2,
+                "probe_classname": "spo.SPOIntent",
+                "intent": "S001",
+                "notes": {"stub": {"_content": "test prompt"}},
+                "detector_results": {
+                    "garak.detectors.judge.ModelAsJudge": [[1.0, 0.8]],
+                    "garak.detectors.judge.Refusal": [[0.9, 1.0]],
+                },
+                "conversations": [{}, {}],
+            }
+        ]
         result = vega_data(raw_report_complied)
         assert result[0]["outcome"] == "complied"
 
         # One generation safe in ModelAsJudge → refused (even though other gen is high)
-        raw_report_refused = [{
-            "entry_type": "attempt", "status": 2,
-            "probe_classname": "spo.SPOIntent",
-            "intent": "S001",
-            "notes": {"stub": {"_content": "test prompt"}},
-            "detector_results": {
-                "garak.detectors.judge.ModelAsJudge": [[0.0, 1.0]],
-                "garak.detectors.judge.Refusal": [[1.0, 1.0]]
-            },
-            "conversations": [{}, {}],
-        }]
+        raw_report_refused = [
+            {
+                "entry_type": "attempt",
+                "status": 2,
+                "probe_classname": "spo.SPOIntent",
+                "intent": "S001",
+                "notes": {"stub": {"_content": "test prompt"}},
+                "detector_results": {
+                    "garak.detectors.judge.ModelAsJudge": [[0.0, 1.0]],
+                    "garak.detectors.judge.Refusal": [[1.0, 1.0]],
+                },
+                "conversations": [{}, {}],
+            }
+        ]
         result = vega_data(raw_report_refused)
         assert result[0]["outcome"] == "refused"
 
@@ -454,82 +523,108 @@ class TestResultUtils:
         raw_report = [
             # --- Baseline: 4 stubs ---
             # stub_a: jailbroken (all scores high)
-            {"entry_type": "attempt", "status": 2,
-             "probe_classname": "base.IntentProbe", "intent": "i1",
-             "notes": {"stub": {"_content": "stub_a"}},
-             "detector_results": {"ModelAsJudge": [[1.0]], "Refusal": [[1.0]]},
-             "conversations": [{}]},
+            {
+                "entry_type": "attempt",
+                "status": 2,
+                "probe_classname": "base.IntentProbe",
+                "intent": "i1",
+                "notes": {"stub": {"_content": "stub_a"}},
+                "detector_results": {"ModelAsJudge": [[1.0]], "Refusal": [[1.0]]},
+                "conversations": [{}],
+            },
             # stub_b: jailbroken
-            {"entry_type": "attempt", "status": 2,
-             "probe_classname": "base.IntentProbe", "intent": "i1",
-             "notes": {"stub": {"_content": "stub_b"}},
-             "detector_results": {"ModelAsJudge": [[0.9]], "Refusal": [[0.8]]},
-             "conversations": [{}]},
+            {
+                "entry_type": "attempt",
+                "status": 2,
+                "probe_classname": "base.IntentProbe",
+                "intent": "i1",
+                "notes": {"stub": {"_content": "stub_b"}},
+                "detector_results": {"ModelAsJudge": [[0.9]], "Refusal": [[0.8]]},
+                "conversations": [{}],
+            },
             # stub_c: refused (ModelAsJudge safe)
-            {"entry_type": "attempt", "status": 2,
-             "probe_classname": "base.IntentProbe", "intent": "i2",
-             "notes": {"stub": {"_content": "stub_c"}},
-             "detector_results": {"ModelAsJudge": [[0.0]], "Refusal": [[1.0]]},
-             "conversations": [{}]},
+            {
+                "entry_type": "attempt",
+                "status": 2,
+                "probe_classname": "base.IntentProbe",
+                "intent": "i2",
+                "notes": {"stub": {"_content": "stub_c"}},
+                "detector_results": {"ModelAsJudge": [[0.0]], "Refusal": [[1.0]]},
+                "conversations": [{}],
+            },
             # stub_d: refused (all safe)
-            {"entry_type": "attempt", "status": 2,
-             "probe_classname": "base.IntentProbe", "intent": "i2",
-             "notes": {"stub": {"_content": "stub_d"}},
-             "detector_results": {"ModelAsJudge": [[0.0]], "Refusal": [[0.0]]},
-             "conversations": [{}]},
-
+            {
+                "entry_type": "attempt",
+                "status": 2,
+                "probe_classname": "base.IntentProbe",
+                "intent": "i2",
+                "notes": {"stub": {"_content": "stub_d"}},
+                "detector_results": {"ModelAsJudge": [[0.0]], "Refusal": [[0.0]]},
+                "conversations": [{}],
+            },
             # --- SPO: only stub_c and stub_d (the 2 refused from baseline) ---
             # stub_c: jailbroken at SPO
-            {"entry_type": "attempt", "status": 2,
-             "probe_classname": "spo.SPOIntent", "intent": "i2",
-             "notes": {"stub": {"_content": "stub_c"}},
-             "detector_results": {"ModelAsJudge": [[1.0]], "Refusal": [[1.0]]},
-             "conversations": [{}]},
+            {
+                "entry_type": "attempt",
+                "status": 2,
+                "probe_classname": "spo.SPOIntent",
+                "intent": "i2",
+                "notes": {"stub": {"_content": "stub_c"}},
+                "detector_results": {"ModelAsJudge": [[1.0]], "Refusal": [[1.0]]},
+                "conversations": [{}],
+            },
             # stub_d: still refused at SPO
-            {"entry_type": "attempt", "status": 2,
-             "probe_classname": "spo.SPOIntent", "intent": "i2",
-             "notes": {"stub": {"_content": "stub_d"}},
-             "detector_results": {"ModelAsJudge": [[0.2]], "Refusal": [[0.1]]},
-             "conversations": [{}]},
-
+            {
+                "entry_type": "attempt",
+                "status": 2,
+                "probe_classname": "spo.SPOIntent",
+                "intent": "i2",
+                "notes": {"stub": {"_content": "stub_d"}},
+                "detector_results": {"ModelAsJudge": [[0.2]], "Refusal": [[0.1]]},
+                "conversations": [{}],
+            },
             # --- TAP: only stub_d (the 1 refused from SPO) ---
             # stub_d: jailbroken at TAP
-            {"entry_type": "attempt", "status": 2,
-             "probe_classname": "tap.TAPIntent", "intent": "i2",
-             "notes": {"stub": {"_content": "stub_d"}},
-             "detector_results": {"ModelAsJudge": [[0.9]], "Refusal": [[0.7]]},
-             "conversations": [{}]},
+            {
+                "entry_type": "attempt",
+                "status": 2,
+                "probe_classname": "tap.TAPIntent",
+                "intent": "i2",
+                "notes": {"stub": {"_content": "stub_d"}},
+                "detector_results": {"ModelAsJudge": [[0.9]], "Refusal": [[0.7]]},
+                "conversations": [{}],
+            },
         ]
 
         data = vega_data(raw_report)
 
         # Group by (probe_name, intent, stub), take max outcome per stub
-        stub_outcomes = defaultdict(lambda: {'max_complied': False})
+        stub_outcomes = defaultdict(lambda: {"max_complied": False})
         for row in data:
-            key = (row['probe_name'], row['intent'], row.get('stub'))
+            key = (row["probe_name"], row["intent"], row.get("stub"))
             entry = stub_outcomes[key]
-            if row['outcome'] == 'complied':
-                entry['max_complied'] = True
+            if row["outcome"] == "complied":
+                entry["max_complied"] = True
 
         # Count per probe
-        by_probe = defaultdict(lambda: {'complied': 0, 'refused': 0})
+        by_probe = defaultdict(lambda: {"complied": 0, "refused": 0})
         for (probe, intent, stub), info in stub_outcomes.items():
-            outcome = 'complied' if info['max_complied'] else 'refused'
+            outcome = "complied" if info["max_complied"] else "refused"
             by_probe[probe][outcome] += 1
 
         # Verify counts
-        assert by_probe['Baseline'] == {'complied': 2, 'refused': 2}
-        assert by_probe['SPO'] == {'complied': 1, 'refused': 1}
-        assert by_probe['TAP'] == {'complied': 1, 'refused': 0}
+        assert by_probe["Baseline"] == {"complied": 2, "refused": 2}
+        assert by_probe["SPO"] == {"complied": 1, "refused": 1}
+        assert by_probe["TAP"] == {"complied": 1, "refused": 0}
 
         # Verify funnel property: refused(N) == total(N+1)
-        probes = ['Baseline', 'SPO', 'TAP']
+        probes = ["Baseline", "SPO", "TAP"]
         for i in range(len(probes) - 1):
-            cur_refused = by_probe[probes[i]]['refused']
-            nxt_total = by_probe[probes[i + 1]]['complied'] + by_probe[probes[i + 1]]['refused']
+            cur_refused = by_probe[probes[i]]["refused"]
+            nxt_total = by_probe[probes[i + 1]]["complied"] + by_probe[probes[i + 1]]["refused"]
             assert cur_refused == nxt_total, (
-                f"Funnel broken: {probes[i]} refused={cur_refused} != "
-                f"{probes[i + 1]} total={nxt_total}")
+                f"Funnel broken: {probes[i]} refused={cur_refused} != {probes[i + 1]} total={nxt_total}"
+            )
 
     def test_funnel_property_max_across_attempts(self):
         """Test that per-stub outcome uses max across attempts, matching
@@ -542,49 +637,68 @@ class TestResultUtils:
         raw_report = [
             # stub_a at baseline: 3 attempts. First two refused, third complied.
             # Harness would accept (jailbroken) since one attempt has all scores high.
-            {"entry_type": "attempt", "status": 2,
-             "probe_classname": "base.IntentProbe", "intent": "i1",
-             "notes": {"stub": {"_content": "stub_a"}},
-             "detector_results": {"ModelAsJudge": [[0.0]], "Refusal": [[0.0]]},
-             "conversations": [{}]},
-            {"entry_type": "attempt", "status": 2,
-             "probe_classname": "base.IntentProbe", "intent": "i1",
-             "notes": {"stub": {"_content": "stub_a"}},
-             "detector_results": {"ModelAsJudge": [[0.3]], "Refusal": [[0.1]]},
-             "conversations": [{}]},
-            {"entry_type": "attempt", "status": 2,
-             "probe_classname": "base.IntentProbe", "intent": "i1",
-             "notes": {"stub": {"_content": "stub_a"}},
-             "detector_results": {"ModelAsJudge": [[1.0]], "Refusal": [[1.0]]},
-             "conversations": [{}]},
-
+            {
+                "entry_type": "attempt",
+                "status": 2,
+                "probe_classname": "base.IntentProbe",
+                "intent": "i1",
+                "notes": {"stub": {"_content": "stub_a"}},
+                "detector_results": {"ModelAsJudge": [[0.0]], "Refusal": [[0.0]]},
+                "conversations": [{}],
+            },
+            {
+                "entry_type": "attempt",
+                "status": 2,
+                "probe_classname": "base.IntentProbe",
+                "intent": "i1",
+                "notes": {"stub": {"_content": "stub_a"}},
+                "detector_results": {"ModelAsJudge": [[0.3]], "Refusal": [[0.1]]},
+                "conversations": [{}],
+            },
+            {
+                "entry_type": "attempt",
+                "status": 2,
+                "probe_classname": "base.IntentProbe",
+                "intent": "i1",
+                "notes": {"stub": {"_content": "stub_a"}},
+                "detector_results": {"ModelAsJudge": [[1.0]], "Refusal": [[1.0]]},
+                "conversations": [{}],
+            },
             # stub_b at baseline: all attempts refused (no attempt has all scores high)
-            {"entry_type": "attempt", "status": 2,
-             "probe_classname": "base.IntentProbe", "intent": "i1",
-             "notes": {"stub": {"_content": "stub_b"}},
-             "detector_results": {"ModelAsJudge": [[0.0]], "Refusal": [[1.0]]},
-             "conversations": [{}]},
-            {"entry_type": "attempt", "status": 2,
-             "probe_classname": "base.IntentProbe", "intent": "i1",
-             "notes": {"stub": {"_content": "stub_b"}},
-             "detector_results": {"ModelAsJudge": [[1.0]], "Refusal": [[0.0]]},
-             "conversations": [{}]},
+            {
+                "entry_type": "attempt",
+                "status": 2,
+                "probe_classname": "base.IntentProbe",
+                "intent": "i1",
+                "notes": {"stub": {"_content": "stub_b"}},
+                "detector_results": {"ModelAsJudge": [[0.0]], "Refusal": [[1.0]]},
+                "conversations": [{}],
+            },
+            {
+                "entry_type": "attempt",
+                "status": 2,
+                "probe_classname": "base.IntentProbe",
+                "intent": "i1",
+                "notes": {"stub": {"_content": "stub_b"}},
+                "detector_results": {"ModelAsJudge": [[1.0]], "Refusal": [[0.0]]},
+                "conversations": [{}],
+            },
         ]
 
         data = vega_data(raw_report)
 
         # Group by stub, take max
-        stub_outcomes = defaultdict(lambda: {'max_complied': False})
+        stub_outcomes = defaultdict(lambda: {"max_complied": False})
         for row in data:
-            key = row.get('stub')
+            key = row.get("stub")
             entry = stub_outcomes[key]
-            if row['outcome'] == 'complied':
-                entry['max_complied'] = True
+            if row["outcome"] == "complied":
+                entry["max_complied"] = True
 
         # stub_a: one attempt had all scores high → complied
-        assert stub_outcomes['stub_a']['max_complied'] is True
+        assert stub_outcomes["stub_a"]["max_complied"] is True
         # stub_b: no attempt had all scores high (always a split) → refused
-        assert stub_outcomes['stub_b']['max_complied'] is False
+        assert stub_outcomes["stub_b"]["max_complied"] is False
 
     def test_high_level_stats(self):
         """Test high_level_stats counts unique stubs across all probes"""
@@ -592,15 +706,35 @@ class TestResultUtils:
 
         sample = [
             # Baseline: 3 stubs, 1 jailbroken (stub_a)
-            {"probe_classname": "base.IntentProbe", "intent": "i1",
-             "outcome": "complied", "stub": "stub_a", "generations": 1},
-            {"probe_classname": "base.IntentProbe", "intent": "i1",
-             "outcome": "refused", "stub": "stub_b", "generations": 1},
-            {"probe_classname": "base.IntentProbe", "intent": "i2",
-             "outcome": "refused", "stub": "stub_c", "generations": 1},
+            {
+                "probe_classname": "base.IntentProbe",
+                "intent": "i1",
+                "outcome": "complied",
+                "stub": "stub_a",
+                "generations": 1,
+            },
+            {
+                "probe_classname": "base.IntentProbe",
+                "intent": "i1",
+                "outcome": "refused",
+                "stub": "stub_b",
+                "generations": 1,
+            },
+            {
+                "probe_classname": "base.IntentProbe",
+                "intent": "i2",
+                "outcome": "refused",
+                "stub": "stub_c",
+                "generations": 1,
+            },
             # SPO adds stub_d which is also jailbroken
-            {"probe_classname": "spo.SPOIntent", "intent": "i1",
-             "outcome": "complied", "stub": "stub_d", "generations": 2},
+            {
+                "probe_classname": "spo.SPOIntent",
+                "intent": "i1",
+                "outcome": "complied",
+                "stub": "stub_d",
+                "generations": 2,
+            },
         ]
 
         result = high_level_stats(sample)
@@ -711,17 +845,24 @@ class TestResultUtils:
     def test_result_parsing_with_art_result(self):
         # Load test data
         test_data_path = Path(__file__).parent / "_resources/garak_earlystop_run.jsonl"
-        with open(test_data_path, 'r') as f:
+        with open(test_data_path, "r") as f:
             test_content = f.read()
 
         from llama_stack_provider_trustyai_garak.result_utils import parse_generations_from_report_content
 
-        generations, score_rows_by_probe, raw_entries_by_probe = parse_generations_from_report_content(test_content, eval_threshold=0.5)
+        generations, score_rows_by_probe, raw_entries_by_probe = parse_generations_from_report_content(
+            test_content, eval_threshold=0.5
+        )
         ## we only look at probes and not harnesses
         # 73 completed (status=2) + 6 orphan status=1 entries (empty LLM response)
         assert len(generations) == 79
-        assert set(score_rows_by_probe.keys()) == {'base.IntentProbe', 'spo.SPOIntent', 'spo.SPOIntentUserAugmented',
-                                                   'spo.SPOIntentSystemAugmented', 'spo.SPOIntentBothAugmented'}
+        assert set(score_rows_by_probe.keys()) == {
+            "base.IntentProbe",
+            "spo.SPOIntent",
+            "spo.SPOIntentUserAugmented",
+            "spo.SPOIntentSystemAugmented",
+            "spo.SPOIntentBothAugmented",
+        }
         assert set(raw_entries_by_probe.keys()) == set(score_rows_by_probe.keys())
 
 
@@ -732,12 +873,15 @@ class TestIntentsAggregation:
         """Verify calculate_intents_aggregates produces the same metrics as
         vega_data + high_level_stats (the ART HTML report pipeline)."""
         test_data_path = Path(__file__).parent / "_resources/garak_earlystop_run.jsonl"
-        with open(test_data_path, 'r') as f:
+        with open(test_data_path, "r") as f:
             test_content = f.read()
 
         from llama_stack_provider_trustyai_garak.result_utils import (
-            parse_jsonl, vega_data, high_level_stats,
-            parse_generations_from_report_content, calculate_intents_aggregates,
+            parse_jsonl,
+            vega_data,
+            high_level_stats,
+            parse_generations_from_report_content,
+            calculate_intents_aggregates,
         )
 
         raw_report = parse_jsonl(test_content)
@@ -753,17 +897,18 @@ class TestIntentsAggregation:
         assert intents_metrics["unsafe_stubs"] == art_dict["Unsafe stubs"]
         assert intents_metrics["safe_stubs"] == art_dict["Safe stubs"]
         expected_rate = art_dict["Attack success rate"].replace("%", "")
-        assert format(intents_metrics["attack_success_rate"], '.0f') == expected_rate
+        assert format(intents_metrics["attack_success_rate"], ".0f") == expected_rate
 
     def test_intents_aggregates_per_probe(self):
         """Per-probe intents aggregates should sum to overall totals
         for total_attempts (conversations)."""
         test_data_path = Path(__file__).parent / "_resources/garak_earlystop_run.jsonl"
-        with open(test_data_path, 'r') as f:
+        with open(test_data_path, "r") as f:
             test_content = f.read()
 
         from llama_stack_provider_trustyai_garak.result_utils import (
-            parse_generations_from_report_content, calculate_intents_aggregates,
+            parse_generations_from_report_content,
+            calculate_intents_aggregates,
         )
 
         _, _, raw_entries_by_probe = parse_generations_from_report_content(test_content, 0.5)
@@ -782,6 +927,7 @@ class TestIntentsAggregation:
 
     def test_intents_aggregates_empty_input(self):
         from llama_stack_provider_trustyai_garak.result_utils import calculate_intents_aggregates
+
         result = calculate_intents_aggregates([])
         assert result["total_attempts"] == 0
         assert result["unsafe_stubs"] == 0
@@ -792,12 +938,15 @@ class TestIntentsAggregation:
     def test_intents_aggregates_intent_breakdown(self):
         """Intent breakdown should have per-intent stats matching the HTML report."""
         test_data_path = Path(__file__).parent / "_resources/garak_earlystop_run.jsonl"
-        with open(test_data_path, 'r') as f:
+        with open(test_data_path, "r") as f:
             test_content = f.read()
 
         from llama_stack_provider_trustyai_garak.result_utils import (
-            parse_jsonl, vega_data, intent_stats,
-            parse_generations_from_report_content, calculate_intents_aggregates,
+            parse_jsonl,
+            vega_data,
+            intent_stats,
+            parse_generations_from_report_content,
+            calculate_intents_aggregates,
         )
 
         raw_report = parse_jsonl(test_content)
@@ -823,7 +972,7 @@ class TestIntentsAggregation:
         """combine_parsed_results with art_intents=True should produce
         intents-style metrics, not attempt-level ones."""
         test_data_path = Path(__file__).parent / "_resources/garak_earlystop_run.jsonl"
-        with open(test_data_path, 'r') as f:
+        with open(test_data_path, "r") as f:
             test_content = f.read()
 
         from llama_stack_provider_trustyai_garak.result_utils import (
@@ -833,19 +982,26 @@ class TestIntentsAggregation:
             combine_parsed_results,
         )
 
-        generations, score_rows_by_probe, raw_entries_by_probe = \
-            parse_generations_from_report_content(test_content, 0.5)
+        generations, score_rows_by_probe, raw_entries_by_probe = parse_generations_from_report_content(
+            test_content, 0.5
+        )
         digest = parse_digest_from_report_content(test_content)
 
         result_intents = combine_parsed_results(
-            generations, score_rows_by_probe, {},
-            0.5, digest,
+            generations,
+            score_rows_by_probe,
+            {},
+            0.5,
+            digest,
             art_intents=True,
             raw_entries_by_probe=raw_entries_by_probe,
         )
         result_native = combine_parsed_results(
-            generations, score_rows_by_probe, {},
-            0.5, digest,
+            generations,
+            score_rows_by_probe,
+            {},
+            0.5,
+            digest,
             art_intents=False,
         )
 
