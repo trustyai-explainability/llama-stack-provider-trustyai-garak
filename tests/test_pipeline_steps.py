@@ -295,7 +295,6 @@ class TestResolveConfigApiKeys:
 
 
 class TestValidateScanConfig:
-
     @patch.dict("sys.modules", {"garak": types.ModuleType("garak")})
     def test_valid_config(self):
         config = json.dumps({"plugins": {"probes": []}})
