@@ -157,10 +157,10 @@
                                             <th role="columnheader" scope="col">Intent</th>
                                             <th role="columnheader" scope="col">Total Attempts</th>
                                             {% if probe.is_baseline %}
-                                                <th role="columnheader" scope="col">Unsafe Stubs</th>
+                                                <th role="columnheader" scope="col">Unsafe Prompts</th>
                                                 <th role="columnheader" scope="col">Unsafe Rate</th>
                                             {% else %}
-                                                <th role="columnheader" scope="col">Unsafe Stubs</th>
+                                                <th role="columnheader" scope="col">Unsafe Prompts</th>
                                                 <th role="columnheader" scope="col">Attack Success Rate</th>
                                             {% endif %}
                                         </tr>
@@ -171,13 +171,13 @@
                                                 <td role="cell" data-label="Intent">{{ row.intent_name }}</td>
                                                 <td role="cell" data-label="Total Attempts">{{ row.total_attacks }}</td>
                                                 {% if probe.is_baseline %}
-                                                    <td role="cell" data-label="Unsafe Stubs">{{ row.complied_attacks }}
+                                                    <td role="cell" data-label="Unsafe Prompts">{{ row.complied_attacks }}
                                                         / {{ row.total_attacks }}</td>
                                                     <td role="cell"
                                                         data-label="Unsafe Rate">{{ row.asr }}%
                                                     </td>
                                                 {% else %}
-                                                    <td role="cell" data-label="Unsafe Stubs">{{ row.jailbroken_stubs }}
+                                                    <td role="cell" data-label="Unsafe Prompts">{{ row.jailbroken_stubs }}
                                                         / {{ row.baseline_stubs }}</td>
                                                     <td role="cell"
                                                         data-label="Attack Success Rate">{{ row.asr }}%

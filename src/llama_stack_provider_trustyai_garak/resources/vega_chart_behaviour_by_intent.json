@@ -91,7 +91,7 @@
       "aggregate": "max",
       "type": "quantitative",
       "legend": {
-        "title": "Baseline Stubs",
+        "title": "Baseline Prompts",
         "format": "d"
       }
     },
@@ -119,7 +119,7 @@
       },
       {
         "field": "stub",
-        "title": "Stub"
+        "title": "Prompt"
       },
       {
         "field": "probe_name",
@@ -132,7 +132,7 @@
       {
         "field": "baseline_stubs",
         "type": "quantitative",
-        "title": "Baseline Stubs"
+        "title": "Baseline Prompts"
       }
     ]
   },
