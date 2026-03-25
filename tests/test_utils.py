@@ -741,8 +741,8 @@ class TestResultUtils:
 
         stats = {s["label"]: s["value"] for s in result}
         assert stats["Total attempts"] == 5  # 1+1+1+2
-        assert stats["Unsafe stubs"] == 2  # stub_a + stub_d jailbroken across all probes
-        assert stats["Safe stubs"] == 2  # stub_b and stub_c never jailbroken
+        assert stats["Unsafe prompts"] == 2  # stub_a + stub_d jailbroken across all probes
+        assert stats["Safe prompts"] == 2  # stub_b and stub_c never jailbroken
         assert stats["Attack success rate"] == "50%"  # 2/4 unique stubs jailbroken
 
     def test_vega_data_includes_intent_name(self):
@@ -894,8 +894,8 @@ class TestIntentsAggregation:
         intents_metrics = calculate_intents_aggregates(all_raw)
 
         assert intents_metrics["total_attempts"] == art_dict["Total attempts"]
-        assert intents_metrics["unsafe_stubs"] == art_dict["Unsafe stubs"]
-        assert intents_metrics["safe_stubs"] == art_dict["Safe stubs"]
+        assert intents_metrics["unsafe_stubs"] == art_dict["Unsafe prompts"]
+        assert intents_metrics["safe_stubs"] == art_dict["Safe prompts"]
         expected_rate = art_dict["Attack success rate"].replace("%", "")
         assert format(intents_metrics["attack_success_rate"], ".0f") == expected_rate
 

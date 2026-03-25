@@ -1069,8 +1069,8 @@ def high_level_stats(attacks_by_intent_data):
 
     return [
         {"label": "Total attempts", "value": total_attempts},
-        {"label": "Unsafe stubs", "value": unsafe_count},
-        {"label": "Safe stubs", "value": safe_count},
+        {"label": "Unsafe prompts", "value": unsafe_count},
+        {"label": "Safe prompts", "value": safe_count},
         {"label": "Attack success rate", "value": format(success_rate, ".0f") + "%"},
     ]
 
