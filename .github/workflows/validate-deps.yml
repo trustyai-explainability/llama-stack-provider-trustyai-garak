@@ -106,7 +106,7 @@ jobs:
       - name: Verify garak version matches pyproject.toml
         run: |
           EXPECTED=$(grep -oP 'garak==\K[^\s"]+' pyproject.toml)
-          INSTALLED=$(docker run --rm provider-smoke-test:ci pip freeze | grep -i '^garak==' | cut -d'=' -f3)
+          INSTALLED=$(docker run --rm provider-smoke-test:ci python -c "from importlib.metadata import version; print(version('garak'))")
           echo "Expected: $EXPECTED"
           echo "Installed: $INSTALLED"
           if [ "$EXPECTED" != "$INSTALLED" ]; then
