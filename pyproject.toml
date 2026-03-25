@@ -22,7 +22,6 @@ dependencies = [
     "eval-hub-sdk[adapter]>=0.1.2",
     "pandas>=2.3.3",
     "Jinja2>=3.1.6",
-    # "pytest>=9.0.2", # included in 'dev' extra
 ]
 
 [project.urls]
@@ -40,15 +39,16 @@ where = ["src"]
 "llama_stack_provider_trustyai_garak" = ["resources/*"]
 
 [project.optional-dependencies]
-inline = [
-    "pyasn1==0.6.2", # trivy high vul fix
-    "protobuf==6.33.5", # trivy high vul fix
+sdg = [
     "nest_asyncio>=1.6.0",
-    "garak>=0.14.0"
+    "sdg-hub>=0.8.8",
 ]
-# For intents, install:
-#   pip install -r requirements-inline-extra.txt
-dev = ["pytest", "pytest-cov", "pytest-asyncio", "ruff", "pre-commit"]
+inline = [
+    "llama-stack-provider-trustyai-garak[sdg]",
+    "garak==0.14.1+rhaiv.6",
+]
+test = ["pytest", "pytest-cov", "pytest-asyncio"]
+dev = ["llama-stack-provider-trustyai-garak[test]", "ruff", "pre-commit"]
 server = ["llama-stack>=0.5.0"]
 
 [tool.pytest.ini_options]

@@ -1,17 +1,15 @@
 """Tests for core/pipeline_steps.py shared business logic and base_eval validation."""
 
 import json
-import os
 import tempfile
+import types
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pandas as pd
 import pytest
 
 from llama_stack_provider_trustyai_garak.core.pipeline_steps import (
-    MODEL_AUTH_MOUNT_PATH,
-    _read_secret_file,
     log_kfp_metrics,
     normalize_prompts,
     parse_and_build_results,
@@ -297,6 +295,8 @@ class TestResolveConfigApiKeys:
 
 
 class TestValidateScanConfig:
+
+    @patch.dict("sys.modules", {"garak": types.ModuleType("garak")})
     def test_valid_config(self):
         config = json.dumps({"plugins": {"probes": []}})
         validate_scan_config(config)

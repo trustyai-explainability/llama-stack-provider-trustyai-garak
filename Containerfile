@@ -4,16 +4,19 @@ WORKDIR /opt/app-root
 # Switch to root only for installing packages
 USER root
 
-COPY . .
+COPY pyproject.toml .
+COPY src src
 
 # Install cpu torch to reduce image size
 RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
 
-# Install the package itself
-# Use [inline] to get garak dependency
-RUN pip install --no-cache-dir ".[inline]"
-# Install midstream garak and sdg-hub dependencies (tmp fix till we get release versions)
-RUN pip install --no-cache-dir -r requirements-inline-extra.txt
+# Install the package + sdg deps (everything except garak, which comes from git)
+RUN pip install --no-cache-dir ".[sdg]"
+# Install garak from midstream git (tag derived from pyproject.toml)
+RUN GARAK_VER=$(grep -oP 'garak==\K[^\s"]+' pyproject.toml) && \
+    pip install --no-cache-dir \
+    "garak @ git+https://github.com/trustyai-explainability/garak.git@v${GARAK_VER}"
+
 # Set XDG environment variables to use /tmp (always writable) for garak to write to
 ENV XDG_CACHE_HOME=/tmp/.cache
 ENV XDG_DATA_HOME=/tmp/.local/share
