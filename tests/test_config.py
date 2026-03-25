@@ -447,7 +447,7 @@ class TestDeepMergeDicts:
                             "system_prompt": "Default prompt",
                             "score_key": "complied",
                             "confidence_cutoff": 70,
-                        }
+                        },
                     }
                 }
             }
@@ -482,15 +482,7 @@ class TestDeepMergeDicts:
 
     def test_adding_new_key_at_deep_level(self):
         base = {"plugins": {"detectors": {"judge": {"detector_model_name": "m1"}}}}
-        override = {
-            "plugins": {
-                "detectors": {
-                    "judge": {
-                        "MulticlassJudge": {"system_prompt": "Added later"}
-                    }
-                }
-            }
-        }
+        override = {"plugins": {"detectors": {"judge": {"MulticlassJudge": {"system_prompt": "Added later"}}}}}
         result = deep_merge_dicts(base, override)
         judge = result["plugins"]["detectors"]["judge"]
         assert judge["detector_model_name"] == "m1"
