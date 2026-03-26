@@ -67,9 +67,19 @@ from ..constants import (
     EXECUTION_MODE_SIMPLE,
     EXECUTION_MODE_KFP,
     DEFAULT_SDG_FLOW_ID,
+    DEFAULT_SDG_MAX_CONCURRENCY,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_int(value: Any, fallback: int) -> int:
+    """Try to convert *value* to int; return *fallback* on failure."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        logger.warning("Could not parse %r as int, using default %d", value, fallback)
+        return fallback
 
 
 class GarakAdapter(FrameworkAdapter):
@@ -546,6 +556,7 @@ class GarakAdapter(FrameworkAdapter):
             "sdg_model": ip.get("sdg_model", ""),
             "sdg_api_base": ip.get("sdg_api_base", ""),
             "sdg_flow_id": ip.get("sdg_flow_id", DEFAULT_SDG_FLOW_ID),
+            "sdg_max_concurrency": ip.get("sdg_max_concurrency", DEFAULT_SDG_MAX_CONCURRENCY),
         }
         if model_auth_secret:
             pipeline_args["model_auth_secret_name"] = model_auth_secret
@@ -931,6 +942,12 @@ class GarakAdapter(FrameworkAdapter):
             "intents_s3_key": benchmark_config.get("intents_s3_key", profile.get("intents_s3_key", "")),
             "intents_format": benchmark_config.get("intents_format", profile.get("intents_format", "csv")),
             "sdg_flow_id": benchmark_config.get("sdg_flow_id", profile.get("sdg_flow_id", DEFAULT_SDG_FLOW_ID)),
+            "sdg_max_concurrency": _safe_int(
+                benchmark_config.get(
+                    "sdg_max_concurrency", profile.get("sdg_max_concurrency", DEFAULT_SDG_MAX_CONCURRENCY)
+                ),
+                DEFAULT_SDG_MAX_CONCURRENCY,
+            ),
         }
 
         if art_intents:

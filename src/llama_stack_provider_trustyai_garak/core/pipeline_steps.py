@@ -269,6 +269,7 @@ def run_sdg_generation(
     sdg_model: str,
     sdg_api_base: str,
     sdg_flow_id: str = "",
+    sdg_max_concurrency: int = 0,
 ) -> pd.DataFrame:
     """Run Synthetic Data Generation on a taxonomy.  Returns the raw DataFrame.
 
@@ -299,6 +300,7 @@ def run_sdg_generation(
         flow_id=effective_flow_id,
         api_key=effective_key,
         taxonomy=taxonomy_df,
+        max_concurrency=sdg_max_concurrency,
     )
     logger.info(
         "SDG produced %d raw rows across %d categories",

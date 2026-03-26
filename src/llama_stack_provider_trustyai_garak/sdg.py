@@ -10,7 +10,7 @@ import os
 import re
 import logging
 from typing import List, Dict, Any, NamedTuple, Optional
-from .constants import DEFAULT_SDG_FLOW_ID
+from .constants import DEFAULT_SDG_FLOW_ID, DEFAULT_SDG_MAX_CONCURRENCY
 
 import pandas
 
@@ -131,26 +131,28 @@ BASE_TAXONOMY: List[Dict[str, Any]] = [
 ]
 
 
-_DEFAULT_MAX_CONCURRENCY = 10
+def _resolve_max_concurrency(value: int = 0) -> int:
+    """Resolve effective max_concurrency.
 
-
-def _resolve_max_concurrency() -> int:
-    """Read ``SDG_MAX_CONCURRENCY`` from the environment, with validation."""
+    Precedence: explicit *value* (if >= 1) > ``SDG_MAX_CONCURRENCY`` env var > constant default.
+    """
+    if value >= 1:
+        return value
     raw = os.environ.get("SDG_MAX_CONCURRENCY")
     if raw is None:
-        return _DEFAULT_MAX_CONCURRENCY
+        return DEFAULT_SDG_MAX_CONCURRENCY
     try:
-        value = int(raw)
-        if value < 1:
+        env_val = int(raw)
+        if env_val < 1:
             raise ValueError("must be >= 1")
-        return value
+        return env_val
     except ValueError:
         logger.warning(
             "Invalid SDG_MAX_CONCURRENCY=%r, falling back to %d",
             raw,
-            _DEFAULT_MAX_CONCURRENCY,
+            DEFAULT_SDG_MAX_CONCURRENCY,
         )
-        return _DEFAULT_MAX_CONCURRENCY
+        return DEFAULT_SDG_MAX_CONCURRENCY
 
 
 class SDGResult(NamedTuple):
@@ -166,6 +168,7 @@ def generate_sdg_dataset(
     flow_id: str = DEFAULT_SDG_FLOW_ID,
     api_key: str = "dummy",
     taxonomy: Optional[pandas.DataFrame] = None,
+    max_concurrency: int = 0,
 ) -> SDGResult:
     """Generate a red-team prompt dataset using sdg_hub.
 
@@ -183,6 +186,8 @@ def generate_sdg_dataset(
         pools) and ``normalized`` (``category``, ``prompt``,
         ``description`` only).
     """
+    max_concurrency = _resolve_max_concurrency(max_concurrency)
+
     import nest_asyncio
     from sdg_hub import FlowRegistry, Flow
 
@@ -210,7 +215,6 @@ def generate_sdg_dataset(
     flow = Flow.from_yaml(flow_path)
     flow.set_model_config(model=model, api_base=api_base, api_key=api_key)
 
-    max_concurrency = _resolve_max_concurrency()
     logger.info("SDG generation: max_concurrency=%d", max_concurrency)
     result = flow.generate(df, max_concurrency=max_concurrency)
 

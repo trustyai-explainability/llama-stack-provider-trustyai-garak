@@ -17,16 +17,27 @@ import os
 import logging
 import json
 import asyncio
+from typing import Any
 from ..config import GarakRemoteConfig
 from ..base_eval import GarakEvalBase
 from llama_stack_provider_trustyai_garak import shield_scan
 from ..errors import GarakError, GarakConfigError, GarakValidationError
+from ..constants import DEFAULT_SDG_MAX_CONCURRENCY
 from dotenv import load_dotenv
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 JOB_ID_PREFIX = "garak-job-"
+
+
+def _safe_int(value: Any, fallback: int) -> int:
+    """Try to convert *value* to int; return *fallback* on failure."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        logger.warning("Could not parse %r as int, using default %d", value, fallback)
+        return fallback
 
 
 class GarakRemoteEvalAdapter(GarakEvalBase):
@@ -196,6 +207,10 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
                     "sdg_model": provider_params.get("sdg_model", ""),
                     "sdg_api_base": provider_params.get("sdg_api_base", ""),
                     "sdg_flow_id": provider_params.get("sdg_flow_id", ""),
+                    "sdg_max_concurrency": _safe_int(
+                        provider_params.get("sdg_max_concurrency", DEFAULT_SDG_MAX_CONCURRENCY),
+                        DEFAULT_SDG_MAX_CONCURRENCY,
+                    ),
                 },
                 run_name=f"garak-{benchmark_id.split('::')[-1]}-{job_id.removeprefix(JOB_ID_PREFIX)}",
                 namespace=self._config.kubeflow_config.namespace,

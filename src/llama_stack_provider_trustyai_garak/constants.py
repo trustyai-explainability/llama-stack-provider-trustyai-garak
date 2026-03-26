@@ -21,3 +21,4 @@ XDG_CONFIG_HOME = "/tmp/.config"
 
 # SDG variables
 DEFAULT_SDG_FLOW_ID = "major-sage-742"
+DEFAULT_SDG_MAX_CONCURRENCY = 10
