@@ -4,6 +4,15 @@ import os
 from pathlib import Path
 from .constants import XDG_CACHE_HOME, XDG_DATA_HOME, XDG_CONFIG_HOME
 
+_FALSY_STRINGS = frozenset({"false", "0", "no", "off", ""})
+
+
+def as_bool(value: object) -> bool:
+    """Coerce a value to bool, treating string ``'false'``/``'0'``/``'no'``/``'off'`` as False."""
+    if isinstance(value, str):
+        return value.strip().lower() not in _FALSY_STRINGS
+    return bool(value)
+
 
 def _ensure_xdg_vars() -> None:
     """
