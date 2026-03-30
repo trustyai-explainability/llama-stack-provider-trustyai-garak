@@ -419,9 +419,7 @@ def generate_sdg_dataset(
 
     normalized = pandas.DataFrame(
         {
-            "category": raw["policy_concept"].apply(
-                lambda v: re.sub(r"[^a-z]", "", str(v).lower())
-            ),
+            "category": raw["policy_concept"].apply(lambda v: re.sub(r"[^a-z]", "", str(v).lower())),
             "prompt": raw["prompt"].astype(str),
             "description": raw["concept_definition"].astype(str),
         }
