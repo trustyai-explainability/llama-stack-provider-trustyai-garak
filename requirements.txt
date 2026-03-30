@@ -460,7 +460,7 @@ pydantic==2.12.5
     #   pydantic-settings
     #   replicate
     #   sdg-hub
-pydantic-core==2.41.5
+pydantic-core==2.43.0
     # via
     #   cohere
     #   pydantic
