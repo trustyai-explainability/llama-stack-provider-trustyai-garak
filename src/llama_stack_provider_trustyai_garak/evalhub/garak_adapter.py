@@ -59,7 +59,7 @@ from ..result_utils import (
     parse_digest_from_report_content,
     parse_generations_from_report_content,
 )
-from ..utils import get_scan_base_dir
+from ..utils import get_scan_base_dir, as_bool
 from ..constants import (
     DEFAULT_TIMEOUT,
     DEFAULT_MODEL_TYPE,
@@ -561,12 +561,14 @@ class GarakAdapter(FrameworkAdapter):
         if model_auth_secret:
             pipeline_args["model_auth_secret_name"] = model_auth_secret
 
+        disable_cache = as_bool(ip.get("disable_cache", False))
         run = kfp_client.create_run_from_pipeline_func(
             evalhub_garak_pipeline,
             arguments=pipeline_args,
             run_name=f"evalhub-garak-{config.id}",
             namespace=kfp_config.namespace,
             experiment_name=kfp_config.experiment_name,
+            enable_caching=not disable_cache,
         )
 
         kfp_run_id = run.run_id
@@ -948,6 +950,7 @@ class GarakAdapter(FrameworkAdapter):
                 ),
                 DEFAULT_SDG_MAX_CONCURRENCY,
             ),
+            "disable_cache": as_bool(benchmark_config.get("disable_cache", False)),
         }
 
         if art_intents:

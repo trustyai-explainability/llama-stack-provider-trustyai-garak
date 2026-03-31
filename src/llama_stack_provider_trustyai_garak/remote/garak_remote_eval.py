@@ -23,6 +23,7 @@ from ..base_eval import GarakEvalBase
 from llama_stack_provider_trustyai_garak import shield_scan
 from ..errors import GarakError, GarakConfigError, GarakValidationError
 from ..constants import DEFAULT_SDG_MAX_CONCURRENCY
+from ..utils import as_bool
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -190,6 +191,7 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
 
             sanitised_config = redact_api_keys(cmd_config)
 
+            disable_cache = as_bool(provider_params.get("disable_cache", False))
             run = self.kfp_client.create_run_from_pipeline_func(
                 garak_scan_pipeline,
                 arguments={
@@ -215,6 +217,7 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
                 run_name=f"garak-{benchmark_id.split('::')[-1]}-{job_id.removeprefix(JOB_ID_PREFIX)}",
                 namespace=self._config.kubeflow_config.namespace,
                 experiment_name=experiment_name,
+                enable_caching=not disable_cache,
             )
 
             async with self._jobs_lock:
