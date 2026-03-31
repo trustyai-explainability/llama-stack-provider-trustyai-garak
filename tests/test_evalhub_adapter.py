@@ -554,6 +554,15 @@ class TestKFPModeExecution:
         mock_mlflow.save.assert_called_once()
         assert not hasattr(result, "mlflow_run_id") or result.mlflow_run_id is None
 
+    def test_mlflow_save_exception_is_non_fatal(self, monkeypatch, tmp_path):
+        """When callbacks.mlflow.save() raises, the job still succeeds and mlflow_run_id is unset."""
+        adapter, job, callbacks, mock_mlflow = self._setup_mlflow_test(monkeypatch, tmp_path, "mlflow-job-3", None)
+        mock_mlflow.save.side_effect = Exception("boom")
+        result = adapter.run_benchmark_job(job, callbacks)
+        assert result is not None
+        assert result.id == "mlflow-job-3"
+        assert not hasattr(result, "mlflow_run_id") or result.mlflow_run_id is None
+
 
 class TestS3Download:
     """Tests for S3 download logic in the adapter."""
