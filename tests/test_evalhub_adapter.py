@@ -2017,6 +2017,8 @@ class TestSdgGenerateComponent:
             sdg_api_base="",
             sdg_flow_id="",
             sdg_max_concurrency=10,
+            sdg_num_samples=0,
+            sdg_max_tokens=0,
             taxonomy_dataset=taxonomy,
             sdg_dataset=sdg_out,
         )
@@ -2039,6 +2041,8 @@ class TestSdgGenerateComponent:
             sdg_api_base="",
             sdg_flow_id="",
             sdg_max_concurrency=10,
+            sdg_num_samples=0,
+            sdg_max_tokens=0,
             taxonomy_dataset=taxonomy,
             sdg_dataset=sdg_out,
         )
@@ -2062,6 +2066,8 @@ class TestSdgGenerateComponent:
                 sdg_api_base="",
                 sdg_flow_id="",
                 sdg_max_concurrency=10,
+                sdg_num_samples=0,
+                sdg_max_tokens=0,
                 taxonomy_dataset=taxonomy,
                 sdg_dataset=sdg_out,
             )
@@ -2083,6 +2089,8 @@ class TestSdgGenerateComponent:
                 sdg_api_base="",
                 sdg_flow_id="",
                 sdg_max_concurrency=10,
+                sdg_num_samples=0,
+                sdg_max_tokens=0,
                 taxonomy_dataset=taxonomy,
                 sdg_dataset=sdg_out,
             )
@@ -2113,7 +2121,16 @@ class TestSdgGenerateComponent:
             }
         )
 
-        def _fake_generate_sdg(model, api_base, flow_id, api_key="dummy", taxonomy=None, max_concurrency=10):
+        def _fake_generate_sdg(
+            model,
+            api_base,
+            flow_id,
+            api_key="dummy",
+            taxonomy=None,
+            max_concurrency=10,
+            num_samples=0,
+            max_tokens=0,
+        ):
             return SDGResult(raw=raw_df, normalized=norm_df)
 
         monkeypatch.setattr(
@@ -2129,6 +2146,8 @@ class TestSdgGenerateComponent:
             sdg_api_base="http://sdg:8000",
             sdg_flow_id="test-flow",
             sdg_max_concurrency=10,
+            sdg_num_samples=0,
+            sdg_max_tokens=0,
             taxonomy_dataset=taxonomy,
             sdg_dataset=sdg_out,
         )

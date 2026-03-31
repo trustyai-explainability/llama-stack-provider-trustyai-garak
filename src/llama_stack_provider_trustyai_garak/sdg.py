@@ -363,6 +363,22 @@ class SDGResult(NamedTuple):
     normalized: pandas.DataFrame
 
 
+def _override_flow_block(flow, block_name: str, overrides: dict) -> None:
+    """Find a block by ``block_name`` and patch its config.
+
+    Searches the flow's block list by name so we are not sensitive to
+    reordering in upstream flow definitions.
+    """
+    for i, block in enumerate(flow.blocks):
+        cfg = block.get_config()
+        if cfg.get("block_name") == block_name:
+            cfg.update(overrides)
+            flow.blocks[i] = block.from_config(cfg)
+            logger.info("Overrode block %r at index %d: %s", block_name, i, overrides)
+            return
+    logger.warning("Block %r not found in flow — override skipped", block_name)
+
+
 def generate_sdg_dataset(
     model: str,
     api_base: str,
@@ -370,6 +386,8 @@ def generate_sdg_dataset(
     api_key: str = "dummy",
     taxonomy: Optional[pandas.DataFrame] = None,
     max_concurrency: int = 0,
+    num_samples: int = 0,
+    max_tokens: int = 0,
 ) -> SDGResult:
     """Generate a red-team prompt dataset using sdg_hub.
 
@@ -381,6 +399,12 @@ def generate_sdg_dataset(
     used.  Callers may supply a custom taxonomy (validated by
     :func:`~.intents.load_taxonomy_dataset`) to override the default
     harm categories.
+
+    Args:
+        num_samples: Override ``RowMultiplierBlock.num_samples`` (rows per
+            input row).  ``0`` keeps the flow default.
+        max_tokens: Override ``LLMChatBlock.max_tokens`` (token limit per
+            request).  ``0`` keeps the flow default.
 
     Returns:
         :class:`SDGResult` with ``raw`` (all columns from SDG including
@@ -415,6 +439,11 @@ def generate_sdg_dataset(
     flow_path = FlowRegistry.get_flow_path(flow_id)
     flow = Flow.from_yaml(flow_path)
     flow.set_model_config(model=model, api_base=api_base, api_key=api_key)
+
+    if num_samples >= 1:
+        _override_flow_block(flow, "replicate_rows", {"num_samples": num_samples})
+    if max_tokens >= 1:
+        _override_flow_block(flow, "generate_adversarial_prompt", {"max_tokens": max_tokens})
 
     logger.info("SDG generation: max_concurrency=%d", max_concurrency)
     result = flow.generate(df, max_concurrency=max_concurrency)

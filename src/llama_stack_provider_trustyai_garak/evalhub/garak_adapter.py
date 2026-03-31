@@ -68,6 +68,8 @@ from ..constants import (
     EXECUTION_MODE_KFP,
     DEFAULT_SDG_FLOW_ID,
     DEFAULT_SDG_MAX_CONCURRENCY,
+    DEFAULT_SDG_NUM_SAMPLES,
+    DEFAULT_SDG_MAX_TOKENS,
 )
 
 logger = logging.getLogger(__name__)
@@ -557,6 +559,8 @@ class GarakAdapter(FrameworkAdapter):
             "sdg_api_base": ip.get("sdg_api_base", ""),
             "sdg_flow_id": ip.get("sdg_flow_id", DEFAULT_SDG_FLOW_ID),
             "sdg_max_concurrency": ip.get("sdg_max_concurrency", DEFAULT_SDG_MAX_CONCURRENCY),
+            "sdg_num_samples": ip.get("sdg_num_samples", DEFAULT_SDG_NUM_SAMPLES),
+            "sdg_max_tokens": ip.get("sdg_max_tokens", DEFAULT_SDG_MAX_TOKENS),
         }
         if model_auth_secret:
             pipeline_args["model_auth_secret_name"] = model_auth_secret
@@ -949,6 +953,14 @@ class GarakAdapter(FrameworkAdapter):
                     "sdg_max_concurrency", profile.get("sdg_max_concurrency", DEFAULT_SDG_MAX_CONCURRENCY)
                 ),
                 DEFAULT_SDG_MAX_CONCURRENCY,
+            ),
+            "sdg_num_samples": _safe_int(
+                benchmark_config.get("sdg_num_samples", profile.get("sdg_num_samples", DEFAULT_SDG_NUM_SAMPLES)),
+                DEFAULT_SDG_NUM_SAMPLES,
+            ),
+            "sdg_max_tokens": _safe_int(
+                benchmark_config.get("sdg_max_tokens", profile.get("sdg_max_tokens", DEFAULT_SDG_MAX_TOKENS)),
+                DEFAULT_SDG_MAX_TOKENS,
             ),
             "disable_cache": as_bool(benchmark_config.get("disable_cache", False)),
         }
