@@ -59,7 +59,7 @@ from ..result_utils import (
     parse_digest_from_report_content,
     parse_generations_from_report_content,
 )
-from ..utils import get_scan_base_dir, as_bool
+from ..utils import get_scan_base_dir, as_bool, safe_int
 from ..constants import (
     DEFAULT_TIMEOUT,
     DEFAULT_MODEL_TYPE,
@@ -73,15 +73,6 @@ from ..constants import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _safe_int(value: Any, fallback: int) -> int:
-    """Try to convert *value* to int; return *fallback* on failure."""
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        logger.warning("Could not parse %r as int, using default %d", value, fallback)
-        return fallback
 
 
 class GarakAdapter(FrameworkAdapter):
@@ -948,17 +939,17 @@ class GarakAdapter(FrameworkAdapter):
             "intents_s3_key": benchmark_config.get("intents_s3_key", profile.get("intents_s3_key", "")),
             "intents_format": benchmark_config.get("intents_format", profile.get("intents_format", "csv")),
             "sdg_flow_id": benchmark_config.get("sdg_flow_id", profile.get("sdg_flow_id", DEFAULT_SDG_FLOW_ID)),
-            "sdg_max_concurrency": _safe_int(
+            "sdg_max_concurrency": safe_int(
                 benchmark_config.get(
                     "sdg_max_concurrency", profile.get("sdg_max_concurrency", DEFAULT_SDG_MAX_CONCURRENCY)
                 ),
                 DEFAULT_SDG_MAX_CONCURRENCY,
             ),
-            "sdg_num_samples": _safe_int(
+            "sdg_num_samples": safe_int(
                 benchmark_config.get("sdg_num_samples", profile.get("sdg_num_samples", DEFAULT_SDG_NUM_SAMPLES)),
                 DEFAULT_SDG_NUM_SAMPLES,
             ),
-            "sdg_max_tokens": _safe_int(
+            "sdg_max_tokens": safe_int(
                 benchmark_config.get("sdg_max_tokens", profile.get("sdg_max_tokens", DEFAULT_SDG_MAX_TOKENS)),
                 DEFAULT_SDG_MAX_TOKENS,
             ),

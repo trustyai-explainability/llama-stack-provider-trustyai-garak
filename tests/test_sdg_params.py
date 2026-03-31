@@ -7,7 +7,11 @@ from llama_stack_provider_trustyai_garak.sdg import (
     _resolve_max_concurrency,
     _override_flow_block,
 )
-from llama_stack_provider_trustyai_garak.constants import DEFAULT_SDG_MAX_CONCURRENCY
+from llama_stack_provider_trustyai_garak.constants import (
+    DEFAULT_SDG_MAX_CONCURRENCY,
+    DEFAULT_SDG_NUM_SAMPLES_BLOCK_NAME,
+    DEFAULT_SDG_MAX_TOKENS_BLOCK_NAME,
+)
 
 
 class TestResolveMaxConcurrency:
@@ -79,25 +83,25 @@ class TestOverrideFlowBlock:
     """_override_flow_block finds blocks by name and patches config."""
 
     def test_overrides_matching_block(self):
-        block = _make_mock_block("replicate_rows", {"num_samples": 10})
+        block = _make_mock_block(DEFAULT_SDG_NUM_SAMPLES_BLOCK_NAME, {"num_samples": 10})
         flow = MagicMock()
         flow.blocks = [block]
 
-        _override_flow_block(flow, "replicate_rows", {"num_samples": 25})
+        _override_flow_block(flow, DEFAULT_SDG_NUM_SAMPLES_BLOCK_NAME, {"num_samples": 25})
 
         block.from_config.assert_called_once()
         patched_cfg = block.from_config.call_args[0][0]
         assert patched_cfg["num_samples"] == 25
-        assert patched_cfg["block_name"] == "replicate_rows"
+        assert patched_cfg["block_name"] == DEFAULT_SDG_NUM_SAMPLES_BLOCK_NAME
         assert flow.blocks[0] is block.from_config.return_value
 
     def test_skips_non_matching_blocks(self):
         other = _make_mock_block("sample_demographics")
-        target = _make_mock_block("generate_adversarial_prompt", {"max_tokens": 2048})
+        target = _make_mock_block(DEFAULT_SDG_MAX_TOKENS_BLOCK_NAME, {"max_tokens": 2048})
         flow = MagicMock()
         flow.blocks = [other, target]
 
-        _override_flow_block(flow, "generate_adversarial_prompt", {"max_tokens": 4096})
+        _override_flow_block(flow, DEFAULT_SDG_MAX_TOKENS_BLOCK_NAME, {"max_tokens": 4096})
 
         other.from_config.assert_not_called()
         target.from_config.assert_called_once()
@@ -114,12 +118,12 @@ class TestOverrideFlowBlock:
         assert any("not found" in r.message for r in caplog.records)
 
     def test_only_overrides_first_match(self):
-        b1 = _make_mock_block("replicate_rows", {"num_samples": 10})
-        b2 = _make_mock_block("replicate_rows", {"num_samples": 10})
+        b1 = _make_mock_block(DEFAULT_SDG_NUM_SAMPLES_BLOCK_NAME, {"num_samples": 10})
+        b2 = _make_mock_block(DEFAULT_SDG_NUM_SAMPLES_BLOCK_NAME, {"num_samples": 10})
         flow = MagicMock()
         flow.blocks = [b1, b2]
 
-        _override_flow_block(flow, "replicate_rows", {"num_samples": 5})
+        _override_flow_block(flow, DEFAULT_SDG_NUM_SAMPLES_BLOCK_NAME, {"num_samples": 5})
 
         b1.from_config.assert_called_once()
         b2.from_config.assert_not_called()
@@ -170,7 +174,7 @@ class TestGenerateSDGDatasetParams:
         from llama_stack_provider_trustyai_garak.sdg import generate_sdg_dataset
 
         generate_sdg_dataset(model="m", api_base="http://x", num_samples=20)
-        mock_override.assert_any_call(mock_flow, "replicate_rows", {"num_samples": 20})
+        mock_override.assert_any_call(mock_flow, DEFAULT_SDG_NUM_SAMPLES_BLOCK_NAME, {"num_samples": 20})
 
     def test_max_tokens_override_applied(self, monkeypatch):
         monkeypatch.delenv("SDG_MAX_CONCURRENCY", raising=False)
@@ -179,7 +183,7 @@ class TestGenerateSDGDatasetParams:
         from llama_stack_provider_trustyai_garak.sdg import generate_sdg_dataset
 
         generate_sdg_dataset(model="m", api_base="http://x", max_tokens=4096)
-        mock_override.assert_any_call(mock_flow, "generate_adversarial_prompt", {"max_tokens": 4096})
+        mock_override.assert_any_call(mock_flow, DEFAULT_SDG_MAX_TOKENS_BLOCK_NAME, {"max_tokens": 4096})
 
     def test_zero_values_skip_overrides(self, monkeypatch):
         monkeypatch.delenv("SDG_MAX_CONCURRENCY", raising=False)
@@ -198,5 +202,5 @@ class TestGenerateSDGDatasetParams:
 
         generate_sdg_dataset(model="m", api_base="http://x", num_samples=15, max_tokens=8192)
         assert mock_override.call_count == 2
-        mock_override.assert_any_call(mock_flow, "replicate_rows", {"num_samples": 15})
-        mock_override.assert_any_call(mock_flow, "generate_adversarial_prompt", {"max_tokens": 8192})
+        mock_override.assert_any_call(mock_flow, DEFAULT_SDG_NUM_SAMPLES_BLOCK_NAME, {"num_samples": 15})
+        mock_override.assert_any_call(mock_flow, DEFAULT_SDG_MAX_TOKENS_BLOCK_NAME, {"max_tokens": 8192})

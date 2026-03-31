@@ -10,7 +10,12 @@ import os
 import re
 import logging
 from typing import List, Dict, Any, NamedTuple, Optional
-from .constants import DEFAULT_SDG_FLOW_ID, DEFAULT_SDG_MAX_CONCURRENCY
+from .constants import (
+    DEFAULT_SDG_FLOW_ID,
+    DEFAULT_SDG_MAX_CONCURRENCY,
+    DEFAULT_SDG_NUM_SAMPLES_BLOCK_NAME,
+    DEFAULT_SDG_MAX_TOKENS_BLOCK_NAME,
+)
 
 import pandas
 
@@ -441,9 +446,9 @@ def generate_sdg_dataset(
     flow.set_model_config(model=model, api_base=api_base, api_key=api_key)
 
     if num_samples >= 1:
-        _override_flow_block(flow, "replicate_rows", {"num_samples": num_samples})
+        _override_flow_block(flow, DEFAULT_SDG_NUM_SAMPLES_BLOCK_NAME, {"num_samples": num_samples})
     if max_tokens >= 1:
-        _override_flow_block(flow, "generate_adversarial_prompt", {"max_tokens": max_tokens})
+        _override_flow_block(flow, DEFAULT_SDG_MAX_TOKENS_BLOCK_NAME, {"max_tokens": max_tokens})
 
     logger.info("SDG generation: max_concurrency=%d", max_concurrency)
     result = flow.generate(df, max_concurrency=max_concurrency)
