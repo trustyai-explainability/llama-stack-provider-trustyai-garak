@@ -1,10 +1,22 @@
-from typing import Union
+from typing import Any, Union
+import logging
 import httpx
 import os
 from pathlib import Path
 from .constants import XDG_CACHE_HOME, XDG_DATA_HOME, XDG_CONFIG_HOME
 
+logger = logging.getLogger(__name__)
+
 _FALSY_STRINGS = frozenset({"false", "0", "no", "off", ""})
+
+
+def safe_int(value: Any, fallback: int) -> int:
+    """Try to convert *value* to int; return *fallback* on failure."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        logger.warning("Could not parse %r as int, using default %d", value, fallback)
+        return fallback
 
 
 def as_bool(value: object) -> bool:

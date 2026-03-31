@@ -2016,6 +2016,9 @@ class TestSdgGenerateComponent:
             sdg_model="",
             sdg_api_base="",
             sdg_flow_id="",
+            sdg_max_concurrency=10,
+            sdg_num_samples=0,
+            sdg_max_tokens=0,
             taxonomy_dataset=taxonomy,
             sdg_dataset=sdg_out,
         )
@@ -2037,6 +2040,9 @@ class TestSdgGenerateComponent:
             sdg_model="",
             sdg_api_base="",
             sdg_flow_id="",
+            sdg_max_concurrency=10,
+            sdg_num_samples=0,
+            sdg_max_tokens=0,
             taxonomy_dataset=taxonomy,
             sdg_dataset=sdg_out,
         )
@@ -2059,6 +2065,9 @@ class TestSdgGenerateComponent:
                 sdg_model="",
                 sdg_api_base="",
                 sdg_flow_id="",
+                sdg_max_concurrency=10,
+                sdg_num_samples=0,
+                sdg_max_tokens=0,
                 taxonomy_dataset=taxonomy,
                 sdg_dataset=sdg_out,
             )
@@ -2079,6 +2088,9 @@ class TestSdgGenerateComponent:
                 sdg_model="some-model",
                 sdg_api_base="",
                 sdg_flow_id="",
+                sdg_max_concurrency=10,
+                sdg_num_samples=0,
+                sdg_max_tokens=0,
                 taxonomy_dataset=taxonomy,
                 sdg_dataset=sdg_out,
             )
@@ -2109,7 +2121,16 @@ class TestSdgGenerateComponent:
             }
         )
 
-        def _fake_generate_sdg(model, api_base, flow_id, api_key="dummy", taxonomy=None):
+        def _fake_generate_sdg(
+            model,
+            api_base,
+            flow_id,
+            api_key="dummy",
+            taxonomy=None,
+            max_concurrency=10,
+            num_samples=0,
+            max_tokens=0,
+        ):
             return SDGResult(raw=raw_df, normalized=norm_df)
 
         monkeypatch.setattr(
@@ -2124,6 +2145,9 @@ class TestSdgGenerateComponent:
             sdg_model="test-model",
             sdg_api_base="http://sdg:8000",
             sdg_flow_id="test-flow",
+            sdg_max_concurrency=10,
+            sdg_num_samples=0,
+            sdg_max_tokens=0,
             taxonomy_dataset=taxonomy,
             sdg_dataset=sdg_out,
         )
@@ -2132,6 +2156,82 @@ class TestSdgGenerateComponent:
         assert "policy_concept" in raw_result.columns
         assert "prompt" in raw_result.columns
         assert len(raw_result) == 1
+
+    def test_non_default_sdg_params_plumbed_through(self, monkeypatch, tmp_path):
+        """Non-default sdg_max_concurrency/num_samples/max_tokens reach generate_sdg_dataset."""
+        from unittest.mock import MagicMock
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import sdg_generate
+        from llama_stack_provider_trustyai_garak.sdg import SDGResult
+        import pandas as pd
+
+        taxonomy = _FakeArtifact(str(tmp_path / "taxonomy.csv"))
+        Path(taxonomy.path).write_text("policy_concept,concept_definition\nA,B\n")
+        sdg_out = _FakeArtifact(str(tmp_path / "sdg.csv"))
+
+        raw_df = pd.DataFrame({"policy_concept": ["A"], "prompt": ["p"], "concept_definition": ["B"]})
+        mock_generate = MagicMock(return_value=SDGResult(raw=raw_df, normalized=raw_df))
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.sdg.generate_sdg_dataset",
+            mock_generate,
+        )
+
+        fn = _get_component_fn(sdg_generate)
+        fn(
+            art_intents=True,
+            intents_s3_key="",
+            sdg_model="test-model",
+            sdg_api_base="http://sdg:8000",
+            sdg_flow_id="test-flow",
+            sdg_max_concurrency=3,
+            sdg_num_samples=25,
+            sdg_max_tokens=4096,
+            taxonomy_dataset=taxonomy,
+            sdg_dataset=sdg_out,
+        )
+
+        mock_generate.assert_called_once()
+        kwargs = mock_generate.call_args.kwargs
+        assert kwargs["max_concurrency"] == 3
+        assert kwargs["num_samples"] == 25
+        assert kwargs["max_tokens"] == 4096
+
+    def test_default_sdg_params_when_zeros(self, monkeypatch, tmp_path):
+        """When sdg params are 0 (default), they are passed as 0 and generate_sdg_dataset handles the fallback."""
+        from unittest.mock import MagicMock
+        from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import sdg_generate
+        from llama_stack_provider_trustyai_garak.sdg import SDGResult
+        import pandas as pd
+
+        taxonomy = _FakeArtifact(str(tmp_path / "taxonomy.csv"))
+        Path(taxonomy.path).write_text("policy_concept,concept_definition\nA,B\n")
+        sdg_out = _FakeArtifact(str(tmp_path / "sdg.csv"))
+
+        raw_df = pd.DataFrame({"policy_concept": ["A"], "prompt": ["p"], "concept_definition": ["B"]})
+        mock_generate = MagicMock(return_value=SDGResult(raw=raw_df, normalized=raw_df))
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.sdg.generate_sdg_dataset",
+            mock_generate,
+        )
+
+        fn = _get_component_fn(sdg_generate)
+        fn(
+            art_intents=True,
+            intents_s3_key="",
+            sdg_model="test-model",
+            sdg_api_base="http://sdg:8000",
+            sdg_flow_id="test-flow",
+            sdg_max_concurrency=0,
+            sdg_num_samples=0,
+            sdg_max_tokens=0,
+            taxonomy_dataset=taxonomy,
+            sdg_dataset=sdg_out,
+        )
+
+        mock_generate.assert_called_once()
+        kwargs = mock_generate.call_args.kwargs
+        assert kwargs["max_concurrency"] == 0
+        assert kwargs["num_samples"] == 0
+        assert kwargs["max_tokens"] == 0
 
 
 class TestPreparePromptsComponent:

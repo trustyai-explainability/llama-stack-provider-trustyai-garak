@@ -10,7 +10,12 @@ import os
 import re
 import logging
 from typing import List, Dict, Any, NamedTuple, Optional
-from .constants import DEFAULT_SDG_FLOW_ID
+from .constants import (
+    DEFAULT_SDG_FLOW_ID,
+    DEFAULT_SDG_MAX_CONCURRENCY,
+    DEFAULT_SDG_NUM_SAMPLES_BLOCK_NAME,
+    DEFAULT_SDG_MAX_TOKENS_BLOCK_NAME,
+)
 
 import pandas
 
@@ -332,26 +337,28 @@ BASE_TAXONOMY: List[Dict[str, Any]] = [
 ]
 
 
-_DEFAULT_MAX_CONCURRENCY = 10
+def _resolve_max_concurrency(value: int = 0) -> int:
+    """Resolve effective max_concurrency.
 
-
-def _resolve_max_concurrency() -> int:
-    """Read ``SDG_MAX_CONCURRENCY`` from the environment, with validation."""
+    Precedence: explicit *value* (if >= 1) > ``SDG_MAX_CONCURRENCY`` env var > constant default.
+    """
+    if value >= 1:
+        return value
     raw = os.environ.get("SDG_MAX_CONCURRENCY")
     if raw is None:
-        return _DEFAULT_MAX_CONCURRENCY
+        return DEFAULT_SDG_MAX_CONCURRENCY
     try:
-        value = int(raw)
-        if value < 1:
+        env_val = int(raw)
+        if env_val < 1:
             raise ValueError("must be >= 1")
-        return value
+        return env_val
     except ValueError:
         logger.warning(
             "Invalid SDG_MAX_CONCURRENCY=%r, falling back to %d",
             raw,
-            _DEFAULT_MAX_CONCURRENCY,
+            DEFAULT_SDG_MAX_CONCURRENCY,
         )
-        return _DEFAULT_MAX_CONCURRENCY
+        return DEFAULT_SDG_MAX_CONCURRENCY
 
 
 class SDGResult(NamedTuple):
@@ -361,12 +368,31 @@ class SDGResult(NamedTuple):
     normalized: pandas.DataFrame
 
 
+def _override_flow_block(flow, block_name: str, overrides: dict) -> None:
+    """Find a block by ``block_name`` and patch its config.
+
+    Searches the flow's block list by name so we are not sensitive to
+    reordering in upstream flow definitions.
+    """
+    for i, block in enumerate(flow.blocks):
+        cfg = block.get_config()
+        if cfg.get("block_name") == block_name:
+            cfg.update(overrides)
+            flow.blocks[i] = block.from_config(cfg)
+            logger.info("Overrode block %r at index %d: %s", block_name, i, overrides)
+            return
+    logger.warning("Block %r not found in flow — override skipped", block_name)
+
+
 def generate_sdg_dataset(
     model: str,
     api_base: str,
     flow_id: str = DEFAULT_SDG_FLOW_ID,
     api_key: str = "dummy",
     taxonomy: Optional[pandas.DataFrame] = None,
+    max_concurrency: int = 0,
+    num_samples: int = 0,
+    max_tokens: int = 0,
 ) -> SDGResult:
     """Generate a red-team prompt dataset using sdg_hub.
 
@@ -379,11 +405,19 @@ def generate_sdg_dataset(
     :func:`~.intents.load_taxonomy_dataset`) to override the default
     harm categories.
 
+    Args:
+        num_samples: Override ``RowMultiplierBlock.num_samples`` (rows per
+            input row).  ``0`` keeps the flow default.
+        max_tokens: Override ``LLMChatBlock.max_tokens`` (token limit per
+            request).  ``0`` keeps the flow default.
+
     Returns:
         :class:`SDGResult` with ``raw`` (all columns from SDG including
         pools) and ``normalized`` (``category``, ``prompt``,
         ``description`` only).
     """
+    max_concurrency = _resolve_max_concurrency(max_concurrency)
+
     import nest_asyncio
     from sdg_hub import FlowRegistry, Flow
 
@@ -411,7 +445,11 @@ def generate_sdg_dataset(
     flow = Flow.from_yaml(flow_path)
     flow.set_model_config(model=model, api_base=api_base, api_key=api_key)
 
-    max_concurrency = _resolve_max_concurrency()
+    if num_samples >= 1:
+        _override_flow_block(flow, DEFAULT_SDG_NUM_SAMPLES_BLOCK_NAME, {"num_samples": num_samples})
+    if max_tokens >= 1:
+        _override_flow_block(flow, DEFAULT_SDG_MAX_TOKENS_BLOCK_NAME, {"max_tokens": max_tokens})
+
     logger.info("SDG generation: max_concurrency=%d", max_concurrency)
     result = flow.generate(df, max_concurrency=max_concurrency)
 

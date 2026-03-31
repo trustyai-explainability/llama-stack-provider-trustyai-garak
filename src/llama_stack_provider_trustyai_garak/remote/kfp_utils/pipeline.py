@@ -13,7 +13,12 @@ Mirrors the EvalHub KFP pipeline structure:
 from kfp import dsl
 from dotenv import load_dotenv
 import logging
-from ...constants import DEFAULT_SDG_FLOW_ID
+from ...constants import (
+    DEFAULT_SDG_FLOW_ID,
+    DEFAULT_SDG_MAX_CONCURRENCY,
+    DEFAULT_SDG_NUM_SAMPLES,
+    DEFAULT_SDG_MAX_TOKENS,
+)
 
 from .components import (
     validate,
@@ -45,6 +50,9 @@ def garak_scan_pipeline(
     sdg_model: str = "",
     sdg_api_base: str = "",
     sdg_flow_id: str = DEFAULT_SDG_FLOW_ID,
+    sdg_max_concurrency: int = DEFAULT_SDG_MAX_CONCURRENCY,
+    sdg_num_samples: int = DEFAULT_SDG_NUM_SAMPLES,
+    sdg_max_tokens: int = DEFAULT_SDG_MAX_TOKENS,
 ):
     """Six-step pipeline: validate, resolve taxonomy, SDG, prepare prompts, scan, parse.
 
@@ -86,6 +94,9 @@ def garak_scan_pipeline(
         sdg_model=sdg_model,
         sdg_api_base=sdg_api_base,
         sdg_flow_id=sdg_flow_id,
+        sdg_max_concurrency=sdg_max_concurrency,
+        sdg_num_samples=sdg_num_samples,
+        sdg_max_tokens=sdg_max_tokens,
         taxonomy_dataset=taxonomy_task.outputs["taxonomy_dataset"],
     )
     sdg_task.set_caching_options(True)

@@ -21,7 +21,8 @@ from ..config import GarakRemoteConfig
 from ..base_eval import GarakEvalBase
 from llama_stack_provider_trustyai_garak import shield_scan
 from ..errors import GarakError, GarakConfigError, GarakValidationError
-from ..utils import as_bool
+from ..constants import DEFAULT_SDG_MAX_CONCURRENCY, DEFAULT_SDG_NUM_SAMPLES, DEFAULT_SDG_MAX_TOKENS
+from ..utils import as_bool, safe_int
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -198,6 +199,18 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
                     "sdg_model": provider_params.get("sdg_model", ""),
                     "sdg_api_base": provider_params.get("sdg_api_base", ""),
                     "sdg_flow_id": provider_params.get("sdg_flow_id", ""),
+                    "sdg_max_concurrency": safe_int(
+                        provider_params.get("sdg_max_concurrency", DEFAULT_SDG_MAX_CONCURRENCY),
+                        DEFAULT_SDG_MAX_CONCURRENCY,
+                    ),
+                    "sdg_num_samples": safe_int(
+                        provider_params.get("sdg_num_samples", DEFAULT_SDG_NUM_SAMPLES),
+                        DEFAULT_SDG_NUM_SAMPLES,
+                    ),
+                    "sdg_max_tokens": safe_int(
+                        provider_params.get("sdg_max_tokens", DEFAULT_SDG_MAX_TOKENS),
+                        DEFAULT_SDG_MAX_TOKENS,
+                    ),
                 },
                 run_name=f"garak-{benchmark_id.split('::')[-1]}-{job_id.removeprefix(JOB_ID_PREFIX)}",
                 namespace=self._config.kubeflow_config.namespace,

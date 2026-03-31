@@ -10,7 +10,13 @@ __pycache__/
 dist/
 .env
 _providers.d/
-
+meta/
+scan_out/
+**.env
+*.csv
+*.ipynb
+*.json
+*.cpu
 # Hermeto outputs (generated during testing)
 hermeto-output*/
 hermeto*.env

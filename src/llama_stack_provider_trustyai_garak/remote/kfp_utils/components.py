@@ -228,6 +228,9 @@ def sdg_generate(
     sdg_model: str,
     sdg_api_base: str,
     sdg_flow_id: str,
+    sdg_max_concurrency: int,
+    sdg_num_samples: int,
+    sdg_max_tokens: int,
     taxonomy_dataset: dsl.Input[dsl.Dataset],
     sdg_dataset: dsl.Output[dsl.Dataset],
 ):
@@ -269,6 +272,9 @@ def sdg_generate(
         sdg_model=sdg_model,
         sdg_api_base=sdg_api_base,
         sdg_flow_id=sdg_flow_id,
+        sdg_max_concurrency=sdg_max_concurrency,
+        sdg_num_samples=sdg_num_samples,
+        sdg_max_tokens=sdg_max_tokens,
     )
     raw_df.to_csv(sdg_dataset.path, index=False)
     log.info("Wrote %d raw SDG rows to artifact", len(raw_df))

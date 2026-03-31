@@ -31,7 +31,12 @@ from typing import NamedTuple
 
 from kfp import dsl, kubernetes
 
-from ..constants import DEFAULT_SDG_FLOW_ID
+from ..constants import (
+    DEFAULT_SDG_FLOW_ID,
+    DEFAULT_SDG_MAX_CONCURRENCY,
+    DEFAULT_SDG_NUM_SAMPLES,
+    DEFAULT_SDG_MAX_TOKENS,
+)
 from ..core.pipeline_steps import MODEL_AUTH_MOUNT_PATH
 
 logger = logging.getLogger(__name__)
@@ -254,6 +259,9 @@ def sdg_generate(
     sdg_model: str,
     sdg_api_base: str,
     sdg_flow_id: str,
+    sdg_max_concurrency: int,
+    sdg_num_samples: int,
+    sdg_max_tokens: int,
     taxonomy_dataset: dsl.Input[dsl.Dataset],
     sdg_dataset: dsl.Output[dsl.Dataset],
 ):
@@ -306,6 +314,9 @@ def sdg_generate(
         sdg_model=sdg_model,
         sdg_api_base=sdg_api_base,
         sdg_flow_id=sdg_flow_id,
+        sdg_max_concurrency=sdg_max_concurrency,
+        sdg_num_samples=sdg_num_samples,
+        sdg_max_tokens=sdg_max_tokens,
     )
     raw_df.to_csv(sdg_dataset.path, index=False)
     log.info("Wrote %d raw SDG rows to artifact", len(raw_df))
@@ -625,6 +636,9 @@ def evalhub_garak_pipeline(
     sdg_model: str = "",
     sdg_api_base: str = "",
     sdg_flow_id: str = DEFAULT_SDG_FLOW_ID,
+    sdg_max_concurrency: int = DEFAULT_SDG_MAX_CONCURRENCY,
+    sdg_num_samples: int = DEFAULT_SDG_NUM_SAMPLES,
+    sdg_max_tokens: int = DEFAULT_SDG_MAX_TOKENS,
 ):
     """Six-step pipeline: validate, resolve taxonomy, SDG, prepare prompts, scan, write outputs.
 
@@ -682,6 +696,9 @@ def evalhub_garak_pipeline(
         sdg_model=sdg_model,
         sdg_api_base=sdg_api_base,
         sdg_flow_id=sdg_flow_id,
+        sdg_max_concurrency=sdg_max_concurrency,
+        sdg_num_samples=sdg_num_samples,
+        sdg_max_tokens=sdg_max_tokens,
         taxonomy_dataset=taxonomy_task.outputs["taxonomy_dataset"],
     )
     sdg_task.set_caching_options(True)
