@@ -486,6 +486,83 @@ class TestKFPModeExecution:
         assert kfp_called["value"] is False
         assert result.evaluation_metadata["execution_mode"] == "simple"
 
+    def _setup_mlflow_test(self, monkeypatch, tmp_path, job_id, mlflow_return_value):
+        """Common setup for MLflow tests: mocks garak scan, parse, and injects fake mlflow module."""
+        import types
+        from unittest.mock import MagicMock
+
+        mlflow_mod = types.ModuleType("evalhub.adapter.mlflow")
+        mlflow_mod.MlflowArtifact = lambda name, data, mime: SimpleNamespace(name=name, data=data, mime_type=mime)
+        monkeypatch.setitem(__import__("sys").modules, "evalhub.adapter.mlflow", mlflow_mod)
+
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+        monkeypatch.setattr(module.GarakAdapter, "_run_via_kfp", lambda *a, **kw: None)
+
+        report_prefix = tmp_path / job_id / "scan"
+        report_prefix.parent.mkdir(parents=True)
+        report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+
+        def _fake_run_garak_scan(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
+            report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+            return module.GarakScanResult(returncode=0, stdout="", stderr="", report_prefix=report_prefix)
+
+        monkeypatch.setattr(module, "run_garak_scan", _fake_run_garak_scan)
+        monkeypatch.setattr(module, "convert_to_avid_report", lambda _path: True)
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_parse_results",
+            lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
+        )
+
+        mock_mlflow = MagicMock()
+        mock_mlflow.save.return_value = mlflow_return_value
+
+        class _Callbacks:
+            mlflow = mock_mlflow
+
+            def report_status(self, _update):
+                return None
+
+            def create_oci_artifact(self, _spec):
+                return SimpleNamespace(reference="oci://ref", digest="sha256:test")
+
+        job = SimpleNamespace(
+            id=job_id,
+            benchmark_id="trustyai_garak::quick",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
+            parameters={},
+            exports=None,
+        )
+        return adapter, job, _Callbacks(), mock_mlflow
+
+    def test_mlflow_run_id_saved_on_results(self, monkeypatch, tmp_path):
+        """When callbacks.mlflow.save() returns a run ID, it is stored on results."""
+        adapter, job, callbacks, mock_mlflow = self._setup_mlflow_test(
+            monkeypatch, tmp_path, "mlflow-job", "run-abc-123"
+        )
+        result = adapter.run_benchmark_job(job, callbacks)
+        mock_mlflow.save.assert_called_once()
+        assert result.mlflow_run_id == "run-abc-123"
+
+    def test_mlflow_run_id_not_set_when_save_returns_none(self, monkeypatch, tmp_path):
+        """When callbacks.mlflow.save() returns None, mlflow_run_id is not set."""
+        adapter, job, callbacks, mock_mlflow = self._setup_mlflow_test(monkeypatch, tmp_path, "mlflow-job-2", None)
+        result = adapter.run_benchmark_job(job, callbacks)
+        mock_mlflow.save.assert_called_once()
+        assert not hasattr(result, "mlflow_run_id") or result.mlflow_run_id is None
+
+    def test_mlflow_save_exception_is_non_fatal(self, monkeypatch, tmp_path):
+        """When callbacks.mlflow.save() raises, the job still succeeds and mlflow_run_id is unset."""
+        adapter, job, callbacks, mock_mlflow = self._setup_mlflow_test(monkeypatch, tmp_path, "mlflow-job-3", None)
+        mock_mlflow.save.side_effect = Exception("boom")
+        result = adapter.run_benchmark_job(job, callbacks)
+        assert result is not None
+        assert result.id == "mlflow-job-3"
+        assert not hasattr(result, "mlflow_run_id") or result.mlflow_run_id is None
+
 
 class TestS3Download:
     """Tests for S3 download logic in the adapter."""

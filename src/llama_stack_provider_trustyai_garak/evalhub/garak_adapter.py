@@ -346,8 +346,10 @@ class GarakAdapter(FrameworkAdapter):
                         )
                     )
 
-                callbacks.mlflow.save(results, config, artifacts=mlflow_artifacts)
-                logger.info("Saved results and %d artifacts to MLflow", len(mlflow_artifacts))
+                rid = callbacks.mlflow.save(results, config, artifacts=mlflow_artifacts)
+                if rid:
+                    results.mlflow_run_id = rid
+                logger.info("Saved results and %d artifacts to MLflow with run ID: %s", len(mlflow_artifacts), rid)
             except Exception as mlflow_exc:
                 logger.warning("MLflow save failed (non-fatal): %s", mlflow_exc)
 
