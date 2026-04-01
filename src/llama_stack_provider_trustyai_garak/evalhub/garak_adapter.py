@@ -1437,10 +1437,10 @@ class _GarakCallbacks(DefaultCallbacks):
 
             except self.httpx.HTTPStatusError as e:
                 error = f"Failed to send results to evalhub (HTTP {e.response.status_code}): {e}"
-                logger.error(error)
+                logger.exception(error)
             except Exception as e:
                 error = f"Failed to send results to evalhub: {e}"
-                logger.error(error)
+                logger.exception(error)
 
         logger.info(
             "Job %s completed | Benchmark: %s | Model: %s | Score: %s | Examples: %s | Duration: %.2fs",
