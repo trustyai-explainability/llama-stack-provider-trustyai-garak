@@ -1,3 +1,5 @@
+RHAI_INDEX_URL := https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9/simple/
+
 .PHONY: test coverage lint format typecheck check build lock install install-dev
 
 test:
@@ -25,9 +27,9 @@ lock:
 		--python-platform linux \
 		--extra inline \
 		--emit-index-url \
-		--default-index https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9-test/simple/ \
+		--default-index $(RHAI_INDEX_URL) \
 		pyproject.toml \
-		--index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9-test/simple/ \
+		--index-url $(RHAI_INDEX_URL) \
 		-o requirements.txt
 
 install:

@@ -3,7 +3,7 @@ repos:
     hooks:
       - id: sync-requirements
         name: Regenerate requirements.txt from pyproject.toml
-        entry: bash -c 'uv pip compile --python-platform linux --extra inline --emit-index-url --default-index https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9-test/simple/ pyproject.toml --index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9-test/simple/ -o requirements.txt'
+        entry: make lock
         language: system
         files: ^pyproject\.toml$
         pass_filenames: false

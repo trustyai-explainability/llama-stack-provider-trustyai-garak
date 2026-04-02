@@ -31,15 +31,7 @@ jobs:
         run: python -m pip install --upgrade pip uv
 
       - name: Regenerate requirements.txt
-        run: |
-          uv pip compile \
-            --python-platform linux \
-            --extra inline \
-            --emit-index-url \
-            --default-index https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9-test/simple/ \
-            pyproject.toml \
-            --index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9-test/simple/ \
-            -o requirements.txt
+        run: make lock
 
       - name: Commit if changed
         run: |
