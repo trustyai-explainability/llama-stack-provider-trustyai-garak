@@ -25,9 +25,9 @@ lock:
 		--python-platform linux \
 		--extra inline \
 		--emit-index-url \
-		--default-index https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9-test/simple/ \
+		--default-index https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9/simple/ \
 		pyproject.toml \
-		--index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9-test/simple/ \
+		--index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9/simple/ \
 		-o requirements.txt
 
 install:
