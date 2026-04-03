@@ -1476,6 +1476,8 @@ def main(adapter_cls: type[GarakAdapter] = GarakAdapter) -> None:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
+    callbacks: _GarakCallbacks | None = None
+    exit_error: str | None = None
     try:
         job_spec_path = os.getenv("EVALHUB_JOB_SPEC_PATH", "/meta/job.json")
         adapter = adapter_cls(job_spec_path=job_spec_path)
@@ -1508,15 +1510,20 @@ def main(adapter_cls: type[GarakAdapter] = GarakAdapter) -> None:
         sys.exit(0)
 
     except FileNotFoundError as e:
-        logger.error(f"Job spec not found: {e}")
-        logger.error("Set EVALHUB_JOB_SPEC_PATH or ensure job spec exists at default location")
+        exit_error = f"Job spec not found: {e}"
+        logger.exception(f"{exit_error}. Set EVALHUB_JOB_SPEC_PATH or ensure job spec exists at default location")
         sys.exit(1)
     except ValueError as e:
-        logger.error(f"Configuration error: {e}")
+        exit_error = f"Configuration error: {e}"
+        logger.exception(exit_error)
         sys.exit(1)
-    except Exception:
-        logger.exception("Job failed")
+    except Exception as e:
+        exit_error = f"Job failed: {e}"
+        logger.exception(exit_error)
         sys.exit(1)
+    finally:
+        if callbacks:
+            callbacks._signal_termination(exit_error)
 
 
 if __name__ == "__main__":
