@@ -115,6 +115,19 @@ def test_resolve_timeout_seconds_precedence():
     assert resolve_timeout_seconds({}, profile, 600) == 3600
     assert resolve_timeout_seconds({}, {}, 600) == 600
 
+    assert resolve_timeout_seconds({"timeout_seconds": 0}, profile, 600) == 0
+    assert resolve_timeout_seconds({"timeout": 0}, profile, 600) == 0
+    assert resolve_timeout_seconds({}, {"timeout": 0}, 600) == 0
+
+    # Negative values are rejected and fall through to the next source
+    assert resolve_timeout_seconds({"timeout_seconds": -1}, profile, 600) == 3600
+    assert resolve_timeout_seconds({"timeout": -1}, {}, 600) == 600
+    assert resolve_timeout_seconds({}, {"timeout": -5}, 600) == 600
+
+    # Non-numeric values are ignored and fall through
+    assert resolve_timeout_seconds({"timeout_seconds": "abc"}, profile, 600) == 3600
+    assert resolve_timeout_seconds({"timeout": None}, profile, 600) == 3600
+
 
 def test_run_benchmark_job_uses_garak_config_file(monkeypatch, tmp_path):
     module = _load_evalhub_garak_adapter(monkeypatch)

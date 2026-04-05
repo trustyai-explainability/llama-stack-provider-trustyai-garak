@@ -209,11 +209,10 @@ class GarakScanConfig(BaseModel):
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
                     probe_tags="owasp:llm",
-                    soft_probe_prompt_cap=500,
                 ),
                 reporting=GarakReportingConfig(taxonomy="owasp"),
             ).to_dict(),
-            "timeout": 60 * 60 * 12,  # 12 hours
+            "timeout": 0,
         },
         "trustyai_garak::avid": {
             "name": "AVID Taxonomy",
@@ -222,11 +221,10 @@ class GarakScanConfig(BaseModel):
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
                     probe_tags="avid-effect",
-                    soft_probe_prompt_cap=500,
                 ),
                 reporting=GarakReportingConfig(taxonomy="avid-effect"),
             ).to_dict(),
-            "timeout": 60 * 60 * 12,  # 12 hours
+            "timeout": 0,
         },
         "trustyai_garak::avid_security": {
             "name": "AVID Security Taxonomy",
@@ -235,11 +233,10 @@ class GarakScanConfig(BaseModel):
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
                     probe_tags="avid-effect:security",
-                    soft_probe_prompt_cap=500,
                 ),
                 reporting=GarakReportingConfig(taxonomy="avid-effect"),
             ).to_dict(),
-            "timeout": 60 * 60 * 12,  # 12 hours
+            "timeout": 0,
         },
         "trustyai_garak::avid_ethics": {
             "name": "AVID Ethics Taxonomy",
@@ -248,11 +245,10 @@ class GarakScanConfig(BaseModel):
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
                     probe_tags="avid-effect:ethics",
-                    soft_probe_prompt_cap=500,
                 ),
                 reporting=GarakReportingConfig(taxonomy="avid-effect"),
             ).to_dict(),
-            "timeout": 60 * 60 * 1,  # 1 hour
+            "timeout": 0,
         },
         "trustyai_garak::avid_performance": {
             "name": "AVID Performance Taxonomy",
@@ -261,11 +257,10 @@ class GarakScanConfig(BaseModel):
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
                     probe_tags="avid-effect:performance",
-                    soft_probe_prompt_cap=500,
                 ),
                 reporting=GarakReportingConfig(taxonomy="avid-effect"),
             ).to_dict(),
-            "timeout": 60 * 60 * 1,  # 1 hour
+            "timeout": 0,
         },
         "trustyai_garak::quality": {
             "name": "Quality issues",
@@ -273,11 +268,10 @@ class GarakScanConfig(BaseModel):
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
                     probe_tags="quality",
-                    soft_probe_prompt_cap=500,
                 ),
                 reporting=GarakReportingConfig(taxonomy="quality"),
             ).to_dict(),
-            "timeout": 60 * 60 * 12,  # 12 hours
+            "timeout": 0,
         },
         "trustyai_garak::cwe": {
             "name": "Common Weakness Enumeration",
@@ -286,11 +280,10 @@ class GarakScanConfig(BaseModel):
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
                     probe_tags="cwe",
-                    soft_probe_prompt_cap=500,
                 ),
                 reporting=GarakReportingConfig(taxonomy="cwe"),
             ).to_dict(),
-            "timeout": 60 * 60 * 2,  # 2 hours
+            "timeout": 0,
         },
         "trustyai_garak::intents": {
             "name": "Intents-based Risk Assessment",
@@ -390,7 +383,7 @@ class GarakScanConfig(BaseModel):
                     serve_detectorless_intents=True,
                 ),
             ).to_dict(),
-            "timeout": 60 * 60 * 12,  # 12 hours
+            "timeout": 0,
             "art_intents": True,
             "sdg_model": None,
             "sdg_api_base": None,
