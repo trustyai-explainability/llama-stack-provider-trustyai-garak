@@ -7,7 +7,7 @@ DEFAULT_GARAK_PROVIDER_IMAGE = "quay.io/trustyai/trustyai-garak-lls-provider-dsp
 KUBEFLOW_CANDIDATE_NAMESPACES = ["redhat-ods-applications", "opendatahub"]
 
 # Default values
-DEFAULT_TIMEOUT = 600
+DEFAULT_TIMEOUT = 0
 DEFAULT_MODEL_TYPE = "openai.OpenAICompatible"
 DEFAULT_EVAL_THRESHOLD = 0.5
 

@@ -126,7 +126,11 @@ def resolve_timeout_seconds(
     profile: Mapping[str, Any],
     default_timeout: int = 600,
 ) -> int:
-    """Resolve timeout with explicit override, profile fallback, then default."""
+    """Resolve timeout with explicit override, profile fallback, then default.
+
+    A value of 0 means no timeout (scan runs until completion).
+    Only negative values are rejected.
+    """
     bc = dict(benchmark_config or {})
 
     timeouts = [bc.get("timeout_seconds"), bc.get("timeout"), profile.get("timeout")]
@@ -134,7 +138,7 @@ def resolve_timeout_seconds(
         if timeout is not None:
             try:
                 int_timeout = int(timeout)
-                if int_timeout > 0:
+                if int_timeout >= 0:
                     return int_timeout
             except (TypeError, ValueError):
                 pass
