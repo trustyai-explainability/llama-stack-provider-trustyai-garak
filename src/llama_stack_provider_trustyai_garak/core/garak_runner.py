@@ -174,7 +174,11 @@ def run_garak_scan(
     stderr_thread.start()
 
     try:
-        process.wait(timeout=timeout_seconds)
+        if timeout_seconds is None or timeout_seconds <= 0:
+            effective_timeout = None
+        else:
+            effective_timeout = timeout_seconds
+        process.wait(timeout=effective_timeout)
         returncode = process.returncode
 
         if returncode == 0:
