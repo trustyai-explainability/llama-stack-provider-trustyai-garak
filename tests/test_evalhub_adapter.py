@@ -189,6 +189,88 @@ def test_run_benchmark_job_uses_garak_config_file(monkeypatch, tmp_path):
     assert captured["timeout_seconds"] == 42
 
 
+def test_simple_mode_passes_hf_cache_env(monkeypatch, tmp_path):
+    """When hf_cache_path is set, _run_simple passes HF_HUB_CACHE via env to run_garak_scan."""
+    module = _load_evalhub_garak_adapter(monkeypatch)
+    adapter = module.GarakAdapter()
+    monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+    captured: dict[str, object] = {}
+
+    def _fake_run_garak_scan(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
+        captured["env"] = env
+        report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+        return module.GarakScanResult(returncode=0, stdout="", stderr="", report_prefix=report_prefix)
+
+    monkeypatch.setattr(module, "run_garak_scan", _fake_run_garak_scan)
+    monkeypatch.setattr(module, "convert_to_avid_report", lambda _path: True)
+    monkeypatch.setattr(
+        module.GarakAdapter,
+        "_parse_results",
+        lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
+    )
+
+    class _Callbacks:
+        def report_status(self, _update):
+            return None
+
+        def create_oci_artifact(self, _spec):
+            return SimpleNamespace(reference="oci://ref", digest="sha256:test")
+
+    job = SimpleNamespace(
+        id="hf-cache-job",
+        benchmark_id="trustyai_garak::quick",
+        benchmark_index=0,
+        model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
+        parameters={"hf_cache_path": "/test_data/hf-cache"},
+        exports=None,
+    )
+
+    adapter.run_benchmark_job(job, _Callbacks())
+    assert captured["env"] == {"HF_HUB_CACHE": "/test_data/hf-cache"}
+
+
+def test_simple_mode_no_hf_cache_passes_none_env(monkeypatch, tmp_path):
+    """When hf_cache_path is not set, env=None is passed (default behavior)."""
+    module = _load_evalhub_garak_adapter(monkeypatch)
+    adapter = module.GarakAdapter()
+    monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+    captured: dict[str, object] = {}
+
+    def _fake_run_garak_scan(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
+        captured["env"] = env
+        report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+        return module.GarakScanResult(returncode=0, stdout="", stderr="", report_prefix=report_prefix)
+
+    monkeypatch.setattr(module, "run_garak_scan", _fake_run_garak_scan)
+    monkeypatch.setattr(module, "convert_to_avid_report", lambda _path: True)
+    monkeypatch.setattr(
+        module.GarakAdapter,
+        "_parse_results",
+        lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
+    )
+
+    class _Callbacks:
+        def report_status(self, _update):
+            return None
+
+        def create_oci_artifact(self, _spec):
+            return SimpleNamespace(reference="oci://ref", digest="sha256:test")
+
+    job = SimpleNamespace(
+        id="no-hf-cache-job",
+        benchmark_id="trustyai_garak::quick",
+        benchmark_index=0,
+        model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
+        parameters={},
+        exports=None,
+    )
+
+    adapter.run_benchmark_job(job, _Callbacks())
+    assert captured["env"] is None
+
+
 def test_parse_results_uses_overall_without_double_count(monkeypatch, tmp_path):
     module = _load_evalhub_garak_adapter(monkeypatch)
     adapter = module.GarakAdapter()
@@ -245,8 +327,11 @@ def test_parse_results_uses_overall_without_double_count(monkeypatch, tmp_path):
     )
     metrics, overall_score, num_examples, overall_summary = adapter._parse_results(result, 0.5)
 
-    assert len(metrics) == 1
-    assert metrics[0].metric_name == "probe.alpha_asr"
+    assert len(metrics) == 2
+    assert metrics[0].metric_name == "attack_success_rate"
+    assert metrics[0].metric_value == 30.0
+    assert metrics[0].num_samples == 10
+    assert metrics[1].metric_name == "probe.alpha_asr"
     assert overall_score == 30.0
     assert num_examples == 10
     assert overall_summary["tbsa"] == 4.1
@@ -1882,15 +1967,18 @@ class TestParseResultsIntentsMode:
             art_intents=True,
         )
 
-        assert len(metrics) == 1
-        assert metrics[0].metric_name == "spo.SPOIntent_asr"
+        assert len(metrics) == 2
+        assert metrics[0].metric_name == "attack_success_rate"
         assert metrics[0].metric_value == 30.0
-        assert metrics[0].num_samples is None
-        assert metrics[0].metadata["total_attempts"] == 20
-        assert metrics[0].metadata["unsafe_stubs"] == 3
-        assert metrics[0].metadata["safe_stubs"] == 7
-        assert "intent_breakdown" in metrics[0].metadata
-        assert metrics[0].metadata["intent_breakdown"]["S001"]["unsafe_stubs"] == 2
+        assert metrics[0].num_samples == 20
+        assert metrics[1].metric_name == "spo.SPOIntent_asr"
+        assert metrics[1].metric_value == 30.0
+        assert metrics[1].num_samples is None
+        assert metrics[1].metadata["total_attempts"] == 20
+        assert metrics[1].metadata["unsafe_stubs"] == 3
+        assert metrics[1].metadata["safe_stubs"] == 7
+        assert "intent_breakdown" in metrics[1].metadata
+        assert metrics[1].metadata["intent_breakdown"]["S001"]["unsafe_stubs"] == 2
         assert overall_score == 30.0
         assert num_examples == 20
 

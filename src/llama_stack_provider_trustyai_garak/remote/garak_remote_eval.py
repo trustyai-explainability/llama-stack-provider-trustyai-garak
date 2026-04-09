@@ -211,6 +211,7 @@ class GarakRemoteEvalAdapter(GarakEvalBase):
                         provider_params.get("sdg_max_tokens", DEFAULT_SDG_MAX_TOKENS),
                         DEFAULT_SDG_MAX_TOKENS,
                     ),
+                    "hf_cache_path": provider_params.get("hf_cache_path", ""),
                 },
                 run_name=f"garak-{benchmark_id.split('::')[-1]}-{job_id.removeprefix(JOB_ID_PREFIX)}",
                 namespace=self._config.kubeflow_config.namespace,

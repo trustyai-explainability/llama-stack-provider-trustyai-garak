@@ -53,6 +53,7 @@ def garak_scan_pipeline(
     sdg_max_concurrency: int = DEFAULT_SDG_MAX_CONCURRENCY,
     sdg_num_samples: int = DEFAULT_SDG_NUM_SAMPLES,
     sdg_max_tokens: int = DEFAULT_SDG_MAX_TOKENS,
+    hf_cache_path: str = "",
 ):
     """Six-step pipeline: validate, resolve taxonomy, SDG, prepare prompts, scan, parse.
 
@@ -120,6 +121,7 @@ def garak_scan_pipeline(
         job_id=job_id,
         timeout_seconds=timeout_seconds,
         verify_ssl=verify_ssl,
+        hf_cache_path=hf_cache_path,
         prompts_dataset=prep_task.outputs["prompts_dataset"],
     )
     scan_task.set_caching_options(False)

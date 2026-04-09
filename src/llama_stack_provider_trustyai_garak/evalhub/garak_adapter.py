@@ -416,11 +416,18 @@ class GarakAdapter(FrameworkAdapter):
             )
         )
 
+        env: dict[str, str] = {}
+        hf_cache = (config.parameters or {}).get("hf_cache_path", "")
+        if hf_cache:
+            env["HF_HUB_CACHE"] = hf_cache
+            logger.info("Using HF cache from mounted path: %s", hf_cache)
+
         result = run_garak_scan(
             config_file=config_file,
             timeout_seconds=timeout,
             log_file=log_file,
             report_prefix=report_prefix,
+            env=env if env else None,
         )
 
         # AVID conversion
@@ -554,6 +561,7 @@ class GarakAdapter(FrameworkAdapter):
             "sdg_max_concurrency": ip.get("sdg_max_concurrency", DEFAULT_SDG_MAX_CONCURRENCY),
             "sdg_num_samples": ip.get("sdg_num_samples", DEFAULT_SDG_NUM_SAMPLES),
             "sdg_max_tokens": ip.get("sdg_max_tokens", DEFAULT_SDG_MAX_TOKENS),
+            "hf_cache_path": benchmark_config.get("hf_cache_path", ""),
         }
         if model_auth_secret:
             pipeline_args["model_auth_secret_name"] = model_auth_secret
@@ -595,7 +603,6 @@ class GarakAdapter(FrameworkAdapter):
                     ),
                 )
             )
-            s3_bucket = kfp_config.s3_bucket or os.getenv("AWS_S3_BUCKET", "")
             creds = (
                 self._read_s3_credentials_from_secret(
                     kfp_config.s3_secret_name,
@@ -616,11 +623,13 @@ class GarakAdapter(FrameworkAdapter):
                     kfp_config.s3_secret_name,
                     kfp_config.namespace,
                 )
+            s3_bucket = kfp_config.s3_bucket or creds.pop("bucket", "") or os.getenv("AWS_S3_BUCKET", "")
+            s3_endpoint = kfp_config.s3_endpoint or creds.pop("endpoint_url", "") or None
             self._download_results_from_s3(
                 s3_bucket,
                 s3_prefix,
                 scan_dir,
-                endpoint_url=kfp_config.s3_endpoint or None,
+                endpoint_url=s3_endpoint,
                 **creds,
             )
 
@@ -770,6 +779,8 @@ class GarakAdapter(FrameworkAdapter):
                 "access_key": _decode("AWS_ACCESS_KEY_ID"),
                 "secret_key": _decode("AWS_SECRET_ACCESS_KEY"),
                 "region": _decode("AWS_DEFAULT_REGION"),
+                "bucket": _decode("AWS_S3_BUCKET"),
+                "endpoint_url": _decode("AWS_S3_ENDPOINT"),
             }
         except Exception as exc:
             logger.warning("Could not read S3 credentials from secret %s/%s: %s", namespace, secret_name, exc)
@@ -1288,6 +1299,22 @@ class GarakAdapter(FrameworkAdapter):
             raw_entries_by_probe=raw_entries_by_probe,
         )
         overall_summary = combined.get("scores", {}).get("_overall", {}).get("aggregated_results", {})
+
+        overall_asr = overall_summary.get("attack_success_rate")
+        if overall_asr is not None:
+            try:
+                overall_asr = float(overall_asr)
+            except (TypeError, ValueError):
+                overall_asr = None
+        if overall_asr is not None:
+            metrics.append(
+                EvaluationResult(
+                    metric_name="attack_success_rate",
+                    metric_value=overall_asr,
+                    metric_type="percentage",
+                    num_samples=overall_summary.get("total_attempts"),
+                )
+            )
 
         # Convert to EvaluationResult format (one per probe)
         for probe_name, score_data in combined["scores"].items():

@@ -441,6 +441,7 @@ def garak_scan(
     config_json: str,
     s3_prefix: str,
     timeout_seconds: int,
+    hf_cache_path: str,
     prompts_dataset: dsl.Input[dsl.Dataset],
 ) -> NamedTuple("Outputs", [("success", bool), ("return_code", int)]):
     """Run a Garak scan and upload output to S3 via Data Connection credentials.
@@ -468,6 +469,54 @@ def garak_scan(
         redact_api_keys,
     )
     from llama_stack_provider_trustyai_garak.errors import GarakError
+
+    if hf_cache_path and hf_cache_path.strip():
+        from llama_stack_provider_trustyai_garak.evalhub.s3_utils import create_s3_client
+
+        if hf_cache_path.startswith("s3://"):
+            parts = hf_cache_path[len("s3://") :].split("/", 1)
+            bucket = parts[0]
+            prefix = parts[1] if len(parts) > 1 else ""
+        else:
+            bucket = os.environ.get("AWS_S3_BUCKET", "")
+            prefix = hf_cache_path.lstrip("/")
+
+        if not bucket:
+            raise GarakError(
+                "Cannot determine S3 bucket for HF cache. "
+                "Provide a full s3://bucket/prefix URI in hf_cache_path, "
+                "or set AWS_S3_BUCKET."
+            )
+
+        if not prefix:
+            log.warning(
+                "hf_cache_path has no sub-prefix; downloading all objects from bucket '%s'.",
+                bucket,
+            )
+
+        hf_cache_dir = Path(tempfile.mkdtemp(prefix="hf-cache-"))
+        s3 = create_s3_client()
+        downloaded = 0
+
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                rel = obj["Key"][len(prefix) :].lstrip("/")
+                if not rel:
+                    continue
+                dest = hf_cache_dir / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                s3.download_file(bucket, obj["Key"], str(dest))
+                downloaded += 1
+
+        os.environ["HF_HUB_CACHE"] = str(hf_cache_dir)
+        log.info(
+            "Populated HF cache from s3://%s/%s -> %s (%d files)",
+            bucket,
+            prefix,
+            hf_cache_dir,
+            downloaded,
+        )
 
     scan_dir = Path(tempfile.mkdtemp(prefix="garak-scan-"))
 
@@ -639,6 +688,7 @@ def evalhub_garak_pipeline(
     sdg_max_concurrency: int = DEFAULT_SDG_MAX_CONCURRENCY,
     sdg_num_samples: int = DEFAULT_SDG_NUM_SAMPLES,
     sdg_max_tokens: int = DEFAULT_SDG_MAX_TOKENS,
+    hf_cache_path: str = "",
 ):
     """Six-step pipeline: validate, resolve taxonomy, SDG, prepare prompts, scan, write outputs.
 
@@ -736,6 +786,7 @@ def evalhub_garak_pipeline(
         config_json=config_json,
         s3_prefix=s3_prefix,
         timeout_seconds=timeout_seconds,
+        hf_cache_path=hf_cache_path,
         prompts_dataset=prep_task.outputs["prompts_dataset"],
     )
     scan_task.set_caching_options(False)
