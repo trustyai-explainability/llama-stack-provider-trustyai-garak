@@ -397,6 +397,7 @@ def garak_scan(
     job_id: str,
     timeout_seconds: int,
     verify_ssl: str,
+    hf_cache_path: str,
     prompts_dataset: dsl.Input[dsl.Dataset],
 ) -> NamedTuple(
     "Outputs",
@@ -419,12 +420,18 @@ def garak_scan(
     )
     log = logging.getLogger("garak_scan")
 
+    import os
+
     from llama_stack_client import LlamaStackClient
     from llama_stack_provider_trustyai_garak.utils import get_http_client_with_tls
     from llama_stack_provider_trustyai_garak.core.pipeline_steps import (
         setup_and_run_garak,
         redact_api_keys,
     )
+
+    if hf_cache_path and hf_cache_path.strip():
+        os.environ["HF_HUB_CACHE"] = hf_cache_path
+        log.info("Set HF_HUB_CACHE=%s for disconnected mode", hf_cache_path)
 
     scan_dir = Path(tempfile.mkdtemp(prefix="garak-scan-"))
 
