@@ -1250,6 +1250,11 @@ class GarakAdapter(FrameworkAdapter):
 
     #     return env
 
+    @staticmethod
+    def _pct_to_ratio(value: float) -> float:
+        """Convert a 0-100 percentage to a 0-1 ratio."""
+        return round(value / 100, 4)
+
     def _parse_results(
         self,
         result: GarakScanResult,
@@ -1310,8 +1315,8 @@ class GarakAdapter(FrameworkAdapter):
             metrics.append(
                 EvaluationResult(
                     metric_name="attack_success_rate",
-                    metric_value=overall_asr,
-                    metric_type="percentage",
+                    metric_value=self._pct_to_ratio(overall_asr),
+                    metric_type="ratio",
                     num_samples=overall_summary.get("total_attempts"),
                 )
             )
@@ -1350,8 +1355,8 @@ class GarakAdapter(FrameworkAdapter):
             metrics.append(
                 EvaluationResult(
                     metric_name=f"{probe_name}_asr",
-                    metric_value=attack_success_rate,
-                    metric_type="percentage",
+                    metric_value=self._pct_to_ratio(attack_success_rate),
+                    metric_type="ratio",
                     num_samples=probe_attempts if not art_intents else None,
                     metadata=probe_metadata,
                 )
@@ -1360,7 +1365,7 @@ class GarakAdapter(FrameworkAdapter):
         overall_score = overall_summary.get("attack_success_rate")
         if overall_score is not None:
             try:
-                overall_score = float(overall_score)
+                overall_score = self._pct_to_ratio(float(overall_score))
             except (TypeError, ValueError):
                 overall_score = None
 
@@ -1370,7 +1375,7 @@ class GarakAdapter(FrameworkAdapter):
                 for probe_name, score_data in combined["scores"].items()
                 if probe_name != "_overall"
             )
-            overall_score = round((total_vulnerable / total_attempts) * 100, 2)
+            overall_score = self._pct_to_ratio((total_vulnerable / total_attempts) * 100)
 
         num_examples = overall_summary.get("total_attempts", total_attempts)
         try:
@@ -1531,7 +1536,7 @@ def main(adapter_cls: type[GarakAdapter] = GarakAdapter) -> None:
 
         results = adapter.run_benchmark_job(adapter.job_spec, callbacks)
         logger.info(f"Job completed successfully: {results.id}")
-        logger.info(f"Overall attack success rate: {results.overall_score}%")
+        logger.info(f"Overall attack success rate (ratio): {results.overall_score}")
 
         callbacks.report_results(results)
         sys.exit(0)

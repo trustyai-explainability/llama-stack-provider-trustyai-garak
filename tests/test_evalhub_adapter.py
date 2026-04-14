@@ -329,10 +329,12 @@ def test_parse_results_uses_overall_without_double_count(monkeypatch, tmp_path):
 
     assert len(metrics) == 2
     assert metrics[0].metric_name == "attack_success_rate"
-    assert metrics[0].metric_value == 30.0
+    assert metrics[0].metric_type == "ratio"
+    assert metrics[0].metric_value == 0.3
     assert metrics[0].num_samples == 10
     assert metrics[1].metric_name == "probe.alpha_asr"
-    assert overall_score == 30.0
+    assert metrics[1].metric_type == "ratio"
+    assert overall_score == 0.3
     assert num_examples == 10
     assert overall_summary["tbsa"] == 4.1
 
@@ -1969,17 +1971,19 @@ class TestParseResultsIntentsMode:
 
         assert len(metrics) == 2
         assert metrics[0].metric_name == "attack_success_rate"
-        assert metrics[0].metric_value == 30.0
+        assert metrics[0].metric_type == "ratio"
+        assert metrics[0].metric_value == 0.3
         assert metrics[0].num_samples == 20
         assert metrics[1].metric_name == "spo.SPOIntent_asr"
-        assert metrics[1].metric_value == 30.0
+        assert metrics[1].metric_type == "ratio"
+        assert metrics[1].metric_value == 0.3
         assert metrics[1].num_samples is None
         assert metrics[1].metadata["total_attempts"] == 20
         assert metrics[1].metadata["unsafe_stubs"] == 3
         assert metrics[1].metadata["safe_stubs"] == 7
         assert "intent_breakdown" in metrics[1].metadata
         assert metrics[1].metadata["intent_breakdown"]["S001"]["unsafe_stubs"] == 2
-        assert overall_score == 30.0
+        assert overall_score == 0.3
         assert num_examples == 20
 
 
