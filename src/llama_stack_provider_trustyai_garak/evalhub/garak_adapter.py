@@ -792,10 +792,15 @@ class GarakAdapter(FrameworkAdapter):
     def _resolve_s3_credentials(kfp_config: "KFPConfig", secret_creds: dict) -> dict:
         """Merge S3 credentials from KFPConfig, K8s secret, and env vars.
 
-        For each field, the first non-empty value wins:
+        For ``bucket`` and ``endpoint_url``, the first non-empty value wins:
           1. kfp_config (benchmark_config / env override)
           2. K8s secret (read via _read_s3_credentials_from_secret)
-          3. Environment variable (boto3 / Data Connection fallback)
+          3. Environment variable (``AWS_S3_BUCKET`` / ``AWS_S3_ENDPOINT``)
+
+        For ``access_key``, ``secret_key``, and ``region``, values come
+        only from the K8s secret.  These fields have no kfp_config
+        equivalent; when the secret is empty, ``create_s3_client``
+        applies its own env-var fallback (``AWS_ACCESS_KEY_ID``, etc.).
 
         When both kfp_config and the secret provide different non-empty
         values for the same field, the kfp_config value is used and a

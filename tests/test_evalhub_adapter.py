@@ -807,17 +807,41 @@ class TestResolveS3Credentials:
         assert resolved["bucket"] == "env-bucket"
         assert resolved["endpoint_url"] == "http://env:9000"
 
+    def test_secret_takes_precedence_over_env_when_kfp_empty(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        monkeypatch.setenv("AWS_S3_BUCKET", "env-bucket")
+        monkeypatch.setenv("AWS_S3_ENDPOINT", "http://env:9000")
+        secret = {
+            "bucket": "secret-bucket",
+            "endpoint_url": "http://secret:9000",
+            "access_key": "ak",
+            "secret_key": "sk",
+            "region": "eu-west-1",
+        }
+        kfp_cfg = self._make_kfp_config()
+        resolved = module.GarakAdapter._resolve_s3_credentials(kfp_cfg, secret)
+        assert resolved["bucket"] == "secret-bucket"
+        assert resolved["endpoint_url"] == "http://secret:9000"
+
     def test_mismatch_logs_warning(self, monkeypatch, caplog):
         module = _load_evalhub_garak_adapter(monkeypatch)
         import logging
 
-        kfp_cfg = self._make_kfp_config(s3_endpoint="http://cfg:9000")
-        secret = {"endpoint_url": "http://secret:9000", "bucket": "", "access_key": "", "secret_key": "", "region": ""}
+        kfp_cfg = self._make_kfp_config(s3_bucket="cfg-bucket", s3_endpoint="http://cfg:9000")
+        secret = {
+            "bucket": "secret-bucket",
+            "endpoint_url": "http://secret:9000",
+            "access_key": "",
+            "secret_key": "",
+            "region": "",
+        }
 
         with caplog.at_level(logging.WARNING):
             resolved = module.GarakAdapter._resolve_s3_credentials(kfp_cfg, secret)
 
+        assert resolved["bucket"] == "cfg-bucket"
         assert resolved["endpoint_url"] == "http://cfg:9000"
+        assert any("S3 bucket mismatch" in msg for msg in caplog.messages)
         assert any("S3 endpoint_url mismatch" in msg for msg in caplog.messages)
 
     def test_matching_values_no_warning(self, monkeypatch, caplog):
