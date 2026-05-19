@@ -129,14 +129,6 @@ class GarakAdapter(FrameworkAdapter):
             execution_mode = self._resolve_execution_mode(benchmark_config)
             logger.info("Execution mode: %s", execution_mode)
 
-            # Early check: intents benchmarks require KFP mode
-            _intents_required = benchmark_config.get("art_intents")
-            if _intents_required is None:
-                _profile = self._resolve_profile(config.benchmark_id)
-                _intents_required = _profile.get("art_intents", False) if _profile else False
-            if _intents_required and execution_mode != EXECUTION_MODE_KFP:
-                raise ValueError("Intents benchmarks are only supported in KFP execution mode. ")
-
             # Build merged garak config (common to both modes)
             scan_dir = get_scan_base_dir() / config.id
             scan_dir.mkdir(parents=True, exist_ok=True)
@@ -166,6 +158,15 @@ class GarakAdapter(FrameworkAdapter):
                     timeout=timeout,
                     intents_params=intents_params,
                     eval_threshold=eval_threshold,
+                )
+            elif art_intents:
+                result = self._run_simple_intents(
+                    config=config,
+                    callbacks=callbacks,
+                    garak_config_dict=garak_config_dict,
+                    scan_dir=scan_dir,
+                    timeout=timeout,
+                    intents_params=intents_params,
                 )
             else:
                 result = self._run_simple(
@@ -445,6 +446,180 @@ class GarakAdapter(FrameworkAdapter):
                 )
             )
             convert_to_avid_report(result.report_jsonl)
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Simple intents (subprocess with SDG preprocessing)
+    # ------------------------------------------------------------------
+
+    def _run_simple_intents(
+        self,
+        config: JobSpec,
+        callbacks: JobCallbacks,
+        garak_config_dict: dict,
+        scan_dir: Path,
+        timeout: int,
+        intents_params: dict[str, Any],
+    ) -> GarakScanResult:
+        """Run an intents benchmark as a local subprocess with in-process SDG.
+
+        Executes the intents pipeline steps sequentially:
+        1. Resolve taxonomy (local file or default BASE_TAXONOMY)
+        2. Run SDG generation (or bypass if intents_s3_key provided)
+        3. Normalize prompts
+        4. Delegate to setup_and_run_garak() for stub generation + scan
+
+        External files (taxonomy, bypass prompts) are expected as local
+        paths pre-downloaded by the EvalHub SDK to ``/test_data``.  The
+        existing ``policy_s3_key`` / ``intents_s3_key`` parameters are
+        reused as local file paths in simple mode.
+        """
+        from ..core.pipeline_steps import (
+            normalize_prompts,
+            resolve_taxonomy_data,
+            run_sdg_generation,
+            setup_and_run_garak,
+        )
+
+        policy_path = intents_params.get("policy_s3_key", "")
+        policy_format = intents_params.get("policy_format", "csv")
+        intents_path = intents_params.get("intents_s3_key", "")
+        intents_format = intents_params.get("intents_format", "csv")
+
+        # -- Step 1: Resolve taxonomy --------------------------------
+        callbacks.report_status(
+            JobStatusUpdate(
+                status=JobStatus.RUNNING,
+                phase=JobPhase.RUNNING_EVALUATION,
+                progress=0.05,
+                message=MessageInfo(
+                    message="Resolving taxonomy for intents scan",
+                    message_code="resolving_taxonomy",
+                ),
+                current_step="Resolving taxonomy",
+            )
+        )
+
+        policy_content: bytes | None = None
+        if policy_path and policy_path.strip():
+            policy_file = Path(policy_path)
+            if not policy_file.exists():
+                raise FileNotFoundError(
+                    f"Taxonomy file not found at '{policy_path}'. Ensure the file is available via test_data_ref."
+                )
+            policy_content = policy_file.read_bytes()
+            logger.info("Read taxonomy from local path: %s (%d bytes)", policy_path, len(policy_content))
+
+        taxonomy_df = resolve_taxonomy_data(policy_content, format=policy_format)
+        logger.info("Resolved taxonomy: %d entries", len(taxonomy_df))
+
+        # -- Step 2: Generate prompts (SDG or bypass) ----------------
+        raw_content: str | None = None
+
+        if intents_path and intents_path.strip():
+            callbacks.report_status(
+                JobStatusUpdate(
+                    status=JobStatus.RUNNING,
+                    phase=JobPhase.RUNNING_EVALUATION,
+                    progress=0.1,
+                    message=MessageInfo(
+                        message="Loading pre-generated prompts (bypass SDG)",
+                        message_code="bypass_sdg",
+                    ),
+                    current_step="Loading bypass prompts",
+                )
+            )
+            intents_file = Path(intents_path)
+            if not intents_file.exists():
+                raise FileNotFoundError(
+                    f"Intents file not found at '{intents_path}'. Ensure the file is available via test_data_ref."
+                )
+            raw_content = intents_file.read_text(encoding="utf-8")
+            logger.info("Read bypass prompts from local path: %s (%d bytes)", intents_path, len(raw_content))
+        else:
+            callbacks.report_status(
+                JobStatusUpdate(
+                    status=JobStatus.RUNNING,
+                    phase=JobPhase.RUNNING_EVALUATION,
+                    progress=0.1,
+                    message=MessageInfo(
+                        message="Running Synthetic Data Generation",
+                        message_code="running_sdg",
+                    ),
+                    current_step="Generating adversarial prompts via SDG",
+                )
+            )
+            sdg_model = intents_params.get("sdg_model", "")
+            sdg_api_base = intents_params.get("sdg_api_base", "")
+            if not sdg_model or not sdg_api_base:
+                raise ValueError(
+                    "Intents benchmark requires sdg_model and sdg_api_base "
+                    "for prompt generation when intents_s3_key is not provided."
+                )
+
+            raw_df = run_sdg_generation(
+                taxonomy_df=taxonomy_df,
+                sdg_model=sdg_model,
+                sdg_api_base=sdg_api_base,
+                sdg_flow_id=intents_params.get("sdg_flow_id", DEFAULT_SDG_FLOW_ID),
+                sdg_max_concurrency=intents_params.get("sdg_max_concurrency", DEFAULT_SDG_MAX_CONCURRENCY),
+                sdg_num_samples=intents_params.get("sdg_num_samples", DEFAULT_SDG_NUM_SAMPLES),
+                sdg_max_tokens=intents_params.get("sdg_max_tokens", DEFAULT_SDG_MAX_TOKENS),
+            )
+            raw_content = raw_df.to_csv(index=False)
+            logger.info("SDG produced %d rows", len(raw_df))
+
+        # -- Persist raw SDG output ----------------------------------
+        raw_output_path = scan_dir / "sdg_raw_output.csv"
+        raw_output_path.write_text(raw_content, encoding="utf-8")
+        logger.info("Saved raw SDG output to %s", raw_output_path)
+
+        # -- Step 3: Normalize prompts -------------------------------
+        callbacks.report_status(
+            JobStatusUpdate(
+                status=JobStatus.RUNNING,
+                phase=JobPhase.RUNNING_EVALUATION,
+                progress=0.3,
+                message=MessageInfo(
+                    message="Normalizing prompts",
+                    message_code="normalizing_prompts",
+                ),
+                current_step="Normalizing prompts",
+            )
+        )
+
+        fmt = intents_format if (intents_path and intents_path.strip()) else "csv"
+        normalized_df = normalize_prompts(raw_content, format=fmt)
+
+        norm_output_path = scan_dir / "sdg_normalized_output.csv"
+        normalized_df.to_csv(norm_output_path, index=False)
+        logger.info("Saved normalized prompts to %s (%d rows)", norm_output_path, len(normalized_df))
+
+        prompts_csv_path = scan_dir / "prompts.csv"
+        normalized_df.to_csv(prompts_csv_path, index=False)
+
+        # -- Step 4: Run garak scan ----------------------------------
+        callbacks.report_status(
+            JobStatusUpdate(
+                status=JobStatus.RUNNING,
+                phase=JobPhase.RUNNING_EVALUATION,
+                progress=0.4,
+                message=MessageInfo(
+                    message=f"Running Garak intents scan for {config.benchmark_id}",
+                    message_code="running_scan",
+                ),
+                current_step="Executing intents probes",
+            )
+        )
+
+        config_json = json.dumps(garak_config_dict)
+        result = setup_and_run_garak(
+            config_json=config_json,
+            prompts_csv_path=prompts_csv_path,
+            scan_dir=scan_dir,
+            timeout_seconds=timeout,
+        )
 
         return result
 
