@@ -2074,6 +2074,8 @@ class TestSimpleIntentsMode:
         def _fake_run_sdg_generation(taxonomy_df, sdg_model, sdg_api_base, **kwargs):
             sdg_captured["taxonomy_len"] = len(taxonomy_df)
             sdg_captured["sdg_model"] = sdg_model
+            sdg_captured["sdg_api_base"] = sdg_api_base
+            sdg_captured.update(kwargs)
             return fake_raw_df
 
         def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds):
@@ -2110,6 +2112,11 @@ class TestSimpleIntentsMode:
 
         assert sdg_captured["taxonomy_len"] == 8  # BASE_TAXONOMY has 8 entries
         assert sdg_captured["sdg_model"] == "sdg-model"
+        assert sdg_captured["sdg_api_base"] == "http://sdg:7000/v1"
+        assert sdg_captured["sdg_flow_id"] == "major-sage-742"
+        assert sdg_captured["sdg_max_concurrency"] == 10
+        assert sdg_captured["sdg_num_samples"] == 0
+        assert sdg_captured["sdg_max_tokens"] == 0
         assert (scan_dir / "sdg_raw_output.csv").exists()
         assert (scan_dir / "sdg_normalized_output.csv").exists()
         assert sdg_captured.get("prompts_csv_path") is not None
@@ -2234,7 +2241,7 @@ class TestSimpleIntentsMode:
             def report_status(self, _update):
                 return None
 
-        with pytest.raises(Exception, match="Taxonomy file not found"):
+        with pytest.raises(FileNotFoundError, match="Taxonomy file not found"):
             adapter.run_benchmark_job(job, _Callbacks())
 
     def test_simple_intents_missing_intents_file_raises(self, monkeypatch, tmp_path):
@@ -2246,7 +2253,7 @@ class TestSimpleIntentsMode:
             def report_status(self, _update):
                 return None
 
-        with pytest.raises(Exception, match="Intents file not found"):
+        with pytest.raises(FileNotFoundError, match="Intents file not found"):
             adapter.run_benchmark_job(job, _Callbacks())
 
     def test_simple_intents_missing_sdg_model_raises(self, monkeypatch, tmp_path):
@@ -2275,7 +2282,7 @@ class TestSimpleIntentsMode:
             def report_status(self, _update):
                 return None
 
-        with pytest.raises(Exception, match="sdg_model.*sdg_api_base"):
+        with pytest.raises(ValueError, match="sdg_model.*sdg_api_base"):
             adapter.run_benchmark_job(job, _Callbacks())
 
     def test_simple_intents_persists_artifacts_to_scan_dir(self, monkeypatch, tmp_path):

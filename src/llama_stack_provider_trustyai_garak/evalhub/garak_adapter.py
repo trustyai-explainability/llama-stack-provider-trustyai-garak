@@ -589,6 +589,12 @@ class GarakAdapter(FrameworkAdapter):
             )
         )
 
+        if not (intents_path and intents_path.strip()) and intents_format.strip().lower() != "csv":
+            logger.warning(
+                "intents_format=%r ignored — SDG output is always CSV. "
+                "intents_format only applies when intents_s3_key provides a bypass file.",
+                intents_format,
+            )
         fmt = intents_format if (intents_path and intents_path.strip()) else "csv"
         normalized_df = normalize_prompts(raw_content, format=fmt)
 
