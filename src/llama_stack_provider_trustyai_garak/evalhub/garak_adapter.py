@@ -798,21 +798,22 @@ class GarakAdapter(FrameworkAdapter):
                     "S3 credentials from secret '%s/%s' are empty. "
                     "Ensure the secret exists and the Job pod's service account "
                     "has RBAC permissions to read secrets in namespace '%s'. "
-                    "Falling back to environment variables for S3 access."
-                    "If no environment variables are set, the job will fail",
+                    "Falling back to environment variables for S3 access. "
+                    "If no environment variables are set, the job will fail "
                     "as it will not be able to interact with S3.",
                     kfp_config.namespace,
                     kfp_config.s3_secret_name,
                     kfp_config.namespace,
                 )
-            s3_bucket = kfp_config.s3_bucket or creds.pop("bucket", "") or os.getenv("AWS_S3_BUCKET", "")
-            s3_endpoint = kfp_config.s3_endpoint or creds.pop("endpoint_url", "") or None
+            resolved = self._resolve_s3_credentials(kfp_config, creds)
             self._download_results_from_s3(
-                s3_bucket,
+                resolved["bucket"],
                 s3_prefix,
                 scan_dir,
-                endpoint_url=s3_endpoint,
-                **creds,
+                endpoint_url=resolved["endpoint_url"],
+                access_key=resolved["access_key"],
+                secret_key=resolved["secret_key"],
+                region=resolved["region"],
             )
 
         report_prefix = scan_dir / "scan"
@@ -967,6 +968,54 @@ class GarakAdapter(FrameworkAdapter):
         except Exception as exc:
             logger.warning("Could not read S3 credentials from secret %s/%s: %s", namespace, secret_name, exc)
             return {}
+
+    @staticmethod
+    def _resolve_s3_credentials(kfp_config: "KFPConfig", secret_creds: dict) -> dict:
+        """Merge S3 credentials from KFPConfig, K8s secret, and env vars.
+
+        For ``bucket`` and ``endpoint_url``, the first non-empty value wins:
+          1. kfp_config (benchmark_config / env override)
+          2. K8s secret (read via _read_s3_credentials_from_secret)
+          3. Environment variable (``AWS_S3_BUCKET`` / ``AWS_S3_ENDPOINT``)
+
+        For ``access_key``, ``secret_key``, and ``region``, values come
+        only from the K8s secret.  These fields have no kfp_config
+        equivalent; when the secret is empty, ``create_s3_client``
+        applies its own env-var fallback (``AWS_ACCESS_KEY_ID``, etc.).
+
+        When both kfp_config and the secret provide different non-empty
+        values for the same field, the kfp_config value is used and a
+        warning is logged so the operator can spot misconfigurations.
+        """
+        _FIELD_MAP: list[tuple[str, str, str]] = [
+            # (field_name, kfp_config_attr, env_var)
+            ("bucket", "s3_bucket", "AWS_S3_BUCKET"),
+            ("endpoint_url", "s3_endpoint", "AWS_S3_ENDPOINT"),
+        ]
+
+        resolved: dict[str, str | None] = {}
+
+        for field, kfp_attr, env_var in _FIELD_MAP:
+            cfg_val = (getattr(kfp_config, kfp_attr, "") or "").strip()
+            secret_val = (secret_creds.get(field, "") or "").strip()
+            env_val = (os.getenv(env_var, "") or "").strip()
+
+            if cfg_val and secret_val and cfg_val != secret_val:
+                logger.warning(
+                    "S3 %s mismatch: kfp_config=%r vs secret=%r — using kfp_config value. "
+                    "Check that kfp_config.%s and the Data Connection secret agree.",
+                    field,
+                    cfg_val,
+                    secret_val,
+                    kfp_attr,
+                )
+
+            resolved[field] = cfg_val or secret_val or env_val or None
+
+        for field in ("access_key", "secret_key", "region"):
+            resolved[field] = (secret_creds.get(field, "") or "").strip() or None
+
+        return resolved
 
     @staticmethod
     def _create_s3_client(
