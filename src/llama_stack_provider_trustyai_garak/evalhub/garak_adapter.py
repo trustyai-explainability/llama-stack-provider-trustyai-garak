@@ -1610,98 +1610,6 @@ class GarakAdapter(FrameworkAdapter):
             return "unknown"
 
 
-class _GarakCallbacks(DefaultCallbacks):
-    """Extends DefaultCallbacks to forward evaluation_metadata artifacts.
-
-    Workaround until the SDK natively forwards evaluation_metadata into
-    the status event's ``artifacts`` field (tracked for SDK 3.4).
-
-    Overrides ``report_results`` to merge ``evaluation_metadata["artifacts"]``
-    into the single COMPLETED status event alongside OCI refs and metrics.
-    """
-
-    def report_results(self, results: JobResults) -> None:
-        eval_artifacts = (results.evaluation_metadata or {}).get("artifacts", {})
-
-        if not eval_artifacts:
-            super().report_results(results)
-            return
-
-        error: str | None = None
-
-        if self.sidecar_url and self._httpx_available and self._http_client:
-            try:
-                url = f"{self.sidecar_url}{self._events_path_template.format(job_id=self.job_id)}"
-
-                metrics = {}
-                for result in results.results:
-                    metrics[result.metric_name] = result.metric_value
-
-                status_event: dict[str, Any] = {
-                    "id": self.benchmark_id,
-                    "benchmark_index": self.benchmark_index,
-                    "state": JobStatus.COMPLETED.value,
-                    "status": JobStatus.COMPLETED.value,
-                    "message": {
-                        "message": "Evaluation completed successfully",
-                        "message_code": "evaluation_completed",
-                    },
-                    "metrics": metrics,
-                    "completed_at": results.completed_at.isoformat(),
-                    "duration_seconds": int(results.duration_seconds),
-                }
-
-                if self.provider_id:
-                    status_event["provider_id"] = self.provider_id
-
-                if results.mlflow_run_id:
-                    status_event["mlflow_run_id"] = results.mlflow_run_id
-
-                artifacts_payload: dict[str, Any] = {}
-                if results.oci_artifact:
-                    artifacts_payload["oci_reference"] = results.oci_artifact.reference
-                    artifacts_payload["oci_digest"] = results.oci_artifact.digest
-                artifacts_payload.update(eval_artifacts)
-                status_event["artifacts"] = artifacts_payload
-
-                data = {"benchmark_status_event": status_event}
-                logger.debug("Events report_results body: %s", data)
-
-                response = self._http_client.post(
-                    url,
-                    json=data,
-                    headers=self._request_headers(),
-                    timeout=10.0,
-                )
-                response.raise_for_status()
-
-                logger.info(
-                    "Results reported to evalhub | Metrics: %d | Score: %s | Artifacts: %d",
-                    len(metrics),
-                    results.overall_score,
-                    len(eval_artifacts),
-                )
-
-            except self.httpx.HTTPStatusError as e:
-                error = f"Failed to send results to evalhub (HTTP {e.response.status_code}): {e}"
-                logger.exception(error)
-            except Exception as e:
-                error = f"Failed to send results to evalhub: {e}"
-                logger.exception(error)
-
-        logger.info(
-            "Job %s completed | Benchmark: %s | Model: %s | Score: %s | Examples: %s | Duration: %.2fs",
-            results.id,
-            results.benchmark_id,
-            results.model_name,
-            results.overall_score,
-            results.num_examples_evaluated,
-            results.duration_seconds,
-        )
-
-        self._signal_termination(error)
-
-
 def main(adapter_cls: type[GarakAdapter] = GarakAdapter) -> None:
     """Entry point for running the adapter as a K8s Job.
 
@@ -1723,7 +1631,7 @@ def main(adapter_cls: type[GarakAdapter] = GarakAdapter) -> None:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    callbacks: _GarakCallbacks | None = None
+    callbacks: DefaultCallbacks | None = None
     exit_error: str | None = None
     try:
         job_spec_path = os.getenv("EVALHUB_JOB_SPEC_PATH", "/meta/job.json")
@@ -1732,22 +1640,7 @@ def main(adapter_cls: type[GarakAdapter] = GarakAdapter) -> None:
         logger.info(f"Benchmark: {adapter.job_spec.benchmark_id}")
         logger.info(f"Model: {adapter.job_spec.model.name}")
 
-        from evalhub.adapter.config import DEFAULT_TERMINATION_FILE_PATH, EvalHubMode
-        from evalhub.adapter.oci import DEFAULT_OCI_PROXY_HOST
-
-        callbacks = _GarakCallbacks(
-            job_id=adapter.job_spec.id,
-            benchmark_id=adapter.job_spec.benchmark_id,
-            benchmark_index=adapter.job_spec.benchmark_index,
-            provider_id=adapter.job_spec.provider_id,
-            sidecar_url=adapter.job_spec.callback_url,
-            insecure=adapter.settings.evalhub_insecure,
-            oci_auth_config_path=adapter.settings.oci_auth_config_path,
-            oci_insecure=adapter.settings.oci_insecure,
-            oci_proxy_host=(DEFAULT_OCI_PROXY_HOST if adapter.settings.mode == EvalHubMode.K8S else None),
-            termination_file_path=(DEFAULT_TERMINATION_FILE_PATH if adapter.settings.mode == EvalHubMode.K8S else None),
-            mlflow_backend=adapter.settings.mlflow_backend,
-        )
+        callbacks = DefaultCallbacks.from_adapter(adapter)
 
         results = adapter.run_benchmark_job(adapter.job_spec, callbacks)
         logger.info(f"Job completed successfully: {results.id}")
@@ -1768,9 +1661,6 @@ def main(adapter_cls: type[GarakAdapter] = GarakAdapter) -> None:
         exit_error = f"Job failed: {e}"
         logger.exception(exit_error)
         sys.exit(1)
-    finally:
-        if callbacks:
-            callbacks._signal_termination(exit_error)
 
 
 if __name__ == "__main__":
