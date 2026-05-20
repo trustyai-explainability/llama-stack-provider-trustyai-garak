@@ -1996,35 +1996,347 @@ class TestResolveIntentsApiKey:
         assert result == "direct-wins"
 
 
-class TestIntentsRequiresKFP:
-    """Intents benchmarks must reject non-KFP execution modes."""
+class TestSimpleIntentsMode:
+    """Tests for intents benchmark running in simple (non-KFP) mode."""
 
-    def test_intents_simple_mode_raises(self, monkeypatch, tmp_path):
+    def _make_adapter_and_job(self, monkeypatch, tmp_path, parameters=None):
         module = _load_evalhub_garak_adapter(monkeypatch)
         adapter = module.GarakAdapter()
         monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="simple-intents-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            parameters={
+                "execution_mode": "simple",
+                **_INTENTS_MODELS_ALL_ROLES,
+                **(parameters or {}),
+            },
+            exports=None,
+        )
+        return module, adapter, job
+
+    def test_simple_intents_dispatches_to_run_simple_intents(self, monkeypatch, tmp_path):
+        """Verify art_intents + simple mode routes to _run_simple_intents."""
+        module, adapter, job = self._make_adapter_and_job(monkeypatch, tmp_path)
+
+        captured = {}
+        report_prefix = tmp_path / "simple-intents-job" / "scan"
+        report_prefix.parent.mkdir(parents=True, exist_ok=True)
+        report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+
+        def _fake_run_simple_intents(self, config, callbacks, garak_config_dict, scan_dir, timeout, intents_params):
+            captured["called"] = True
+            captured["intents_params"] = intents_params
+            return module.GarakScanResult(
+                returncode=0,
+                stdout="",
+                stderr="",
+                report_prefix=report_prefix,
+            )
+
+        monkeypatch.setattr(module.GarakAdapter, "_run_simple_intents", _fake_run_simple_intents)
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_parse_results",
+            lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
+        )
 
         class _Callbacks:
             def report_status(self, _update):
                 return None
 
+        adapter.run_benchmark_job(job, _Callbacks())
+        assert captured.get("called") is True
+        assert captured["intents_params"]["art_intents"] is True
+
+    def test_simple_intents_default_taxonomy_and_sdg(self, monkeypatch, tmp_path):
+        """Full pipeline: default taxonomy -> SDG -> normalize -> scan."""
+        module, adapter, job = self._make_adapter_and_job(monkeypatch, tmp_path)
+
+        scan_dir = tmp_path / "simple-intents-job"
+        scan_dir.mkdir(parents=True, exist_ok=True)
+
+        import pandas as pd
+
+        fake_raw_df = pd.DataFrame(
+            {
+                "policy_concept": ["Fraud", "Fraud"],
+                "concept_definition": ["Fraud prompts", "Fraud prompts"],
+                "prompt": ["Commit fraud?", "How to scam?"],
+            }
+        )
+
+        sdg_captured = {}
+
+        def _fake_run_sdg_generation(taxonomy_df, sdg_model, sdg_api_base, **kwargs):
+            sdg_captured["taxonomy_len"] = len(taxonomy_df)
+            sdg_captured["sdg_model"] = sdg_model
+            sdg_captured["sdg_api_base"] = sdg_api_base
+            sdg_captured.update(kwargs)
+            return fake_raw_df
+
+        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds):
+            sdg_captured["prompts_csv_path"] = str(prompts_csv_path)
+            sdg_captured["config_json"] = config_json
+            report_prefix = scan_dir / "scan"
+            report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+            return module.GarakScanResult(
+                returncode=0,
+                stdout="",
+                stderr="",
+                report_prefix=report_prefix,
+            )
+
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.run_sdg_generation",
+            _fake_run_sdg_generation,
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.setup_and_run_garak",
+            _fake_setup_and_run,
+        )
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_parse_results",
+            lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
+        )
+
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+
+        adapter.run_benchmark_job(job, _Callbacks())
+
+        assert sdg_captured["taxonomy_len"] == 8  # BASE_TAXONOMY has 8 entries
+        assert sdg_captured["sdg_model"] == "sdg-model"
+        assert sdg_captured["sdg_api_base"] == "http://sdg:7000/v1"
+        assert sdg_captured["sdg_flow_id"] == "major-sage-742"
+        assert sdg_captured["sdg_max_concurrency"] == 10
+        assert sdg_captured["sdg_num_samples"] == 0
+        assert sdg_captured["sdg_max_tokens"] == 0
+        assert (scan_dir / "sdg_raw_output.csv").exists()
+        assert (scan_dir / "sdg_normalized_output.csv").exists()
+        assert sdg_captured.get("prompts_csv_path") is not None
+
+    def test_simple_intents_custom_taxonomy_from_local_path(self, monkeypatch, tmp_path):
+        """Custom taxonomy loaded from a local file path (pre-downloaded by SDK)."""
+        module, adapter, job = self._make_adapter_and_job(monkeypatch, tmp_path)
+
+        taxonomy_file = tmp_path / "test_data" / "taxonomy.csv"
+        taxonomy_file.parent.mkdir(parents=True, exist_ok=True)
+        taxonomy_file.write_text(
+            "policy_concept,concept_definition\nCustomHarm,Custom harm definition\n",
+            encoding="utf-8",
+        )
+        job.parameters["policy_s3_key"] = str(taxonomy_file)
+
+        scan_dir = tmp_path / "simple-intents-job"
+        scan_dir.mkdir(parents=True, exist_ok=True)
+
+        import pandas as pd
+
+        sdg_captured = {}
+
+        def _fake_run_sdg_generation(taxonomy_df, **kwargs):
+            sdg_captured["taxonomy_concepts"] = taxonomy_df["policy_concept"].tolist()
+            return pd.DataFrame(
+                {
+                    "policy_concept": ["CustomHarm"],
+                    "concept_definition": ["Custom harm definition"],
+                    "prompt": ["Do something harmful"],
+                }
+            )
+
+        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds):
+            report_prefix = scan_dir / "scan"
+            report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+            return module.GarakScanResult(
+                returncode=0,
+                stdout="",
+                stderr="",
+                report_prefix=report_prefix,
+            )
+
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.run_sdg_generation",
+            _fake_run_sdg_generation,
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.setup_and_run_garak",
+            _fake_setup_and_run,
+        )
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_parse_results",
+            lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
+        )
+
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+
+        adapter.run_benchmark_job(job, _Callbacks())
+        assert sdg_captured["taxonomy_concepts"] == ["CustomHarm"]
+
+    def test_simple_intents_bypass_sdg_from_local_path(self, monkeypatch, tmp_path):
+        """Bypass SDG: load pre-generated prompts from a local file."""
+        module, adapter, job = self._make_adapter_and_job(monkeypatch, tmp_path)
+
+        intents_file = tmp_path / "test_data" / "prompts.csv"
+        intents_file.parent.mkdir(parents=True, exist_ok=True)
+        intents_file.write_text(
+            "category,prompt,description\nharm,Do bad things,Harm prompts\n",
+            encoding="utf-8",
+        )
+        job.parameters["intents_s3_key"] = str(intents_file)
+
+        scan_dir = tmp_path / "simple-intents-job"
+        scan_dir.mkdir(parents=True, exist_ok=True)
+
+        setup_captured = {}
+
+        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds):
+            import pandas as pd
+
+            setup_captured["prompts"] = pd.read_csv(prompts_csv_path)
+            report_prefix = scan_dir / "scan"
+            report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+            return module.GarakScanResult(
+                returncode=0,
+                stdout="",
+                stderr="",
+                report_prefix=report_prefix,
+            )
+
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.setup_and_run_garak",
+            _fake_setup_and_run,
+        )
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_parse_results",
+            lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
+        )
+
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+
+        adapter.run_benchmark_job(job, _Callbacks())
+
+        assert (scan_dir / "sdg_raw_output.csv").exists()
+        assert (scan_dir / "sdg_normalized_output.csv").exists()
+        assert len(setup_captured["prompts"]) == 1
+        assert setup_captured["prompts"]["category"].iloc[0] == "harm"
+
+    def test_simple_intents_missing_taxonomy_file_raises(self, monkeypatch, tmp_path):
+        """Missing taxonomy file raises FileNotFoundError."""
+        module, adapter, job = self._make_adapter_and_job(monkeypatch, tmp_path)
+        job.parameters["policy_s3_key"] = "/nonexistent/taxonomy.csv"
+
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+
+        with pytest.raises(FileNotFoundError, match="Taxonomy file not found"):
+            adapter.run_benchmark_job(job, _Callbacks())
+
+    def test_simple_intents_missing_intents_file_raises(self, monkeypatch, tmp_path):
+        """Missing bypass prompts file raises FileNotFoundError."""
+        module, adapter, job = self._make_adapter_and_job(monkeypatch, tmp_path)
+        job.parameters["intents_s3_key"] = "/nonexistent/prompts.csv"
+
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+
+        with pytest.raises(FileNotFoundError, match="Intents file not found"):
+            adapter.run_benchmark_job(job, _Callbacks())
+
+    def test_simple_intents_missing_sdg_model_raises(self, monkeypatch, tmp_path):
+        """SDG path without sdg_model raises ValueError."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
         job = SimpleNamespace(
-            id="intents-simple-job",
-            benchmark_id="trustyai_garak::intents_spo",
+            id="simple-intents-job",
+            benchmark_id="trustyai_garak::intents",
             benchmark_index=0,
-            model=SimpleNamespace(
-                url="http://localhost:8000",
-                name="test-model",
-            ),
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
             parameters={
                 "execution_mode": "simple",
-                "art_intents": True,
+                "intents_models": {
+                    "judge": {"url": "http://judge:8000/v1", "name": "judge-model"},
+                    "attacker": {"url": "http://attacker:9000/v1", "name": "atk-model"},
+                    "evaluator": {"url": "http://evaluator:9001/v1", "name": "eval-model"},
+                },
             },
             exports=None,
         )
 
-        with pytest.raises(ValueError, match="Intents benchmarks are only supported in KFP"):
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+
+        with pytest.raises(ValueError, match="sdg_model.*sdg_api_base"):
             adapter.run_benchmark_job(job, _Callbacks())
+
+    def test_simple_intents_persists_artifacts_to_scan_dir(self, monkeypatch, tmp_path):
+        """Verify sdg_raw_output.csv and sdg_normalized_output.csv are in scan_dir."""
+        module, adapter, job = self._make_adapter_and_job(monkeypatch, tmp_path)
+
+        intents_file = tmp_path / "test_data" / "prompts.csv"
+        intents_file.parent.mkdir(parents=True, exist_ok=True)
+        intents_file.write_text(
+            "category,prompt,description\nfraud,Scam people,Fraud desc\nviolence,Attack,Violence desc\n",
+            encoding="utf-8",
+        )
+        job.parameters["intents_s3_key"] = str(intents_file)
+
+        scan_dir = tmp_path / "simple-intents-job"
+        scan_dir.mkdir(parents=True, exist_ok=True)
+
+        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds):
+            report_prefix = scan_dir / "scan"
+            report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+            return module.GarakScanResult(
+                returncode=0,
+                stdout="",
+                stderr="",
+                report_prefix=report_prefix,
+            )
+
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.setup_and_run_garak",
+            _fake_setup_and_run,
+        )
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_parse_results",
+            lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
+        )
+
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+
+        adapter.run_benchmark_job(job, _Callbacks())
+
+        raw_csv = scan_dir / "sdg_raw_output.csv"
+        norm_csv = scan_dir / "sdg_normalized_output.csv"
+        assert raw_csv.exists()
+        assert norm_csv.exists()
+
+        import pandas as pd
+
+        norm_df = pd.read_csv(norm_csv)
+        assert "category" in norm_df.columns
+        assert "prompt" in norm_df.columns
+        assert len(norm_df) == 2
 
 
 class TestKFPIntentsMode:
