@@ -1,0 +1,22 @@
+# Minimum versions to remediate CVEs in transitive dependencies.
+# Passed to `uv pip compile --constraint` via `make lock`.
+
+# CVE-2026-5241: transformers trust_remote_code bypass (fixed in 5.3.0)
+transformers>=5.3.0
+
+# CVE-2026-34993: aiohttp arbitrary code execution via CookieJar.load()
+# Requires aiohttp>=3.14.0, but Red Hat internal index only has <=3.13.5.
+# Uncomment once 3.14.0+ is available in the index.
+# aiohttp>=3.14.0
+
+# CVE-2026-48710: starlette Host header security bypass
+# Requires starlette>=1.0.1, but Red Hat internal index only has <=1.0.0.
+# Uncomment once 1.0.1+ is available in the index.
+# starlette>=1.0.1
+
+# CVE-2026-44431: urllib3 cross-origin redirect header leak
+urllib3>=2.7.0
+
+# CVE-2026-8643: pip path traversal (no upstream fix; embargo until 2026-07-15)
+# pip is a build tool, not constrainable here. Low risk: we only install from
+# trusted indexes (Red Hat internal PyPI + pinned garak git tag).
