@@ -161,11 +161,7 @@ class GarakScanConfig(BaseModel):
                         "judge": {
                             "detector_model_type": "openai.OpenAICompatible",
                             "detector_model_name": "",
-                            "detector_model_config": {
-                                "uri": "",
-                                "api_key": "dummy",
-                                "max_tokens": 4000
-                            }
+                            "detector_model_config": {"uri": "", "api_key": "dummy", "max_tokens": 4000},
                         }
                     },
                     probe_spec="spo.SPOIntent,spo.SPOIntentUserAugmented,spo.SPOIntentSystemAugmented,spo.SPOIntentBothAugmented,multilingual.TranslationIntent,tap.TAPIntent",
