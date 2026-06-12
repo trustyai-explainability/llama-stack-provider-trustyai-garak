@@ -117,9 +117,6 @@ def run_garak_scan(
     if not config_file.exists():
         raise FileNotFoundError(f"Garak command config file not found: {config_file}")
 
-    # _ensure_garak_plugin_cache()
-    # _ensure_garak_cas_data()
-
     cmd = ["garak", "--config", str(config_file)]
 
     # Start process in new process group
