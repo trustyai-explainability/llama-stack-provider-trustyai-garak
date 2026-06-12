@@ -137,12 +137,55 @@ def _resolve_base_image(kfp_config: KFPConfig | None = None) -> str:
 
     Priority: KFPConfig.base_image > env var > k8s ConfigMap > default.
     """
+    import os
+    import logging
+
+    from ..constants import (
+        GARAK_PROVIDER_IMAGE_CONFIGMAP_NAME,
+        GARAK_PROVIDER_IMAGE_CONFIGMAP_KEY,
+        KUBEFLOW_CANDIDATE_NAMESPACES,
+        DEFAULT_GARAK_PROVIDER_IMAGE,
+    )
+
+    _logger = logging.getLogger(__name__)
+
     if kfp_config and kfp_config.base_image:
         return kfp_config.base_image
 
-    from ..remote.kfp_utils.components import get_base_image
+    if (base_image := os.environ.get("KUBEFLOW_GARAK_BASE_IMAGE")) is not None:
+        return base_image
 
-    return get_base_image()
+    try:
+        from kubernetes import client, config as k8s_config
+        from kubernetes.client.exceptions import ApiException
+
+        try:
+            k8s_config.load_incluster_config()
+        except k8s_config.ConfigException:
+            k8s_config.load_kube_config()
+
+        api = client.CoreV1Api()
+        for candidate_namespace in KUBEFLOW_CANDIDATE_NAMESPACES:
+            try:
+                configmap = api.read_namespaced_config_map(
+                    name=GARAK_PROVIDER_IMAGE_CONFIGMAP_NAME,
+                    namespace=candidate_namespace,
+                )
+                data: dict[str, str] | None = configmap.data
+                if data and GARAK_PROVIDER_IMAGE_CONFIGMAP_KEY in data:
+                    return data[GARAK_PROVIDER_IMAGE_CONFIGMAP_KEY]
+            except ApiException as api_exc:
+                if api_exc.status == 404:
+                    continue
+                else:
+                    _logger.warning(f"Could not read from ConfigMap: {api_exc}")
+            except Exception as e:
+                _logger.warning(f"Could not read from ConfigMap: {e}")
+
+        return DEFAULT_GARAK_PROVIDER_IMAGE
+    except Exception as e:
+        _logger.debug(f"Kubernetes config not available: {e}. Using default image.")
+        return DEFAULT_GARAK_PROVIDER_IMAGE
 
 
 # ---------------------------------------------------------------------------

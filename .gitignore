@@ -20,3 +20,4 @@ scan_out/
 # Hermeto outputs (generated during testing)
 hermeto-output*/
 hermeto*.env
+.venv/

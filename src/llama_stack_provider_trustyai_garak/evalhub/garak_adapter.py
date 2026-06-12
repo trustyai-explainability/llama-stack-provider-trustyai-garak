@@ -1652,9 +1652,9 @@ class GarakAdapter(FrameworkAdapter):
     def _get_garak_version(self) -> str:
         """Get Garak version string."""
         try:
-            from ..version_utils import get_garak_version
+            from importlib.metadata import version
 
-            return get_garak_version()
+            return f"garak=={version('garak')}"
         except Exception:
             return "unknown"
 

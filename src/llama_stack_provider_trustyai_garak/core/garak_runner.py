@@ -19,6 +19,132 @@ _STDERR_WARNING_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# _garak_paths_ensured = False
+
+
+# def _ensure_garak_plugin_cache() -> None:
+#     """Ensure garak's plugin cache includes all probe modules on disk.
+
+#     The shipped ``plugin_cache.json`` may be stale (missing modules like
+#     ``multilingual`` and ``spo`` that were added after the cache was
+#     generated).  When garak detects .py files on disk that aren't in the
+#     cache, it invalidates the cache and triggers a full rebuild — which
+#     crashes because some probe modules reference data files at import
+#     time that may not exist in the wheel.
+
+#     This patches the user's cache file to include stub entries for any
+#     missing modules, preventing the destructive rebuild.
+
+#     Idempotent, safe to call multiple times, runs once per process.
+#     """
+#     global _garak_paths_ensured
+#     if _garak_paths_ensured:
+#         return
+#     try:
+#         import json
+#         import garak._config
+#         from garak._plugins import PluginCache
+
+#         cache_file = PluginCache._user_plugin_cache_filename
+#         package_cache = PluginCache._plugin_cache_filename
+
+#         if not package_cache.exists():
+#             _garak_paths_ensured = True
+#             return
+
+#         # Ensure user cache dir exists and copy from package if needed
+#         cache_file.parent.mkdir(mode=0o740, parents=True, exist_ok=True)
+#         if not cache_file.exists():
+#             import shutil
+#             shutil.copy2(package_cache, cache_file)
+
+#         with open(cache_file, "r", encoding="utf-8") as f:
+#             cache = json.load(f)
+
+#         # Check each plugin type for missing modules
+#         plugin_types = ("probes", "detectors", "generators", "harnesses", "buffs")
+#         patched = False
+
+#         for plugin_type in plugin_types:
+#             plugin_path = garak._config.transient.package_dir / plugin_type
+#             if not plugin_path.exists():
+#                 continue
+
+#             cached_modules = set()
+#             for k in cache.get(plugin_type, {}):
+#                 parts = k.split(".")
+#                 if len(parts) >= 2:
+#                     cached_modules.add(parts[1])
+
+#             disk_modules = set()
+#             for f in sorted(os.listdir(plugin_path)):
+#                 if not f.endswith(".py"):
+#                     continue
+#                 if f.startswith("__") or f.startswith("_"):
+#                     continue
+#                 disk_modules.add(f.replace(".py", ""))
+
+#             missing = disk_modules - cached_modules
+#             if missing:
+#                 logger.info("Patching garak plugin cache: adding stub entries for %s/%s", plugin_type, missing)
+#                 for mod in missing:
+#                     stub_key = f"{plugin_type}.{mod}.Stub"
+#                     if plugin_type not in cache:
+#                         cache[plugin_type] = {}
+#                     cache[plugin_type][stub_key] = {
+#                         "description": f"Stub entry for {mod}",
+#                         "active": False,
+#                         "mod_time": "2025-01-01 00:00:00 +0000",
+#                     }
+#                 patched = True
+
+#         if patched:
+#             with open(cache_file, "w", encoding="utf-8") as f:
+#                 json.dump(cache, f, indent=2)
+#             # Update mtime to match package cache so validation passes
+#             pkg_stat = os.stat(package_cache)
+#             os.utime(cache_file, (pkg_stat.st_atime, pkg_stat.st_mtime))
+
+#     except Exception as e:
+#         logger.debug("Could not patch garak plugin cache: %s", e)
+#     _garak_paths_ensured = True
+
+
+# _cas_dirs_ensured = False
+
+
+# def _ensure_garak_cas_data() -> None:
+#     """Ensure CAS data directories and stub files exist.
+
+#     Garak's harness unconditionally loads the intent service on startup,
+#     which requires ``cas/``, ``cas/intent_stubs/``, ``cas/trait_typology.json``,
+#     and ``cas/intent_detectors.json``.  If these don't exist in the wheel
+#     install, we create minimal stubs so the service loads with zero active
+#     intents (correct behavior for non-intents scans).
+#     """
+#     global _cas_dirs_ensured
+#     if _cas_dirs_ensured:
+#         return
+#     try:
+#         import json
+#         import garak._config
+
+#         for root in (
+#             Path(str(garak._config.transient.package_dir / "data")),
+#             Path(str(garak._config.transient.data_dir / "data")),
+#         ):
+#             cas_dir = root / "cas"
+#             cas_dir.mkdir(parents=True, exist_ok=True)
+#             (cas_dir / "intent_stubs").mkdir(parents=True, exist_ok=True)
+
+#             for stub_file in ("trait_typology.json", "intent_detectors.json"):
+#                 fpath = cas_dir / stub_file
+#                 if not fpath.exists():
+#                     fpath.write_text("{}")
+#     except Exception as e:
+#         logger.debug("Could not ensure garak CAS data paths: %s", e)
+#     _cas_dirs_ensured = True
+
 
 @dataclass
 class GarakScanResult:
@@ -116,6 +242,9 @@ def run_garak_scan(
 
     if not config_file.exists():
         raise FileNotFoundError(f"Garak command config file not found: {config_file}")
+
+    # _ensure_garak_plugin_cache()
+    # _ensure_garak_cas_data()
 
     cmd = ["garak", "--config", str(config_file)]
 
