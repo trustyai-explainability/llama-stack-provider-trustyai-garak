@@ -1,32 +1,12 @@
 # Architecture
 
-## Two Integration Surfaces
+## Eval-Hub Garak Adapter
 
-This repo serves two **completely independent** orchestration platforms. They
-share core garak logic but have different entry points, APIs, and deployment
-models.
+This repo provides a `FrameworkAdapter` for the eval-hub SDK used by the RHOAI
+evaluation platform. It integrates [Garak](https://github.com/NVIDIA/garak)
+red-teaming scans with Kubernetes-based evaluation jobs.
 
-### 1. Llama Stack Provider
-
-An out-of-tree evaluation provider registered with the Llama Stack framework.
-Users interact via the Llama Stack client API (`benchmarks.register`,
-`eval.run_eval`). Two execution modes:
-
-| Mode | Module | How It Works |
-|------|--------|-------------|
-| **Inline** | `inline/` | Garak runs locally inside the Llama Stack server process. Simple, fast, no K8s needed. |
-| **Remote KFP** | `remote/` | Llama Stack server submits a KFP pipeline to Kubernetes. Pipeline steps run garak as `@dsl.component`s. Supports intents/SDG. |
-
-Entry points: `inline/garak_eval.py` → `GarakInlineEvalAdapter`,
-`remote/garak_remote_eval.py` → `GarakRemoteEvalAdapter`.
-
-Shared base class: `base_eval.py` → `GarakEvalBase` (benchmark resolution,
-deep-merge, Files API, scoring).
-
-### 2. Eval-Hub Adapter
-
-A `FrameworkAdapter` for the eval-hub SDK used by the RHOAI evaluation platform.
-**Has no dependency on Llama Stack.** Two execution modes:
+### Execution Modes
 
 | Mode | Module | How It Works |
 |------|--------|-------------|
@@ -40,26 +20,19 @@ Can also be invoked as `python -m llama_stack_provider_trustyai_garak.evalhub`.
 
 ## Intents Benchmark (Key Feature)
 
-The `intents` benchmark is a major feature this repo. It:
+The `intents` benchmark uses SDG and adversarial probes for targeted risk assessment:
 
 1. Loads a policy taxonomy dataset (CSV/JSON)
 2. Runs SDG (synthetic data generation) via sdg-hub to generate test prompts
 3. Scans the model with TAPIntent probes (tree-of-attacks with persuasion)
 4. Evaluates responses with MulticlassJudge detector
 
-**Only KFP-based modes support intents** because it requires the full six-step
+**Only KFP mode supports intents** because it requires the full six-step
 pipeline (`core/pipeline_steps.py`) running as KFP components:
 
 ```
 validate → taxonomy → SDG → prompts → scan → parse
 ```
-
-| Mode | Intents Support | Why |
-|------|----------------|-----|
-| Llama Stack Inline | No | Runs garak directly, no pipeline orchestration |
-| Llama Stack Remote KFP | **Yes** | KFP pipeline runs all six steps |
-| Eval-Hub Simple | No | In-pod execution, no pipeline orchestration |
-| Eval-Hub KFP | **Yes** | KFP pipeline runs all six steps |
 
 ### Intents Model Configuration
 
@@ -74,35 +47,37 @@ These can be configured two ways:
 2. **`garak_config` only** — Fully configure all model endpoints directly in
    `garak_config.plugins`. No overlay is applied.
 
-## Module Dependency Graph
+## Code Layout
 
 ```
-                    ┌──────────────┐
-                    │   core/      │
-                    │ (shared by   │
-                    │  all modes)  │
-                    └──────┬───────┘
-                           │
-           ┌───────────────┼───────────────┐
-           │               │               │
-     ┌─────▼─────┐  ┌─────▼─────┐  ┌──────▼──────┐
-     │  inline/  │  │  remote/  │  │  evalhub/   │
-     │           │  │           │  │             │
-     │ uses:     │  │ uses:     │  │ uses:       │
-     │ base_eval │  │ base_eval │  │ core/ only  │
-     │ core/     │  │ core/     │  │ (no Llama   │
-     │           │  │ kfp_utils │  │  Stack)     │
-     └───────────┘  └───────────┘  └─────────────┘
+src/llama_stack_provider_trustyai_garak/
+├── core/                    # Shared logic used by all modes
+│   ├── config_resolution.py # Deep-merge user overrides onto benchmark profiles
+│   ├── command_builder.py   # Build garak CLI args for OpenAI-compatible endpoints
+│   ├── garak_runner.py      # Subprocess runner for garak CLI
+│   └── pipeline_steps.py    # Six-step pipeline (validate→taxonomy→SDG→prompts→scan→parse)
+│
+├── evalhub/                 # Eval-Hub integration
+│   ├── garak_adapter.py     # FrameworkAdapter: benchmark resolution, intents overlay, callbacks
+│   ├── kfp_adapter.py       # KFP-specific adapter (forces KFP execution mode)
+│   ├── kfp_pipeline.py      # Eval-hub KFP pipeline with S3 artifact flow
+│   └── s3_utils.py          # S3/Data Connection client
+│
+├── garak_command_config.py  # Pydantic models for garak YAML config
+├── config.py                # Scan profiles (OWASP, AVID, intents, etc.)
+├── intents.py               # Policy taxonomy dataset loading (SDG/intents flows)
+├── sdg.py                   # Synthetic data generation via sdg-hub
+├── result_utils.py          # Parse garak outputs, TBSA scoring, HTML reports
+├── constants.py             # Execution mode constants, default values
+├── errors.py                # Exception hierarchy
+├── utils.py                 # XDG path helpers, HTTP client
+└── resources/               # Jinja2 templates and Vega chart specs
 ```
-
-Note: `evalhub/` does NOT import from `base_eval.py` or any Llama Stack types.
-It only uses `core/` modules. This is intentional — eval-hub has its own
-orchestration and should never depend on Llama Stack.
 
 ## Config Resolution Flow
 
 ```
-Benchmark Profile (predefined in base_eval.py or garak_adapter.py)
+Benchmark Profile (predefined in config.py)
         │
         ▼
   deep_merge_dicts(profile, user_overrides)
@@ -117,30 +92,26 @@ Benchmark Profile (predefined in base_eval.py or garak_adapter.py)
     - max_tokens/temperature: setdefault (preserve existing)
         │
         ▼
-  Final GarakCommandConfig → CLI args or YAML file
+  Final GarakCommandConfig → config.json file → garak --config
 ```
 
-## Shared Modules (Top-Level)
+## Module Summary
 
 | Module | Purpose | Used By |
 |--------|---------|---------|
 | `garak_command_config.py` | Pydantic models for garak YAML config | All modes |
-| `config.py` | Provider config models (inline/remote settings) | Llama Stack only |
-| `intents.py` | Policy taxonomy dataset loading | KFP modes (intents) |
-| `sdg.py` | Synthetic data generation via sdg-hub | KFP modes (intents) |
+| `config.py` | Scan profiles (GarakScanConfig, TapIntentConfig) | All modes |
+| `intents.py` | Policy taxonomy dataset loading | KFP mode (intents) |
+| `sdg.py` | Synthetic data generation via sdg-hub | KFP mode (intents) |
 | `result_utils.py` | Parse garak outputs, TBSA scoring, HTML reports | All modes |
-| `shield_scan.py` | Shield orchestration (input/output guardrails) | Llama Stack only |
-| `version_utils.py` | Resolve garak version for provider specs | Llama Stack only |
-| `compat.py` | Llama Stack API import compatibility layer | Llama Stack only |
 | `constants.py` | KFP image keys, execution mode constants | All modes |
 
 ## Dependency Extras
 
 | Extra | Contents | Use Case |
 |-------|----------|----------|
-| (none) | Core provider + KFP + boto3 | Remote mode / eval-hub |
+| (none) | Core adapter + KFP + boto3 + eval-hub-sdk | Production |
 | `[sdg]` | nest_asyncio + sdg-hub | SDG without garak |
-| `[inline]` | `[sdg]` + garak (RH AI index pin) | Local scans |
+| `[inline]` | `[sdg]` + garak (pinned version) | Container builds |
 | `[test]` | pytest + pytest-asyncio | CI test runner |
 | `[dev]` | `[test]` + ruff + pre-commit | Local development |
-| `[server]` | llama-stack | Running the Llama Stack server |

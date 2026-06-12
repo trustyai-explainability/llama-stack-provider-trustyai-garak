@@ -1,207 +1,120 @@
-# TrustyAI Garak: LLM Red Teaming for Llama Stack
+# TrustyAI Garak: LLM Red Teaming for Eval-Hub
 
-Automated vulnerability scanning and red teaming for Large Language Models using [Garak](https://github.com/NVIDIA/garak). This project implements garak as an external evaluation provider for [Llama Stack](https://llamastack.github.io/).
+Automated vulnerability scanning and red teaming for Large Language Models using [Garak](https://github.com/NVIDIA/garak). This package provides a `FrameworkAdapter` for the [eval-hub](https://github.com/opendatahub-io/eval-hub) evaluation platform, enabling garak scans to run as Kubernetes Jobs or via Kubeflow Pipelines.
 
 ## What It Does
 
-- 🔍 **Vulnerability Assessment**: Red Team LLMs for prompt injection, jailbreaks, toxicity, bias and other vulnerabilities
-- 📋 **Compliance**: OWASP LLM Top 10, AVID taxonomy benchmarks  
-- 🛡️ **Shield Testing**: Measure guardrail effectiveness
-- ☁️ **Cloud-Native**: Runs on OpenShift AI / Kubernetes
-- 📊 **Detailed Reports**: JSON and HTML reports
+- 🔍 **Vulnerability Assessment**: Red-team LLMs for prompt injection, jailbreaks, toxicity, bias and other vulnerabilities
+- 📋 **Compliance**: OWASP LLM Top 10, AVID taxonomy benchmarks
+- 🎯 **Intents-based Testing**: Policy taxonomy + SDG + TAPIntent for targeted risk assessment (KFP mode)
+- ☁️ **Cloud-Native**: Runs on OpenShift AI / Kubernetes as eval-hub jobs
+- 📊 **Detailed Reports**: JSONL, HTML, and AVID-format reports with MLflow integration
 
-## Pick Your Deployment
+## Execution Modes
 
-| Mode | Llama Stack server | Garak scans | Typical use case | Guide |
-|---|---|---|---|---|
-| Total Remote | OpenShift/Kubernetes | KFP pipelines | Production | [→ Setup](demos/1-openshift-ai/README.md) |
-| Partial Remote | Local machine | KFP pipelines | Development | [→ Setup](demos/2-partial-remote/README.md) |
-| Total Inline | Local machine | Local machine | Fast local testing | [→ Setup](demos/3-local-inline/README.md) |
-
-- Feature notebook: `demos/guide.ipynb`
-- Metadata reference: `BENCHMARK_METADATA_REFERENCE.md`
+| Mode | How Garak Runs | Intents Support | Use Case |
+|------|---------------|-----------------|----------|
+| **Simple** | Directly in the eval-hub K8s Job pod | No | Standard scans |
+| **KFP** | K8s Job submits to Kubeflow Pipelines, polls status | Yes | Intents/SDG workflows |
 
 ## Installation
 
 ```bash
-# For Deployment 1 (Total remote)
-## no installation needed! 
-
-# For Deployment 2 (Partial remote)
+# Core (eval-hub adapter with KFP support)
 pip install llama-stack-provider-trustyai-garak
 
-# For Deployment 3 (local scans) - requires extra
-pip install "llama-stack-provider-trustyai-garak[inline]"
+# With SDG support (for intents workflows)
+pip install "llama-stack-provider-trustyai-garak[sdg]"
+
+# Development
+pip install "llama-stack-provider-trustyai-garak[dev]"
 ```
 
-## Quick Workflow
+## Container Image
 
-```python
-from llama_stack_client import LlamaStackClient
-
-client = LlamaStackClient(base_url="http://localhost:8321")
-
-# Discover Garak provider
-garak_provider = next(
-    p for p in client.providers.list()
-    if p.provider_type.endswith("trustyai_garak")
-)
-garak_provider_id = garak_provider.provider_id
-
-# List predefined benchmarks
-benchmarks = client.alpha.benchmarks.list()
-print([b.identifier for b in benchmarks if b.identifier.startswith("trustyai_garak::")])
-
-# Run a predefined benchmark
-benchmark_id = "trustyai_garak::quick"
-job = client.alpha.eval.run_eval(
-    benchmark_id=benchmark_id,
-    benchmark_config={
-        "eval_candidate": {
-            "type": "model",
-            "model": "your-model-id",
-            "sampling_params": {"max_tokens": 100},
-        }
-    },
-)
-
-# Poll status
-status = client.alpha.eval.jobs.status(job_id=job.job_id, benchmark_id=benchmark_id)
-print(status.status)
-
-# Retrieve final result
-if status.status == "completed":
-    job_result = client.alpha.eval.jobs.retrieve(job_id=job.job_id, benchmark_id=benchmark_id)
+```bash
+# Build the eval-hub adapter image
+docker build -f Containerfile -t trustyai-garak:dev .
 ```
 
-## Custom Benchmark Schema
+The container runs as:
+```bash
+# Simple mode (garak in same pod)
+CMD ["python", "-m", "llama_stack_provider_trustyai_garak.evalhub"]
 
-Use `metadata.garak_config` for Garak command configuration. Provider-level runtime parameters (for example `timeout`, `shield_ids`) stay at top-level metadata.
-
-```python
-client.alpha.benchmarks.register(
-    benchmark_id="custom_promptinject",
-    dataset_id="garak",
-    scoring_functions=["garak_scoring"],
-    provider_id=garak_provider_id,
-    provider_benchmark_id="custom_promptinject",
-    metadata={
-        "garak_config": {
-            "plugins": {
-                "probe_spec": ["promptinject"]
-            },
-            "reporting": {
-                "taxonomy": "owasp"
-            }
-        },
-        "timeout": 900
-    }
-)
+# KFP mode (garak in a separate KFP pod)
+CMD ["python", "-m", "llama_stack_provider_trustyai_garak.evalhub.kfp_adapter"]
 ```
 
-## Update and Deep-Merge Behavior
+## Benchmark Profiles
 
-- To create a tuned variant of a predefined (or existing custom) benchmark, set `provider_benchmark_id` to the predefined (or existing custom) benchmark ID and pass overrides in `metadata`.
-- Provider metadata is deep-merged, so you can override only the parts you care about.
-- Predefined benchmarks are comprehensive by design. For faster exploratory runs, lower `garak_config.run.soft_probe_prompt_cap` to reduce prompts per probe.
+Predefined scan profiles available via `benchmark_id`:
 
-```python
-client.alpha.benchmarks.register(
-    benchmark_id="quick_promptinject_tuned",
-    dataset_id="garak",
-    scoring_functions=["garak_scoring"],
-    provider_id=garak_provider_id,
-    provider_benchmark_id="trustyai_garak::quick",
-    metadata={
-        "garak_config": {
-            "plugins": {"probe_spec": ["promptinject"]},
-            "system": {"parallel_attempts": 20}
-        },
-        "timeout": 1200
-    }
-)
+| Profile | Description |
+|---------|-------------|
+| `quick` | Single DAN probe for fast testing |
+| `owasp_llm_top10` | OWASP Top 10 for LLM Applications |
+| `avid` | AVID taxonomy — all vulnerabilities |
+| `avid_security` | AVID — security vulnerabilities |
+| `avid_ethics` | AVID — ethical concerns |
+| `avid_performance` | AVID — performance issues |
+| `quality` | Violence, profanity, toxicity, hate speech |
+| `cwe` | Common Weakness Enumeration |
+| `intents` | Intents-based risk assessment (KFP mode only) |
+
+## Job Spec Configuration
+
+The adapter reads a `JobSpec` from a mounted ConfigMap:
+
+```json
+{
+  "id": "scan-001",
+  "provider_id": "garak",
+  "benchmark_id": "quick",
+  "model": {
+    "url": "https://my-model-endpoint.example.com/v1",
+    "name": "my-model"
+  },
+  "parameters": {
+    "probes": "dan.Dan_11_0",
+    "execution_mode": "simple"
+  }
+}
 ```
 
-```python
-# Faster (less comprehensive) variant of a predefined benchmark
-client.alpha.benchmarks.register(
-    benchmark_id="owasp_fast",
-    dataset_id="garak",
-    scoring_functions=["garak_scoring"],
-    provider_id=garak_provider_id,
-    provider_benchmark_id="trustyai_garak::owasp_llm_top10",
-    metadata={
-        "garak_config": {
-            "run": {"soft_probe_prompt_cap": 100}
-        }
-    }
-)
+## Parameters
+
+Key `parameters` in the job spec:
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `probes` | Comma-separated probe names | Profile default |
+| `probe_tags` | Tag-based probe filtering | — |
+| `execution_mode` | `simple` or `kfp` | `simple` |
+| `timeout_seconds` | Scan timeout | Profile default |
+| `eval_threshold` | Vulnerability threshold (0.0–1.0) | `0.5` |
+| `model_type` | Garak generator type | `openai.OpenAICompatible` |
+| `garak_config` | Full garak config dict (deep-merged onto profile) | — |
+
+## Results
+
+The adapter reports `EvaluationResult` per probe with:
+- `attack_success_rate`: Percentage of successful attacks
+- `vulnerable_responses`: Count of vulnerable responses
+- `total_attempts`: Total probe attempts
+
+Overall metrics include TBSA (Tier-Based Security Aggregate) when available.
+
+## Development
+
+```bash
+make test        # Run all tests
+make coverage    # With coverage report
+make lint        # ruff check
+make format      # ruff format
 ```
-
-## Shield Testing
-
-Use either `shield_ids` (all treated as input shields) or `shield_config` (explicit input/output mapping).
-
-```python
-client.alpha.benchmarks.register(
-    benchmark_id="with_shields",
-    dataset_id="garak",
-    scoring_functions=["garak_scoring"],
-    provider_id=garak_provider_id,
-    provider_benchmark_id="with_shields",
-    metadata={
-        "garak_config": {
-            "plugins": {"probe_spec": ["promptinject.HijackHateHumans"]}
-        },
-        "shield_config": {
-            "input": ["Prompt-Guard-86M"],
-            "output": ["Llama-Guard-3-8B"]
-        },
-        "timeout": 600
-    }
-)
-```
-
-## Understanding Results (`_overall` and TBSA)
-
-`job_result.scores` contains:
-
-- probe-level entries (for example `promptinject.HijackHateHumans`)
-- synthetic `_overall` aggregate entry across all probes
-
-`_overall.aggregated_results` can include:
-
-- `total_attempts`
-- `vulnerable_responses`
-- `attack_success_rate`
-- `probe_count`
-- `tbsa` (Tier-Based Security Aggregate, 1.0 to 5.0, higher is better)
-- `version_probe_hash`
-- `probe_detector_pairs_contributing`
-
-TBSA is derived from probe:detector pass-rate and z-score DEFCON grades with tier-aware aggregation and weighting, to give a more meaningful overall security posture than a plain pass/fail metric.
-
-## Scan Artifacts
-
-Access scan files from job metadata:
-
-- `scan.log`
-- `scan.report.jsonl`
-- `scan.hitlog.jsonl`
-- `scan.avid.jsonl`
-- `scan.report.html`
-
-Remote mode stores prefixed keys in metadata (for example `{job_id}_scan.report.html`).
-
-## Notes on Remote Cluster Resources
-
-- Partial remote mode needs KFP resources only.
-- Total remote mode needs full stack resources (KFP, LlamaStackDistribution, RBAC, secrets, and Postgres manifests).
-- See `lsd_remote/` for full reference manifests.
 
 ## Support & Documentation
 
-- 📚 **Tutorial**: https://trustyai.org/docs/main/red-teaming-introduction
-- 💬 **Issues**: https://github.com/trustyai-explainability/llama-stack-provider-trustyai-garak/issues
-- 🦙 **Llama Stack Docs**: https://llamastack.github.io/
 - 📖 **Garak Docs**: https://reference.garak.ai/en/latest/index.html
+- 💬 **Issues**: https://github.com/trustyai-explainability/llama-stack-provider-trustyai-garak/issues

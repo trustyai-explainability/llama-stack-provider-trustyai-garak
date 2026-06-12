@@ -8,10 +8,8 @@ References:
 
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Dict, Any, List, Union
-from .compat import json_schema_type
 
 
-@json_schema_type
 class GarakSystemConfig(BaseModel):
     """
     Garak system configuration.
@@ -52,7 +50,6 @@ class GarakSystemConfig(BaseModel):
     )
 
 
-@json_schema_type
 class GarakRunConfig(BaseModel):
     """
     Garak run configuration.
@@ -96,7 +93,6 @@ class GarakRunConfig(BaseModel):
     )
 
 
-@json_schema_type
 class GarakPluginsConfig(BaseModel):
     """
     Garak plugins configuration.
@@ -136,7 +132,6 @@ class GarakPluginsConfig(BaseModel):
     harnesses: Optional[Dict[str, Any]] = Field(default=None, description="Root node for harness plugin configs")
 
 
-@json_schema_type
 class GarakReportingConfig(BaseModel):
     """
     Garak reporting configuration.
@@ -169,7 +164,6 @@ class GarakReportingConfig(BaseModel):
     )
 
 
-@json_schema_type
 class GarakCASConfig(BaseModel):
     """
     Context Aware Scanning configuration.
@@ -193,7 +187,6 @@ class GarakCASConfig(BaseModel):
     )
 
 
-@json_schema_type
 class GarakCommandConfig(BaseModel):
     """
     Complete Garak command configuration.

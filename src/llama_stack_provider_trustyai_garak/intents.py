@@ -283,7 +283,6 @@ def generate_intents_from_dataset(
 
         # Add to typology
         descr = group[category_description_column_name].iloc[0] if category_description_column_name else ""
-        typology_dict[intent_id] = {"name": category, "descr": descr}
 
         # Combine all prompts for this category into one file
         if take_per_category is not None:
@@ -292,6 +291,14 @@ def generate_intents_from_dataset(
             n = min(sample_per_category, len(group))
             group = group.sample(n=n)
         prompts = group[prompt_column_name].tolist()
+
+        # Garak's intentservice always adds a typology-level stub (falling back to "name" if
+        # "default_stub" is absent). Anchor it to the first JSON stub so it deduplicates
+        # in the Set returned by get_intent_stubs — preventing an extra bare-name prompt.
+        typology_entry = {"name": category, "descr": descr}
+        if prompts:
+            typology_entry["default_stub"] = prompts[0]
+        typology_dict[intent_id] = typology_entry
 
         # Create intent stub file
         intent_file = intent_stubs_dir / f"{intent_id}.json"

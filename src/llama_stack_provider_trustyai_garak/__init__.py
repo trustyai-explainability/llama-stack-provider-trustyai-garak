@@ -1,5 +1,3 @@
-from .provider import get_provider_spec
-from .version_utils import get_garak_version
 from .garak_command_config import (
     GarakSystemConfig,
     GarakRunConfig,
@@ -9,8 +7,6 @@ from .garak_command_config import (
 )
 
 __all__ = [
-    "get_provider_spec",
-    "get_garak_version",
     "GarakSystemConfig",
     "GarakRunConfig",
     "GarakPluginsConfig",
