@@ -112,6 +112,6 @@ Benchmark Profile (predefined in config.py)
 |-------|----------|----------|
 | (none) | Core adapter + KFP + boto3 + eval-hub-sdk | Production |
 | `[sdg]` | nest_asyncio + sdg-hub | SDG without garak |
-| `[garak]` | `[sdg]` + garak (pinned version) | Container builds |
+| `[inline]` | `[sdg]` + garak (pinned version) | Container builds |
 | `[test]` | pytest + pytest-asyncio | CI test runner |
 | `[dev]` | `[test]` + ruff + pre-commit | Local development |
