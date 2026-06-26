@@ -828,22 +828,48 @@ class GarakAdapter(FrameworkAdapter):
 
     @staticmethod
     def _create_kfp_client(kfp_config: "KFPConfig"):
-        """Create a KFP Client from KFPConfig."""
+        """Create a KFP Client from KFPConfig.
+
+        Since evalhub PR #672 the adapter pod runs with
+        AutomountServiceAccountToken=false. The standard SA token path
+        (/var/run/secrets/kubernetes.io/serviceaccount/token) is no longer
+        present — only a DownwardAPI namespace file is mounted there. Auth
+        must come from KFP_AUTH_TOKEN / kfp_config.auth_token instead.
+        """
         from kfp import Client
 
         ssl_ca_cert = kfp_config.ssl_ca_cert or None
         token = kfp_config.auth_token or None
 
-        # If no explicit token, try to get one from the cluster service account
         if not token:
             sa_token_path = Path("/var/run/secrets/kubernetes.io/serviceaccount/token")
             if sa_token_path.exists():
-                token = sa_token_path.read_text().strip()
-                logger.debug("Using service account token for KFP auth")
+                candidate = sa_token_path.read_text().strip()
+                # evalhub >= 0.4.4 (PR #672) mounts a DownwardAPI *namespace* file at
+                # the same standard SA path instead of the real token. Guard against
+                # mistaking it for a JWT — all real SA tokens are base64url-encoded
+                # JSON and start with "eyJ".
+                if candidate.startswith("eyJ"):
+                    token = candidate
+                    logger.debug("Using service account token for KFP auth")
+                else:
+                    logger.debug(
+                        "SA token path contains a non-JWT value (evalhub >= 0.4.4 "
+                        "DownwardAPI namespace file); ignoring. Set KFP_AUTH_TOKEN "
+                        "for explicit authentication."
+                    )
+
+        if not token:
+            logger.warning(
+                "No KFP auth token available. Set KFP_AUTH_TOKEN or "
+                "kfp_config.auth_token. Proceeding without authentication — "
+                "this will fail on clusters that require a bearer token."
+            )
 
         return Client(
             host=kfp_config.endpoint,
             existing_token=token,
+            namespace=kfp_config.namespace,
             verify_ssl=kfp_config.verify_ssl,
             ssl_ca_cert=ssl_ca_cert,
         )
@@ -948,8 +974,21 @@ class GarakAdapter(FrameworkAdapter):
 
             try:
                 k8s_config.load_incluster_config()
-            except Exception:
-                k8s_config.load_kube_config()
+            except k8s_config.ConfigException:
+                # evalhub PR #672: SA token is no longer auto-mounted on the adapter
+                # pod. Try authenticating via KFP_AUTH_TOKEN (already required for
+                # KFP client auth), then fall back to kubeconfig for local dev.
+                auth_token = os.getenv("KFP_AUTH_TOKEN", "")
+                k8s_host = os.getenv("KUBERNETES_SERVICE_HOST", "")
+                k8s_port = os.getenv("KUBERNETES_SERVICE_PORT", "443")
+                if auth_token and k8s_host:
+                    configuration = k8s_client.Configuration()
+                    configuration.host = f"https://{k8s_host}:{k8s_port}"
+                    configuration.api_key = {"authorization": f"Bearer {auth_token}"}
+                    configuration.verify_ssl = False
+                    k8s_client.Configuration.set_default(configuration)
+                else:
+                    k8s_config.load_kube_config()
             v1 = k8s_client.CoreV1Api()
             secret = v1.read_namespaced_secret(secret_name, namespace)
             data = secret.data or {}
