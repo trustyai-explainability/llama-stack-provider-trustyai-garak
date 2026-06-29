@@ -830,41 +830,33 @@ class GarakAdapter(FrameworkAdapter):
     def _create_kfp_client(kfp_config: "KFPConfig"):
         """Create a KFP Client from KFPConfig.
 
-        Since evalhub PR #672 the adapter pod runs with
-        AutomountServiceAccountToken=false. The standard SA token path
-        (/var/run/secrets/kubernetes.io/serviceaccount/token) is no longer
-        present — only a DownwardAPI namespace file is mounted there. Auth
-        must come from KFP_AUTH_TOKEN / kfp_config.auth_token instead.
+        Two auth models are supported:
+
+        **Old model (evalhub < 0.4.4 / direct KFP)**: the full SA token is
+        auto-mounted at the standard path; this method reads it and passes it
+        to the client. KFP_ENDPOINT points at the real KFP API URL.
+
+        **New model (evalhub >= 0.4.4 / sidecar proxy)**: evalhub PR #672 sets
+        AutomountServiceAccountToken=false on the adapter pod. The SA token
+        file no longer exists, so ``token`` stays None — which is correct
+        because KFP_ENDPOINT must be set to ``localhost:8080`` and the sidecar
+        proxy injects the SA token on every outbound request automatically.
+        namespace is always passed explicitly so the KFP SDK never needs to
+        call get_kfp_healthz to auto-detect it.
         """
         from kfp import Client
 
         ssl_ca_cert = kfp_config.ssl_ca_cert or None
         token = kfp_config.auth_token or None
 
+        # Old model: SA token file is present — read it for direct KFP auth.
+        # New model: file does not exist (only DownwardAPI namespace file is
+        # mounted); token stays None and the sidecar injects auth instead.
         if not token:
             sa_token_path = Path("/var/run/secrets/kubernetes.io/serviceaccount/token")
             if sa_token_path.exists():
-                candidate = sa_token_path.read_text().strip()
-                # evalhub >= 0.4.4 (PR #672) mounts a DownwardAPI *namespace* file at
-                # the same standard SA path instead of the real token. Guard against
-                # mistaking it for a JWT — all real SA tokens are base64url-encoded
-                # JSON and start with "eyJ".
-                if candidate.startswith("eyJ"):
-                    token = candidate
-                    logger.debug("Using service account token for KFP auth")
-                else:
-                    logger.debug(
-                        "SA token path contains a non-JWT value (evalhub >= 0.4.4 "
-                        "DownwardAPI namespace file); ignoring. Set KFP_AUTH_TOKEN "
-                        "for explicit authentication."
-                    )
-
-        if not token:
-            logger.warning(
-                "No KFP auth token available. Set KFP_AUTH_TOKEN or "
-                "kfp_config.auth_token. Proceeding without authentication — "
-                "this will fail on clusters that require a bearer token."
-            )
+                token = sa_token_path.read_text().strip()
+                logger.debug("Using service account token for KFP auth")
 
         return Client(
             host=kfp_config.endpoint,
