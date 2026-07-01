@@ -1196,7 +1196,7 @@ class GarakAdapter(FrameworkAdapter):
                 or "DUMMY"
             )
             garak_config.plugins.generators = build_generator_options(
-                model_endpoint=self._normalize_url(config.model.url),
+                model_endpoint=self._normalize_url(self._resolve_real_model_url(config.model.url)),
                 model_name=config.model.name,
                 api_key=api_key,
                 extra_params=model_params or TARGET_DEFAULT_PARAMETERS,
@@ -1531,6 +1531,39 @@ class GarakAdapter(FrameworkAdapter):
         if not re.match(r"^.*\/v\d+$", url):
             url = f"{url}/v1"
         return url
+
+    @staticmethod
+    def _resolve_real_model_url(model_url: str) -> str:
+        """Return the real upstream model URL for use in KFP component pods.
+
+        After evalhub PR #676 job.json always carries http://localhost:8080 as
+        the model URL (the sidecar address). That works in simple mode because
+        garak runs inside the adapter pod where the sidecar is present, but in
+        KFP mode garak runs in a separate KFP component pod that has no sidecar.
+
+        When the URL looks like a sidecar address we read the real upstream URL
+        from /meta/sidecar_config.json, which evalhub writes alongside job.json.
+        Falls back to model_url unchanged if the file is absent or unreadable
+        (old evalhub, local dev, or non-sidecar deployments).
+        """
+        parsed = model_url.strip().rstrip("/")
+        # Only attempt the lookup when the URL is a loopback sidecar address.
+        if not ("localhost" in parsed or "127.0.0.1" in parsed):
+            return parsed
+
+        sidecar_cfg_path = Path(os.getenv("EVALHUB_JOB_SPEC_PATH", "/meta/job.json")).parent / "sidecar_config.json"
+        try:
+            cfg = json.loads(sidecar_cfg_path.read_text())
+            real_url = cfg.get("model", {}).get("url", "").strip().rstrip("/")
+            if real_url:
+                logger.debug("Resolved real model URL from %s: %s", sidecar_cfg_path, real_url)
+                return real_url
+        except FileNotFoundError:
+            logger.debug("sidecar_config.json not found at %s; using model URL as-is", sidecar_cfg_path)
+        except Exception as exc:
+            logger.warning("Could not read sidecar_config.json: %s; using model URL as-is", exc)
+
+        return parsed
 
     # def _build_environment(self, config: JobSpec) -> dict[str, str]:
     #     """Build environment variables for Garak execution."""
