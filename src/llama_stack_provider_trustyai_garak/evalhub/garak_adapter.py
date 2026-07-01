@@ -1195,13 +1195,7 @@ class GarakAdapter(FrameworkAdapter):
                 or os.getenv("OPENAICOMPATIBLE_API_KEY")
                 or "DUMMY"
             )
-            # kfp_config.model_url is an explicit override for the target model URL
-            # used in KFP component pods (which have no sidecar proxy). Required when
-            # evalhub >= 0.4.4 rewrites job.json to localhost:8080 and the real URL
-            # cannot be resolved automatically from sidecar_config.json.
-            kfp_overrides = benchmark_config.get("kfp_config", {}) or {}
-            explicit_model_url = (kfp_overrides.get("model_url") or "").strip()
-            raw_model_url = explicit_model_url or self._resolve_real_model_url(config.model.url)
+            raw_model_url = self._resolve_kfp_model_url(config.model.url, benchmark_config)
             garak_config.plugins.generators = build_generator_options(
                 model_endpoint=self._normalize_url(raw_model_url),
                 model_name=config.model.name,
@@ -1540,61 +1534,66 @@ class GarakAdapter(FrameworkAdapter):
         return url
 
     @staticmethod
-    def _resolve_real_model_url(model_url: str) -> str:
-        """Return the real upstream model URL for use in KFP component pods.
+    def _is_sidecar_address(url: str) -> bool:
+        return "localhost" in url or "127.0.0.1" in url
 
-        After evalhub PR #676 job.json always carries http://localhost:8080 as
-        the model URL (the sidecar address). That works in simple mode because
-        garak runs inside the adapter pod where the sidecar is present, but in
-        KFP mode garak runs in a separate KFP component pod that has no sidecar.
+    @staticmethod
+    def _resolve_kfp_model_url(model_url: str, benchmark_config: dict) -> str:
+        """Resolve the target model URL for KFP component pods.
 
-        When the URL looks like a sidecar address we attempt to read the real
-        upstream URL from the evalhub sidecar config file (written alongside
-        job.json). Several key-name conventions are tried to handle different
-        evalhub versions. Falls back to model_url unchanged when the file is
-        absent or unreadable (old evalhub, local dev, non-sidecar deployments).
+        evalhub >= 0.4.4 rewrites job.json so model.url points at the
+        sidecar proxy (localhost:8080).  That works in simple mode (sidecar
+        is co-located) but KFP component pods have no sidecar.
 
-        If this method is still returning localhost:8080 after upgrade, set
-        kfp_config.model_url in benchmark_config as an explicit override.
+        Resolution chain (first non-sidecar URL wins):
+        1. kfp_config.model_url   — explicit override in benchmark_config
+        2. model auth secret key  — read_model_auth_key("model_url")
+        3. intents_models.*.url   — first non-localhost URL from
+           judge/attacker/evaluator config
+        4. model_url as-is        — fallback (works for simple mode and
+           pre-sidecar evalhub)
         """
-        parsed = model_url.strip().rstrip("/")
-        # Only attempt the lookup when the URL is a loopback sidecar address.
-        if not ("localhost" in parsed or "127.0.0.1" in parsed):
-            return parsed
+        url = model_url.strip().rstrip("/")
 
-        meta_dir = Path(os.getenv("EVALHUB_JOB_SPEC_PATH", "/meta/job.json")).parent
-        candidate_paths = [
-            meta_dir / "sidecar_config.json",
-            meta_dir / "sidecar-config.json",
-            Path("/etc/eval-sidecar/config.json"),
-        ]
-        # Key-name pairs to try in order (Go JSON tags vary by evalhub version).
-        key_pairs = [("model", "url"), ("Model", "URL"), ("model", "URL"), ("Model", "url")]
+        if not GarakAdapter._is_sidecar_address(url):
+            return url
 
-        for cfg_path in candidate_paths:
-            try:
-                cfg = json.loads(cfg_path.read_text())
-            except FileNotFoundError:
-                continue
-            except Exception as exc:
-                logger.warning("Could not parse %s: %s", cfg_path, exc)
-                continue
+        kfp_overrides = benchmark_config.get("kfp_config", {}) or {}
+        explicit = (kfp_overrides.get("model_url") or "").strip()
+        if explicit:
+            logger.info("Using explicit kfp_config.model_url: %s", explicit)
+            return explicit.rstrip("/")
 
-            for model_key, url_key in key_pairs:
-                real_url = (cfg.get(model_key) or {}).get(url_key, "")
-                if real_url:
-                    real_url = real_url.strip().rstrip("/")
-                    logger.info("Resolved real model URL from %s: %s", cfg_path, real_url)
-                    return real_url
+        try:
+            from evalhub.adapter.auth import read_model_auth_key
 
-        logger.warning(
-            "Model URL is a sidecar address (%s) but the real URL could not be "
-            "resolved from any sidecar config file. KFP component pods have no "
-            "sidecar — set kfp_config.model_url in benchmark_config to provide "
-            "the real model URL explicitly.",
-            parsed,
-        )
-        return parsed
+            secret_url = (read_model_auth_key("model_url") or "").strip()
+            if secret_url and not GarakAdapter._is_sidecar_address(secret_url):
+                logger.info("Resolved model URL from model auth secret: %s", secret_url)
+                return secret_url.rstrip("/")
+        except Exception:
+            pass
+
+        intents_models = benchmark_config.get("intents_models", {})
+        if isinstance(intents_models, dict):
+            for role in ("judge", "attacker", "evaluator"):
+                role_url = (intents_models.get(role) or {}).get("url", "").strip()
+                if role_url and not GarakAdapter._is_sidecar_address(role_url):
+                    logger.info(
+                        "Resolved model URL from intents_models.%s: %s", role, role_url
+                    )
+                    return role_url.rstrip("/")
+
+        if kfp_overrides:
+            logger.warning(
+                "Model URL is a sidecar address (%s) but could not be resolved "
+                "to a real upstream URL. KFP component pods have no sidecar "
+                "proxy. Set kfp_config.model_url in benchmark_config or add a "
+                "model_url key to the model auth secret.",
+                url,
+            )
+
+        return url
 
     # def _build_environment(self, config: JobSpec) -> dict[str, str]:
     #     """Build environment variables for Garak execution."""
