@@ -1195,8 +1195,15 @@ class GarakAdapter(FrameworkAdapter):
                 or os.getenv("OPENAICOMPATIBLE_API_KEY")
                 or "DUMMY"
             )
+            # kfp_config.model_url is an explicit override for the target model URL
+            # used in KFP component pods (which have no sidecar proxy). Required when
+            # evalhub >= 0.4.4 rewrites job.json to localhost:8080 and the real URL
+            # cannot be resolved automatically from sidecar_config.json.
+            kfp_overrides = benchmark_config.get("kfp_config", {}) or {}
+            explicit_model_url = (kfp_overrides.get("model_url") or "").strip()
+            raw_model_url = explicit_model_url or self._resolve_real_model_url(config.model.url)
             garak_config.plugins.generators = build_generator_options(
-                model_endpoint=self._normalize_url(self._resolve_real_model_url(config.model.url)),
+                model_endpoint=self._normalize_url(raw_model_url),
                 model_name=config.model.name,
                 api_key=api_key,
                 extra_params=model_params or TARGET_DEFAULT_PARAMETERS,
@@ -1541,28 +1548,52 @@ class GarakAdapter(FrameworkAdapter):
         garak runs inside the adapter pod where the sidecar is present, but in
         KFP mode garak runs in a separate KFP component pod that has no sidecar.
 
-        When the URL looks like a sidecar address we read the real upstream URL
-        from /meta/sidecar_config.json, which evalhub writes alongside job.json.
-        Falls back to model_url unchanged if the file is absent or unreadable
-        (old evalhub, local dev, or non-sidecar deployments).
+        When the URL looks like a sidecar address we attempt to read the real
+        upstream URL from the evalhub sidecar config file (written alongside
+        job.json). Several key-name conventions are tried to handle different
+        evalhub versions. Falls back to model_url unchanged when the file is
+        absent or unreadable (old evalhub, local dev, non-sidecar deployments).
+
+        If this method is still returning localhost:8080 after upgrade, set
+        kfp_config.model_url in benchmark_config as an explicit override.
         """
         parsed = model_url.strip().rstrip("/")
         # Only attempt the lookup when the URL is a loopback sidecar address.
         if not ("localhost" in parsed or "127.0.0.1" in parsed):
             return parsed
 
-        sidecar_cfg_path = Path(os.getenv("EVALHUB_JOB_SPEC_PATH", "/meta/job.json")).parent / "sidecar_config.json"
-        try:
-            cfg = json.loads(sidecar_cfg_path.read_text())
-            real_url = cfg.get("model", {}).get("url", "").strip().rstrip("/")
-            if real_url:
-                logger.debug("Resolved real model URL from %s: %s", sidecar_cfg_path, real_url)
-                return real_url
-        except FileNotFoundError:
-            logger.debug("sidecar_config.json not found at %s; using model URL as-is", sidecar_cfg_path)
-        except Exception as exc:
-            logger.warning("Could not read sidecar_config.json: %s; using model URL as-is", exc)
+        meta_dir = Path(os.getenv("EVALHUB_JOB_SPEC_PATH", "/meta/job.json")).parent
+        candidate_paths = [
+            meta_dir / "sidecar_config.json",
+            meta_dir / "sidecar-config.json",
+            Path("/etc/eval-sidecar/config.json"),
+        ]
+        # Key-name pairs to try in order (Go JSON tags vary by evalhub version).
+        key_pairs = [("model", "url"), ("Model", "URL"), ("model", "URL"), ("Model", "url")]
 
+        for cfg_path in candidate_paths:
+            try:
+                cfg = json.loads(cfg_path.read_text())
+            except FileNotFoundError:
+                continue
+            except Exception as exc:
+                logger.warning("Could not parse %s: %s", cfg_path, exc)
+                continue
+
+            for model_key, url_key in key_pairs:
+                real_url = (cfg.get(model_key) or {}).get(url_key, "")
+                if real_url:
+                    real_url = real_url.strip().rstrip("/")
+                    logger.info("Resolved real model URL from %s: %s", cfg_path, real_url)
+                    return real_url
+
+        logger.warning(
+            "Model URL is a sidecar address (%s) but the real URL could not be "
+            "resolved from any sidecar config file. KFP component pods have no "
+            "sidecar — set kfp_config.model_url in benchmark_config to provide "
+            "the real model URL explicitly.",
+            parsed,
+        )
         return parsed
 
     # def _build_environment(self, config: JobSpec) -> dict[str, str]:
