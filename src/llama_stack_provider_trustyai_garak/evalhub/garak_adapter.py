@@ -1579,9 +1579,7 @@ class GarakAdapter(FrameworkAdapter):
             for role in ("judge", "attacker", "evaluator"):
                 role_url = (intents_models.get(role) or {}).get("url", "").strip()
                 if role_url and not GarakAdapter._is_sidecar_address(role_url):
-                    logger.info(
-                        "Resolved model URL from intents_models.%s: %s", role, role_url
-                    )
+                    logger.info("Resolved model URL from intents_models.%s: %s", role, role_url)
                     return role_url.rstrip("/")
 
         if kfp_overrides:

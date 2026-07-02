@@ -3775,28 +3775,22 @@ class TestResolveKfpModelUrl:
 
     def test_non_localhost_url_passes_through(self, monkeypatch):
         module = _load_evalhub_garak_adapter(monkeypatch)
-        result = module.GarakAdapter._resolve_kfp_model_url(
-            "https://model.example.com/v1", {}
-        )
+        result = module.GarakAdapter._resolve_kfp_model_url("https://model.example.com/v1", {})
         assert result == "https://model.example.com/v1"
 
     def test_explicit_kfp_config_model_url_wins(self, monkeypatch):
         module = _load_evalhub_garak_adapter(monkeypatch)
         bc = {"kfp_config": {"model_url": "https://override.example.com/v1"}}
-        result = module.GarakAdapter._resolve_kfp_model_url(
-            "http://localhost:8080", bc
-        )
+        result = module.GarakAdapter._resolve_kfp_model_url("http://localhost:8080", bc)
         assert result == "https://override.example.com/v1"
 
     def test_model_auth_secret_fallback(self, monkeypatch):
         module = _load_evalhub_garak_adapter(monkeypatch)
         auth_mod = sys.modules["evalhub.adapter.auth"]
-        auth_mod.read_model_auth_key = (
-            lambda name: "https://from-secret.example.com/v1" if name == "model_url" else None
+        auth_mod.read_model_auth_key = lambda name: (
+            "https://from-secret.example.com/v1" if name == "model_url" else None
         )
-        result = module.GarakAdapter._resolve_kfp_model_url(
-            "http://localhost:8080", {}
-        )
+        result = module.GarakAdapter._resolve_kfp_model_url("http://localhost:8080", {})
         assert result == "https://from-secret.example.com/v1"
 
     def test_intents_models_judge_fallback(self, monkeypatch):
@@ -3806,9 +3800,7 @@ class TestResolveKfpModelUrl:
                 "judge": {"url": "https://judge.example.com/v1", "name": "j"},
             }
         }
-        result = module.GarakAdapter._resolve_kfp_model_url(
-            "http://localhost:8080", bc
-        )
+        result = module.GarakAdapter._resolve_kfp_model_url("http://localhost:8080", bc)
         assert result == "https://judge.example.com/v1"
 
     def test_intents_models_skips_localhost_urls(self, monkeypatch):
@@ -3819,16 +3811,12 @@ class TestResolveKfpModelUrl:
                 "attacker": {"url": "https://real-attacker.example.com/v1", "name": "a"},
             }
         }
-        result = module.GarakAdapter._resolve_kfp_model_url(
-            "http://localhost:8080", bc
-        )
+        result = module.GarakAdapter._resolve_kfp_model_url("http://localhost:8080", bc)
         assert result == "https://real-attacker.example.com/v1"
 
     def test_returns_localhost_when_no_fallbacks(self, monkeypatch):
         module = _load_evalhub_garak_adapter(monkeypatch)
-        result = module.GarakAdapter._resolve_kfp_model_url(
-            "http://localhost:8080", {}
-        )
+        result = module.GarakAdapter._resolve_kfp_model_url("http://localhost:8080", {})
         assert result == "http://localhost:8080"
 
     def test_warns_when_localhost_remains_in_kfp_mode(self, monkeypatch, caplog):
@@ -3837,9 +3825,7 @@ class TestResolveKfpModelUrl:
         module = _load_evalhub_garak_adapter(monkeypatch)
         bc = {"kfp_config": {"namespace": "test-ns"}}
         with caplog.at_level(logging.WARNING):
-            result = module.GarakAdapter._resolve_kfp_model_url(
-                "http://localhost:8080", bc
-            )
+            result = module.GarakAdapter._resolve_kfp_model_url("http://localhost:8080", bc)
         assert result == "http://localhost:8080"
         assert "sidecar address" in caplog.text
         assert "kfp_config.model_url" in caplog.text
@@ -3849,17 +3835,13 @@ class TestResolveKfpModelUrl:
 
         module = _load_evalhub_garak_adapter(monkeypatch)
         with caplog.at_level(logging.WARNING):
-            module.GarakAdapter._resolve_kfp_model_url(
-                "http://localhost:8080", {}
-            )
+            module.GarakAdapter._resolve_kfp_model_url("http://localhost:8080", {})
         assert "sidecar address" not in caplog.text
 
     def test_127_0_0_1_treated_as_sidecar(self, monkeypatch):
         module = _load_evalhub_garak_adapter(monkeypatch)
         bc = {"kfp_config": {"model_url": "https://real.example.com"}}
-        result = module.GarakAdapter._resolve_kfp_model_url(
-            "http://127.0.0.1:8080/v1", bc
-        )
+        result = module.GarakAdapter._resolve_kfp_model_url("http://127.0.0.1:8080/v1", bc)
         assert result == "https://real.example.com"
 
     def test_end_to_end_generator_uses_intents_url(self, monkeypatch, tmp_path):
