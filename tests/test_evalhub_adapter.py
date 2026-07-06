@@ -3768,3 +3768,131 @@ class TestWriteKfpOutputsComponent:
 
         html_content = Path(html.path).read_text()
         assert "Report generation failed" in html_content
+
+
+class TestResolveKfpModelUrl:
+    """Tests for _resolve_kfp_model_url model URL resolution chain."""
+
+    def test_non_localhost_url_passes_through(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        result = module.GarakAdapter._resolve_kfp_model_url("https://model.example.com/v1", {})
+        assert result == "https://model.example.com/v1"
+
+    def test_explicit_kfp_config_model_url_wins(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        bc = {"kfp_config": {"model_url": "https://override.example.com/v1"}}
+        result = module.GarakAdapter._resolve_kfp_model_url("http://localhost:8080", bc)
+        assert result == "https://override.example.com/v1"
+
+    def test_model_auth_secret_fallback(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        auth_mod = sys.modules["evalhub.adapter.auth"]
+        auth_mod.read_model_auth_key = lambda name: (
+            "https://from-secret.example.com/v1" if name == "model_url" else None
+        )
+        result = module.GarakAdapter._resolve_kfp_model_url("http://localhost:8080", {})
+        assert result == "https://from-secret.example.com/v1"
+
+    def test_intents_models_judge_fallback(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        bc = {
+            "intents_models": {
+                "judge": {"url": "https://judge.example.com/v1", "name": "j"},
+            }
+        }
+        result = module.GarakAdapter._resolve_kfp_model_url("http://localhost:8080", bc)
+        assert result == "https://judge.example.com/v1"
+
+    def test_intents_models_skips_localhost_urls(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        bc = {
+            "intents_models": {
+                "judge": {"url": "http://localhost:8080/v1", "name": "j"},
+                "attacker": {"url": "https://real-attacker.example.com/v1", "name": "a"},
+            }
+        }
+        result = module.GarakAdapter._resolve_kfp_model_url("http://localhost:8080", bc)
+        assert result == "https://real-attacker.example.com/v1"
+
+    def test_returns_localhost_when_no_fallbacks(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        result = module.GarakAdapter._resolve_kfp_model_url("http://localhost:8080", {})
+        assert result == "http://localhost:8080"
+
+    def test_warns_when_localhost_remains_in_kfp_mode(self, monkeypatch, caplog):
+        import logging
+
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        bc = {"kfp_config": {"namespace": "test-ns"}}
+        with caplog.at_level(logging.WARNING):
+            result = module.GarakAdapter._resolve_kfp_model_url("http://localhost:8080", bc)
+        assert result == "http://localhost:8080"
+        assert "sidecar address" in caplog.text
+        assert "kfp_config.model_url" in caplog.text
+
+    def test_no_warning_without_kfp_config(self, monkeypatch, caplog):
+        import logging
+
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        with caplog.at_level(logging.WARNING):
+            module.GarakAdapter._resolve_kfp_model_url("http://localhost:8080", {})
+        assert "sidecar address" not in caplog.text
+
+    def test_127_0_0_1_treated_as_sidecar(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        bc = {"kfp_config": {"model_url": "https://real.example.com"}}
+        result = module.GarakAdapter._resolve_kfp_model_url("http://127.0.0.1:8080/v1", bc)
+        assert result == "https://real.example.com"
+
+    def test_end_to_end_generator_uses_intents_url(self, monkeypatch, tmp_path):
+        """When model.url is localhost and intents_models has a real URL,
+        the generator URI in the final config should use the intents URL."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="kfp-sidecar-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://localhost:8080", name="my-model"),
+            parameters={
+                **_INTENTS_MODELS_SINGLE,
+                "kfp_config": {"namespace": "test-ns"},
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        generator_uri = config_dict["plugins"]["generators"]["openai"]["OpenAICompatible"]["uri"]
+        assert "localhost" not in generator_uri
+        assert generator_uri == "http://judge:8000/v1"
+
+    def test_precedence_kfp_config_over_intents_models(self, monkeypatch, tmp_path):
+        """kfp_config.model_url should take precedence over intents_models."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="kfp-explicit-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://localhost:8080", name="my-model"),
+            parameters={
+                **_INTENTS_MODELS_SINGLE,
+                "kfp_config": {
+                    "namespace": "test-ns",
+                    "model_url": "https://explicit-override.example.com/v1",
+                },
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        generator_uri = config_dict["plugins"]["generators"]["openai"]["OpenAICompatible"]["uri"]
+        assert generator_uri == "https://explicit-override.example.com/v1"

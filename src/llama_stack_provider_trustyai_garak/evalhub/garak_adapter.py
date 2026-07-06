@@ -828,13 +828,30 @@ class GarakAdapter(FrameworkAdapter):
 
     @staticmethod
     def _create_kfp_client(kfp_config: "KFPConfig"):
-        """Create a KFP Client from KFPConfig."""
+        """Create a KFP Client from KFPConfig.
+
+        Two auth models are supported:
+
+        **Old model (evalhub < 0.4.4 / direct KFP)**: the full SA token is
+        auto-mounted at the standard path; this method reads it and passes it
+        to the client. KFP_ENDPOINT points at the real KFP API URL.
+
+        **New model (evalhub >= 0.4.4 / sidecar proxy)**: evalhub PR #672 sets
+        AutomountServiceAccountToken=false on the adapter pod. The SA token
+        file no longer exists, so ``token`` stays None — which is correct
+        because KFP_ENDPOINT must be set to ``localhost:8080`` and the sidecar
+        proxy injects the SA token on every outbound request automatically.
+        namespace is always passed explicitly so the KFP SDK never needs to
+        call get_kfp_healthz to auto-detect it.
+        """
         from kfp import Client
 
         ssl_ca_cert = kfp_config.ssl_ca_cert or None
         token = kfp_config.auth_token or None
 
-        # If no explicit token, try to get one from the cluster service account
+        # Old model: SA token file is present — read it for direct KFP auth.
+        # New model: file does not exist (only DownwardAPI namespace file is
+        # mounted); token stays None and the sidecar injects auth instead.
         if not token:
             sa_token_path = Path("/var/run/secrets/kubernetes.io/serviceaccount/token")
             if sa_token_path.exists():
@@ -844,6 +861,7 @@ class GarakAdapter(FrameworkAdapter):
         return Client(
             host=kfp_config.endpoint,
             existing_token=token,
+            namespace=kfp_config.namespace,
             verify_ssl=kfp_config.verify_ssl,
             ssl_ca_cert=ssl_ca_cert,
         )
@@ -948,8 +966,21 @@ class GarakAdapter(FrameworkAdapter):
 
             try:
                 k8s_config.load_incluster_config()
-            except Exception:
-                k8s_config.load_kube_config()
+            except k8s_config.ConfigException:
+                # evalhub PR #672: SA token is no longer auto-mounted on the adapter
+                # pod. Try authenticating via KFP_AUTH_TOKEN (already required for
+                # KFP client auth), then fall back to kubeconfig for local dev.
+                auth_token = os.getenv("KFP_AUTH_TOKEN", "")
+                k8s_host = os.getenv("KUBERNETES_SERVICE_HOST", "")
+                k8s_port = os.getenv("KUBERNETES_SERVICE_PORT", "443")
+                if auth_token and k8s_host:
+                    configuration = k8s_client.Configuration()
+                    configuration.host = f"https://{k8s_host}:{k8s_port}"
+                    configuration.api_key = {"authorization": f"Bearer {auth_token}"}
+                    configuration.verify_ssl = False
+                    k8s_client.Configuration.set_default(configuration)
+                else:
+                    k8s_config.load_kube_config()
             v1 = k8s_client.CoreV1Api()
             secret = v1.read_namespaced_secret(secret_name, namespace)
             data = secret.data or {}
@@ -1164,8 +1195,9 @@ class GarakAdapter(FrameworkAdapter):
                 or os.getenv("OPENAICOMPATIBLE_API_KEY")
                 or "DUMMY"
             )
+            raw_model_url = self._resolve_kfp_model_url(config.model.url, benchmark_config)
             garak_config.plugins.generators = build_generator_options(
-                model_endpoint=self._normalize_url(config.model.url),
+                model_endpoint=self._normalize_url(raw_model_url),
                 model_name=config.model.name,
                 api_key=api_key,
                 extra_params=model_params or TARGET_DEFAULT_PARAMETERS,
@@ -1499,6 +1531,66 @@ class GarakAdapter(FrameworkAdapter):
         url = url.strip().rstrip("/")
         if not re.match(r"^.*\/v\d+$", url):
             url = f"{url}/v1"
+        return url
+
+    @staticmethod
+    def _is_sidecar_address(url: str) -> bool:
+        return "localhost" in url or "127.0.0.1" in url
+
+    @staticmethod
+    def _resolve_kfp_model_url(model_url: str, benchmark_config: dict) -> str:
+        """Resolve the target model URL for KFP component pods.
+
+        evalhub >= 0.4.4 rewrites job.json so model.url points at the
+        sidecar proxy (localhost:8080).  That works in simple mode (sidecar
+        is co-located) but KFP component pods have no sidecar.
+
+        Resolution chain (first non-sidecar URL wins):
+        1. kfp_config.model_url   — explicit override in benchmark_config
+        2. model auth secret key  — read_model_auth_key("model_url")
+        3. intents_models.*.url   — first non-localhost URL from
+           judge/attacker/evaluator config
+        4. model_url as-is        — fallback (works for simple mode and
+           pre-sidecar evalhub)
+        """
+        url = model_url.strip().rstrip("/")
+
+        if not GarakAdapter._is_sidecar_address(url):
+            return url
+
+        kfp_overrides = benchmark_config.get("kfp_config", {}) or {}
+        explicit = (kfp_overrides.get("model_url") or "").strip()
+        if explicit:
+            logger.info("Using explicit kfp_config.model_url: %s", explicit)
+            return explicit.rstrip("/")
+
+        try:
+            from evalhub.adapter.auth import read_model_auth_key
+
+            secret_url = (read_model_auth_key("model_url") or "").strip()
+            if secret_url and not GarakAdapter._is_sidecar_address(secret_url):
+                logger.info("Resolved model URL from model auth secret: %s", secret_url)
+                return secret_url.rstrip("/")
+        except Exception:
+            pass
+
+        intents_models = benchmark_config.get("intents_models", {})
+        if isinstance(intents_models, dict):
+            for role in ("judge", "attacker", "evaluator"):
+                role_url = (intents_models.get(role) or {}).get("url", "").strip()
+                if role_url and not GarakAdapter._is_sidecar_address(role_url):
+                    logger.info("Resolved model URL from intents_models.%s: %s", role, role_url)
+                    return role_url.rstrip("/")
+
+        if kfp_overrides:
+            logger.warning(
+                "Model URL is a sidecar address (%s) but could not be resolved "
+                "to a real upstream URL. KFP component pods have no sidecar "
+                "proxy. Set kfp_config.model_url in benchmark_config or add a "
+                "model_url key to the model auth secret.",
+                url,
+            )
+
         return url
 
     # def _build_environment(self, config: JobSpec) -> dict[str, str]:

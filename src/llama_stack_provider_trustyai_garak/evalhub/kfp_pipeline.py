@@ -78,23 +78,44 @@ class KFPConfig:
     def from_env_and_config(cls, benchmark_config: dict | None = None) -> "KFPConfig":
         """Build KFPConfig from env vars, with benchmark_config overrides.
 
-        Env var precedence (lowest to highest):
+        Resolution precedence (lowest to highest):
         1. Dataclass defaults
-        2. Environment variables (KFP_*)
-        3. benchmark_config dict keys
+        2. Model auth secret keys read via evalhub read_model_auth_key
+           (new sidecar-proxy model — evalhub >= 0.4.4):
+           - ``kfp_url``      → read_model_auth_key returns ``http://localhost:8080``
+           - ``kfp_sa_token`` → read_model_auth_key returns ``kfp_sa_token:ref``
+             (a placeholder the sidecar swaps with the real SA token on every request)
+        3. Environment variables (KFP_*)
+        4. benchmark_config dict keys
         """
         bc = benchmark_config or {}
         kfp_overrides = bc.get("kfp_config", {})
         if not isinstance(kfp_overrides, dict):
             kfp_overrides = {}
 
+        # New sidecar-proxy model (evalhub >= 0.4.4): KFP connection details
+        # come from the model auth secret rather than env vars. The secret key
+        # names use the operator-chosen prefix (default: "kfp") followed by
+        # "_url" and "_sa_token". read_model_auth_key resolves the mounted
+        # secret file and returns the placeholder ref for the sidecar to swap.
+        _secret_kfp_url = ""
+        _secret_kfp_token = ""
+        try:
+            from evalhub.adapter.auth import read_model_auth_key
+
+            _secret_kfp_url = read_model_auth_key("kfp_url") or ""
+            _secret_kfp_token = read_model_auth_key("kfp_sa_token") or ""
+        except Exception:
+            pass
+
         def _resolve(key: str, env_var: str, default: str = "") -> str:
             return str(kfp_overrides.get(key, os.getenv(env_var, default)))
 
-        endpoint = _resolve("endpoint", "KFP_ENDPOINT")
+        endpoint = _resolve("endpoint", "KFP_ENDPOINT", _secret_kfp_url)
         if not endpoint:
             raise ValueError(
-                "KFP endpoint is required. Set KFP_ENDPOINT or provide kfp_config.endpoint in benchmark_config."
+                "KFP endpoint is required. Set KFP_ENDPOINT, provide kfp_config.endpoint "
+                "in benchmark_config, or add a kfp_url key to the model auth secret."
             )
 
         namespace = _resolve("namespace", "KFP_NAMESPACE")
@@ -109,7 +130,7 @@ class KFPConfig:
         return cls(
             endpoint=endpoint,
             namespace=namespace,
-            auth_token=_resolve("auth_token", "KFP_AUTH_TOKEN"),
+            auth_token=_resolve("auth_token", "KFP_AUTH_TOKEN", _secret_kfp_token),
             s3_secret_name=_resolve("s3_secret_name", "KFP_S3_SECRET_NAME"),
             s3_bucket=_resolve("s3_bucket", "AWS_S3_BUCKET"),
             s3_endpoint=_resolve("s3_endpoint", "AWS_S3_ENDPOINT"),
