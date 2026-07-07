@@ -771,6 +771,18 @@ class TestExtractScanLogIssues:
         )
         assert _extract_scan_log_issues(log_file) == []
 
+    def test_unreadable_file_returns_empty(self, tmp_path, caplog):
+        import logging
+
+        log_file = tmp_path / "scan.log"
+        log_file.write_text("2026-03-26 14:23:05,309  ERROR  Some error\n")
+        log_file.chmod(0o000)
+        with caplog.at_level(logging.WARNING):
+            result = _extract_scan_log_issues(log_file)
+        assert result == []
+        assert "Could not read scan.log" in caplog.text
+        log_file.chmod(0o644)
+
 
 class TestGarakScanResultLogErrors:
     def test_default_is_empty_list(self):
