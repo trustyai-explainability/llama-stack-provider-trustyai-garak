@@ -767,8 +767,7 @@ class TestExtractScanLogIssues:
     def test_no_issues_returns_empty(self, tmp_path):
         log_file = tmp_path / "scan.log"
         log_file.write_text(
-            "2026-03-26 13:50:00,375  INFO  All good\n"
-            "2026-03-26 13:50:00,376  DEBUG  Verbose debug info\n"
+            "2026-03-26 13:50:00,375  INFO  All good\n2026-03-26 13:50:00,376  DEBUG  Verbose debug info\n"
         )
         assert _extract_scan_log_issues(log_file) == []
 
@@ -780,9 +779,7 @@ class TestGarakScanResultLogErrors:
 
     def test_populated_via_constructor(self):
         errors = ["2026-03-26 14:23:05,309  ERROR  Something broke"]
-        result = GarakScanResult(
-            returncode=0, stdout="", stderr="", report_prefix=Path("/tmp/scan"), log_errors=errors
-        )
+        result = GarakScanResult(returncode=0, stdout="", stderr="", report_prefix=Path("/tmp/scan"), log_errors=errors)
         assert result.log_errors == errors
 
 
