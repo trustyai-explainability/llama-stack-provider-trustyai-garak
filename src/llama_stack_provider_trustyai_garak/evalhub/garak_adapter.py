@@ -181,6 +181,8 @@ class GarakAdapter(FrameworkAdapter):
                 error_msg = f"Garak scan failed: {result.stderr}" if result.stderr else "Unknown error"
                 if result.timed_out:
                     error_msg = f"Scan timed out after {timeout} seconds"
+                if result.log_errors:
+                    error_msg += "\nscan.log errors:\n" + "\n".join(result.log_errors)
 
                 callbacks.report_status(
                     JobStatusUpdate(
