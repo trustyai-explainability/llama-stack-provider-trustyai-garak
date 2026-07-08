@@ -9,7 +9,7 @@ import signal
 import subprocess
 import threading
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import re
 
@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 _STDERR_WARNING_PATTERN = re.compile(
     r"(?:\berror\b|\bexception\b|\btraceback\b|\bfailed\b|\bfatal\b|\bwarn(?:ing)?\b|⚠)",
     re.IGNORECASE,
+)
+_SCAN_LOG_ISSUE_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d+\s+(ERROR|WARNING)\s+(.+)$",
 )
 
 
@@ -29,6 +32,7 @@ class GarakScanResult:
     stderr: str
     report_prefix: Path
     timed_out: bool = False
+    log_errors: list[str] = field(default_factory=list)
 
     @property
     def success(self) -> bool:
@@ -64,6 +68,30 @@ class GarakScanResult:
             self.report_html,
         ]
         return [f for f in candidates if f.exists()]
+
+
+def _extract_scan_log_issues(log_file: Path) -> list[str]:
+    """Extract ERROR/WARNING lines from garak's scan.log and log them.
+
+    Garak writes its internal log to scan.log via GARAK_LOG_FILE but never
+    outputs these to stdout/stderr. This function surfaces them so they
+    appear in CLI and KFP step logs.
+    """
+    if not log_file.exists():
+        return []
+    issues: list[str] = []
+    try:
+        with open(log_file, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = _SCAN_LOG_ISSUE_PATTERN.match(line.rstrip())
+                if m:
+                    level_str, message = m.group(1), m.group(2)
+                    log_level = logging.ERROR if level_str == "ERROR" else logging.WARNING
+                    logger.log(log_level, "garak[scan.log] %s", message)
+                    issues.append(line.rstrip())
+    except OSError as exc:
+        logger.warning("Could not read scan.log: %s", exc)
+    return issues
 
 
 def run_garak_scan(
@@ -225,12 +253,17 @@ def run_garak_scan(
     if timed_out and not stderr:
         stderr = "Scan timed out"
 
+    log_errors: list[str] = []
+    if log_file:
+        log_errors = _extract_scan_log_issues(log_file)
+
     return GarakScanResult(
         returncode=returncode,
         stdout=stdout,
         stderr=stderr,
         report_prefix=report_prefix,
         timed_out=timed_out,
+        log_errors=log_errors,
     )
 
 

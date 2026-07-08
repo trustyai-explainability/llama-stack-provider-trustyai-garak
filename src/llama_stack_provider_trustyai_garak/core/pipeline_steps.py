@@ -506,6 +506,11 @@ def setup_and_run_garak(
 
     if result.success:
         logger.info("Garak scan completed successfully (rc=%s)", result.returncode)
+        if result.log_errors:
+            logger.warning(
+                "Garak scan succeeded but scan.log contains %d error/warning entries",
+                len(result.log_errors),
+            )
         try:
             convert_to_avid_report(result.report_jsonl)
         except Exception as exc:
@@ -516,6 +521,8 @@ def setup_and_run_garak(
             f"timed_out={result.timed_out}): "
             f"{result.stderr[:500] if result.stderr else 'no stderr'}"
         )
+        if result.log_errors:
+            error_msg += "\nscan.log errors:\n" + "\n".join(result.log_errors)
         logger.error(error_msg)
         raise GarakError(error_msg)
 
