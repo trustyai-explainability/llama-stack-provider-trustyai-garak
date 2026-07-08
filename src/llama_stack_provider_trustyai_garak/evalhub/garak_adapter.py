@@ -271,6 +271,7 @@ class GarakAdapter(FrameworkAdapter):
                 artifact_keys: dict[str, str] = {
                     "scan_report": f"{s3_prefix}/scan.report.jsonl",
                     "scan_html_report": f"{s3_prefix}/scan.report.html",
+                    "scan_hitlog": f"{s3_prefix}/scan.hitlog.jsonl",
                 }
                 if art_intents:
                     artifact_keys["sdg_raw_output"] = f"{s3_prefix}/sdg_raw_output.csv"
@@ -328,6 +329,14 @@ class GarakAdapter(FrameworkAdapter):
                         MlflowArtifact(
                             "scan.report.jsonl",
                             result.report_jsonl.read_bytes(),
+                            "application/jsonl",
+                        )
+                    )
+                if result.hitlog_jsonl.exists():
+                    mlflow_artifacts.append(
+                        MlflowArtifact(
+                            "scan.hitlog.jsonl",
+                            result.hitlog_jsonl.read_bytes(),
                             "application/jsonl",
                         )
                     )

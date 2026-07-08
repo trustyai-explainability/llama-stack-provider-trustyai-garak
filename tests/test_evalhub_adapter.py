@@ -3437,6 +3437,7 @@ class TestArtifactMetadataSurfacing:
             "sdg_normalized_output": f"{s3_prefix}/sdg_normalized_output.csv",
             "intents_html_report": f"{s3_prefix}/scan.intents.html",
             "scan_report": f"{s3_prefix}/scan.report.jsonl",
+            "scan_hitlog": f"{s3_prefix}/scan.hitlog.jsonl",
         }
         verified = {}
         if _bucket:
@@ -3453,6 +3454,7 @@ class TestArtifactMetadataSurfacing:
         assert "sdg_normalized_output" in verified
         assert "scan_report" in verified
         assert "intents_html_report" not in verified
+        assert "scan_hitlog" not in verified
         assert verified["sdg_raw_output"] == f"s3://{bucket}/{s3_prefix}/sdg_raw_output.csv"
 
     def test_intents_kfp_job_bucket_from_kfp_config(self, monkeypatch):
