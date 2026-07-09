@@ -890,11 +890,17 @@ class TestResolveS3Credentials:
         module = _load_evalhub_garak_adapter(monkeypatch)
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "env-ak")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "env-sk")
-        secret = {"access_key": "secret-ak", "secret_key": "secret-sk", "region": ""}
+        monkeypatch.setenv("AWS_DEFAULT_REGION", "env-region")
+        secret = {
+            "access_key": "secret-ak",
+            "secret_key": "secret-sk",
+            "region": "secret-region",
+        }
         kfp_cfg = self._make_kfp_config()
         resolved = module.GarakAdapter._resolve_s3_credentials(kfp_cfg, secret)
         assert resolved["access_key"] == "secret-ak"
         assert resolved["secret_key"] == "secret-sk"
+        assert resolved["region"] == "secret-region"
 
 
 class TestReadS3CredentialsCascade:
