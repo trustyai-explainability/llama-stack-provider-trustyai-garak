@@ -1055,15 +1055,10 @@ class GarakAdapter(FrameworkAdapter):
             return None
 
         import urllib.request
-        import ssl
 
         token_header = "Bearer k8s_sa_token:ref"
         api_path = f"/api/v1/namespaces/{namespace}/secrets/{secret_name}"
         sidecar_url = f"http://localhost:8080{api_path}"
-
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
 
         req = urllib.request.Request(
             sidecar_url,
@@ -1072,7 +1067,7 @@ class GarakAdapter(FrameworkAdapter):
                 "Accept": "application/json",
             },
         )
-        with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:
             body = json.loads(resp.read().decode())
             return body.get("data", {})
 
@@ -1116,10 +1111,11 @@ class GarakAdapter(FrameworkAdapter):
           2. K8s secret (read via _read_s3_credentials_from_secret)
           3. Environment variable (``AWS_S3_BUCKET`` / ``AWS_S3_ENDPOINT``)
 
-        For ``access_key``, ``secret_key``, and ``region``, values come
-        only from the K8s secret.  These fields have no kfp_config
-        equivalent; when the secret is empty, ``create_s3_client``
-        applies its own env-var fallback (``AWS_ACCESS_KEY_ID``, etc.).
+        For ``access_key``, ``secret_key``, and ``region``, the first
+        non-empty value wins:
+          1. K8s secret (read via _read_s3_credentials_from_secret)
+          2. Environment variable (``AWS_ACCESS_KEY_ID`` /
+             ``AWS_SECRET_ACCESS_KEY`` / ``AWS_DEFAULT_REGION``)
 
         When both kfp_config and the secret provide different non-empty
         values for the same field, the kfp_config value is used and a
