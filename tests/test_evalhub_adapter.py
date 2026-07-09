@@ -866,11 +866,509 @@ class TestResolveS3Credentials:
         module = _load_evalhub_garak_adapter(monkeypatch)
         monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
         monkeypatch.delenv("AWS_S3_ENDPOINT", raising=False)
+        monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+        monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
         kfp_cfg = self._make_kfp_config()
         resolved = module.GarakAdapter._resolve_s3_credentials(kfp_cfg, {})
         assert resolved["bucket"] is None
         assert resolved["endpoint_url"] is None
         assert resolved["access_key"] is None
+
+    def test_access_key_falls_back_to_env(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "env-ak")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "env-sk")
+        monkeypatch.setenv("AWS_DEFAULT_REGION", "env-region")
+        kfp_cfg = self._make_kfp_config()
+        resolved = module.GarakAdapter._resolve_s3_credentials(kfp_cfg, {})
+        assert resolved["access_key"] == "env-ak"
+        assert resolved["secret_key"] == "env-sk"
+        assert resolved["region"] == "env-region"
+
+    def test_secret_creds_take_precedence_over_env_for_access_key(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "env-ak")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "env-sk")
+        secret = {"access_key": "secret-ak", "secret_key": "secret-sk", "region": ""}
+        kfp_cfg = self._make_kfp_config()
+        resolved = module.GarakAdapter._resolve_s3_credentials(kfp_cfg, secret)
+        assert resolved["access_key"] == "secret-ak"
+        assert resolved["secret_key"] == "secret-sk"
+
+
+class TestReadS3CredentialsCascade:
+    """Tests for the cascading fallback chain in _read_s3_credentials_from_secret."""
+
+    def test_step1_incluster_config_success(self, monkeypatch):
+        """Step 1: Direct K8s API via load_incluster_config succeeds."""
+        import base64
+
+        module = _load_evalhub_garak_adapter(monkeypatch)
+
+        fake_secret_data = {
+            "AWS_ACCESS_KEY_ID": base64.b64encode(b"ak-incluster").decode(),
+            "AWS_SECRET_ACCESS_KEY": base64.b64encode(b"sk-incluster").decode(),
+            "AWS_DEFAULT_REGION": base64.b64encode(b"us-east-1").decode(),
+            "AWS_S3_BUCKET": base64.b64encode(b"bucket-incluster").decode(),
+            "AWS_S3_ENDPOINT": base64.b64encode(b"http://s3:9000").decode(),
+        }
+
+        class FakeV1:
+            def read_namespaced_secret(self, name, ns):
+                return SimpleNamespace(data=fake_secret_data)
+
+        k8s_config = types.ModuleType("kubernetes.config")
+        k8s_config.load_incluster_config = lambda: None
+        k8s_config.ConfigException = type("ConfigException", (Exception,), {})
+
+        k8s_client = types.ModuleType("kubernetes.client")
+        k8s_client.CoreV1Api = FakeV1
+        k8s_client.Configuration = type(
+            "Configuration",
+            (),
+            {
+                "host": "",
+                "api_key": {},
+                "verify_ssl": True,
+                "set_default": classmethod(lambda cls, c: None),
+            },
+        )
+
+        k8s_module = types.ModuleType("kubernetes")
+        k8s_module.client = k8s_client
+        k8s_module.config = k8s_config
+
+        monkeypatch.setitem(sys.modules, "kubernetes", k8s_module)
+        monkeypatch.setitem(sys.modules, "kubernetes.client", k8s_client)
+        monkeypatch.setitem(sys.modules, "kubernetes.config", k8s_config)
+
+        result = module.GarakAdapter._read_s3_credentials_from_secret("my-secret", "ns")
+        assert result["access_key"] == "ak-incluster"
+        assert result["bucket"] == "bucket-incluster"
+
+    def test_step2_kfp_auth_token_fallback(self, monkeypatch):
+        """Step 2: KFP_AUTH_TOKEN + KUBERNETES_SERVICE_HOST env vars."""
+        import base64
+
+        module = _load_evalhub_garak_adapter(monkeypatch)
+
+        monkeypatch.setenv("KFP_AUTH_TOKEN", "fake-token")
+        monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+        monkeypatch.setenv("KUBERNETES_SERVICE_PORT", "443")
+
+        fake_data = {
+            "AWS_ACCESS_KEY_ID": base64.b64encode(b"ak-token").decode(),
+            "AWS_SECRET_ACCESS_KEY": base64.b64encode(b"sk-token").decode(),
+            "AWS_DEFAULT_REGION": "",
+            "AWS_S3_BUCKET": base64.b64encode(b"bucket-token").decode(),
+            "AWS_S3_ENDPOINT": base64.b64encode(b"http://s3:9000").decode(),
+        }
+
+        _incluster_called = {"v": False}
+
+        class FakeV1:
+            def read_namespaced_secret(self, name, ns):
+                return SimpleNamespace(data=fake_data)
+
+        class FakeConfigException(Exception):
+            pass
+
+        k8s_config = types.ModuleType("kubernetes.config")
+
+        def _fail_incluster():
+            raise FakeConfigException("no SA token")
+
+        k8s_config.load_incluster_config = _fail_incluster
+        k8s_config.ConfigException = FakeConfigException
+
+        k8s_client = types.ModuleType("kubernetes.client")
+        k8s_client.CoreV1Api = FakeV1
+        k8s_client.Configuration = type(
+            "Configuration",
+            (),
+            {
+                "host": "",
+                "api_key": {},
+                "verify_ssl": True,
+                "set_default": classmethod(lambda cls, c: None),
+            },
+        )
+
+        k8s_module = types.ModuleType("kubernetes")
+        k8s_module.client = k8s_client
+        k8s_module.config = k8s_config
+
+        monkeypatch.setitem(sys.modules, "kubernetes", k8s_module)
+        monkeypatch.setitem(sys.modules, "kubernetes.client", k8s_client)
+        monkeypatch.setitem(sys.modules, "kubernetes.config", k8s_config)
+
+        result = module.GarakAdapter._read_s3_credentials_from_secret("my-secret", "ns")
+        assert result["access_key"] == "ak-token"
+        assert result["bucket"] == "bucket-token"
+
+    def test_step3_sidecar_proxy_fallback(self, monkeypatch):
+        """Step 3: Sidecar proxy with k8s_sa_token:ref."""
+        import base64
+
+        module = _load_evalhub_garak_adapter(monkeypatch)
+
+        monkeypatch.delenv("KFP_AUTH_TOKEN", raising=False)
+        monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+
+        class FakeConfigException(Exception):
+            pass
+
+        k8s_config = types.ModuleType("kubernetes.config")
+        k8s_config.load_incluster_config = lambda: (_ for _ in ()).throw(FakeConfigException("no"))
+        k8s_config.ConfigException = FakeConfigException
+
+        k8s_client = types.ModuleType("kubernetes.client")
+        k8s_module = types.ModuleType("kubernetes")
+        k8s_module.client = k8s_client
+        k8s_module.config = k8s_config
+
+        monkeypatch.setitem(sys.modules, "kubernetes", k8s_module)
+        monkeypatch.setitem(sys.modules, "kubernetes.client", k8s_client)
+        monkeypatch.setitem(sys.modules, "kubernetes.config", k8s_config)
+
+        sidecar_data = {
+            "AWS_ACCESS_KEY_ID": base64.b64encode(b"ak-sidecar").decode(),
+            "AWS_SECRET_ACCESS_KEY": base64.b64encode(b"sk-sidecar").decode(),
+            "AWS_DEFAULT_REGION": base64.b64encode(b"eu-west-1").decode(),
+            "AWS_S3_BUCKET": base64.b64encode(b"sidecar-bucket").decode(),
+            "AWS_S3_ENDPOINT": base64.b64encode(b"http://s3-sidecar:9000").decode(),
+        }
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_read_secret_via_sidecar",
+            staticmethod(lambda name, ns: sidecar_data),
+        )
+
+        result = module.GarakAdapter._read_s3_credentials_from_secret("my-secret", "ns")
+        assert result["access_key"] == "ak-sidecar"
+        assert result["bucket"] == "sidecar-bucket"
+        assert result["endpoint_url"] == "http://s3-sidecar:9000"
+
+    def test_step4_model_auth_fallback(self, monkeypatch):
+        """Step 4: read_model_auth_key for S3 keys."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+
+        monkeypatch.delenv("KFP_AUTH_TOKEN", raising=False)
+        monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+
+        class FakeConfigException(Exception):
+            pass
+
+        k8s_config = types.ModuleType("kubernetes.config")
+        k8s_config.load_incluster_config = lambda: (_ for _ in ()).throw(FakeConfigException("no"))
+        k8s_config.ConfigException = FakeConfigException
+
+        k8s_client = types.ModuleType("kubernetes.client")
+        k8s_module = types.ModuleType("kubernetes")
+        k8s_module.client = k8s_client
+        k8s_module.config = k8s_config
+
+        monkeypatch.setitem(sys.modules, "kubernetes", k8s_module)
+        monkeypatch.setitem(sys.modules, "kubernetes.client", k8s_client)
+        monkeypatch.setitem(sys.modules, "kubernetes.config", k8s_config)
+
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_read_secret_via_sidecar",
+            staticmethod(lambda name, ns: None),
+        )
+
+        model_auth_data = {
+            "access_key": "ak-model-auth",
+            "secret_key": "sk-model-auth",
+            "region": "ap-south-1",
+            "bucket": "model-auth-bucket",
+            "endpoint_url": "http://s3-model:9000",
+        }
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_read_s3_from_model_auth",
+            staticmethod(lambda: model_auth_data),
+        )
+
+        result = module.GarakAdapter._read_s3_credentials_from_secret("my-secret", "ns")
+        assert result["access_key"] == "ak-model-auth"
+        assert result["bucket"] == "model-auth-bucket"
+        assert result["region"] == "ap-south-1"
+
+    def test_step5_kubeconfig_fallback(self, monkeypatch):
+        """Step 5: load_kube_config for local dev."""
+        import base64
+
+        module = _load_evalhub_garak_adapter(monkeypatch)
+
+        monkeypatch.delenv("KFP_AUTH_TOKEN", raising=False)
+        monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+
+        fake_data = {
+            "AWS_ACCESS_KEY_ID": base64.b64encode(b"ak-kubeconfig").decode(),
+            "AWS_SECRET_ACCESS_KEY": base64.b64encode(b"sk-kubeconfig").decode(),
+            "AWS_DEFAULT_REGION": "",
+            "AWS_S3_BUCKET": base64.b64encode(b"kube-bucket").decode(),
+            "AWS_S3_ENDPOINT": base64.b64encode(b"http://s3-local:9000").decode(),
+        }
+
+        class FakeConfigException(Exception):
+            pass
+
+        class FakeV1:
+            def read_namespaced_secret(self, name, ns):
+                return SimpleNamespace(data=fake_data)
+
+        k8s_config = types.ModuleType("kubernetes.config")
+        k8s_config.load_incluster_config = lambda: (_ for _ in ()).throw(FakeConfigException("no"))
+        k8s_config.load_kube_config = lambda: None
+        k8s_config.ConfigException = FakeConfigException
+
+        k8s_client = types.ModuleType("kubernetes.client")
+        k8s_client.CoreV1Api = FakeV1
+        k8s_client.Configuration = type(
+            "Configuration",
+            (),
+            {
+                "host": "",
+                "api_key": {},
+                "verify_ssl": True,
+                "set_default": classmethod(lambda cls, c: None),
+            },
+        )
+
+        k8s_module = types.ModuleType("kubernetes")
+        k8s_module.client = k8s_client
+        k8s_module.config = k8s_config
+
+        monkeypatch.setitem(sys.modules, "kubernetes", k8s_module)
+        monkeypatch.setitem(sys.modules, "kubernetes.client", k8s_client)
+        monkeypatch.setitem(sys.modules, "kubernetes.config", k8s_config)
+
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_read_secret_via_sidecar",
+            staticmethod(lambda name, ns: None),
+        )
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_read_s3_from_model_auth",
+            staticmethod(lambda: {}),
+        )
+
+        result = module.GarakAdapter._read_s3_credentials_from_secret("my-secret", "ns")
+        assert result["access_key"] == "ak-kubeconfig"
+        assert result["bucket"] == "kube-bucket"
+
+    def test_all_fallbacks_fail_returns_empty(self, monkeypatch):
+        """All steps fail — returns empty dict."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+
+        monkeypatch.delenv("KFP_AUTH_TOKEN", raising=False)
+        monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+
+        class FakeConfigException(Exception):
+            pass
+
+        k8s_config = types.ModuleType("kubernetes.config")
+        k8s_config.load_incluster_config = lambda: (_ for _ in ()).throw(FakeConfigException("no"))
+        k8s_config.load_kube_config = lambda: (_ for _ in ()).throw(Exception("no kubeconfig"))
+        k8s_config.ConfigException = FakeConfigException
+
+        k8s_client = types.ModuleType("kubernetes.client")
+        k8s_client.CoreV1Api = lambda: None
+        k8s_client.Configuration = type(
+            "Configuration",
+            (),
+            {
+                "host": "",
+                "api_key": {},
+                "verify_ssl": True,
+                "set_default": classmethod(lambda cls, c: None),
+            },
+        )
+
+        k8s_module = types.ModuleType("kubernetes")
+        k8s_module.client = k8s_client
+        k8s_module.config = k8s_config
+
+        monkeypatch.setitem(sys.modules, "kubernetes", k8s_module)
+        monkeypatch.setitem(sys.modules, "kubernetes.client", k8s_client)
+        monkeypatch.setitem(sys.modules, "kubernetes.config", k8s_config)
+
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_read_secret_via_sidecar",
+            staticmethod(lambda name, ns: None),
+        )
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_read_s3_from_model_auth",
+            staticmethod(lambda: {}),
+        )
+
+        result = module.GarakAdapter._read_s3_credentials_from_secret("my-secret", "ns")
+        assert result == {}
+
+
+class TestReadSecretViaSidecar:
+    """Tests for _read_secret_via_sidecar."""
+
+    def test_returns_none_when_k8s_url_not_set(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        auth_module = sys.modules["evalhub.adapter.auth"]
+        auth_module.read_model_auth_key = lambda _name: None
+
+        result = module.GarakAdapter._read_secret_via_sidecar("secret", "ns")
+        assert result is None
+
+    def test_calls_sidecar_with_correct_url_and_headers(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+
+        auth_keys = {
+            "k8s_url": "https://api.cluster.local:6443",
+            "k8s_sa_token": "",
+        }
+        auth_module = sys.modules["evalhub.adapter.auth"]
+        auth_module.read_model_auth_key = lambda name: auth_keys.get(name)
+
+        import base64
+
+        secret_payload = {
+            "data": {
+                "AWS_ACCESS_KEY_ID": base64.b64encode(b"ak").decode(),
+                "AWS_S3_BUCKET": base64.b64encode(b"bkt").decode(),
+            }
+        }
+
+        captured = {}
+
+        class FakeResponse:
+            def read(self):
+                return json.dumps(secret_payload).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        original_urlopen = None
+
+        def fake_urlopen(req, timeout=None, context=None):
+            captured["url"] = req.full_url
+            captured["auth"] = req.get_header("Authorization")
+            return FakeResponse()
+
+        import urllib.request
+
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+        result = module.GarakAdapter._read_secret_via_sidecar("my-s3-secret", "evalhub-tenant")
+        assert result["AWS_ACCESS_KEY_ID"] == base64.b64encode(b"ak").decode()
+        assert captured["url"] == "http://localhost:8080/api/v1/namespaces/evalhub-tenant/secrets/my-s3-secret"
+        assert captured["auth"] == "Bearer k8s_sa_token:ref"
+
+
+class TestReadS3FromModelAuth:
+    """Tests for _read_s3_from_model_auth."""
+
+    def test_reads_standard_aws_keys_uppercase(self, monkeypatch):
+        """Standard AWS_* uppercase keys (most common format)."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+
+        model_auth_keys = {
+            "AWS_ACCESS_KEY_ID": "ma-ak",
+            "AWS_SECRET_ACCESS_KEY": "ma-sk",
+            "AWS_DEFAULT_REGION": "us-west-2",
+            "AWS_S3_BUCKET": "ma-bucket",
+            "AWS_S3_ENDPOINT": "http://s3-ma:9000",
+        }
+        auth_module = sys.modules["evalhub.adapter.auth"]
+        auth_module.read_model_auth_key = lambda name: model_auth_keys.get(name)
+
+        result = module.GarakAdapter._read_s3_from_model_auth()
+        assert result["access_key"] == "ma-ak"
+        assert result["secret_key"] == "ma-sk"
+        assert result["region"] == "us-west-2"
+        assert result["bucket"] == "ma-bucket"
+        assert result["endpoint_url"] == "http://s3-ma:9000"
+
+    def test_reads_standard_aws_keys_lowercase(self, monkeypatch):
+        """Lowercase aws_* keys also work."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+
+        model_auth_keys = {
+            "aws_access_key_id": "ma-ak-lower",
+            "aws_secret_access_key": "ma-sk-lower",
+            "aws_default_region": "eu-west-1",
+            "aws_s3_bucket": "lower-bucket",
+            "aws_s3_endpoint": "http://s3-lower:9000",
+        }
+        auth_module = sys.modules["evalhub.adapter.auth"]
+        auth_module.read_model_auth_key = lambda name: model_auth_keys.get(name)
+
+        result = module.GarakAdapter._read_s3_from_model_auth()
+        assert result["access_key"] == "ma-ak-lower"
+        assert result["secret_key"] == "ma-sk-lower"
+        assert result["region"] == "eu-west-1"
+        assert result["bucket"] == "lower-bucket"
+        assert result["endpoint_url"] == "http://s3-lower:9000"
+
+    def test_reads_custom_s3_prefix_keys(self, monkeypatch):
+        """Custom s3_* keys as fallback."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+
+        model_auth_keys = {
+            "s3_access_key": "ma-ak-custom",
+            "s3_secret_key": "ma-sk-custom",
+            "s3_region": "ap-south-1",
+            "s3_bucket": "custom-bucket",
+            "s3_endpoint": "http://s3-custom:9000",
+        }
+        auth_module = sys.modules["evalhub.adapter.auth"]
+        auth_module.read_model_auth_key = lambda name: model_auth_keys.get(name)
+
+        result = module.GarakAdapter._read_s3_from_model_auth()
+        assert result["access_key"] == "ma-ak-custom"
+        assert result["secret_key"] == "ma-sk-custom"
+        assert result["region"] == "ap-south-1"
+        assert result["bucket"] == "custom-bucket"
+        assert result["endpoint_url"] == "http://s3-custom:9000"
+
+    def test_uppercase_takes_precedence_over_lowercase(self, monkeypatch):
+        """AWS_ACCESS_KEY_ID wins over aws_access_key_id."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+
+        model_auth_keys = {
+            "AWS_ACCESS_KEY_ID": "upper-ak",
+            "aws_access_key_id": "lower-ak",
+            "s3_access_key": "custom-ak",
+        }
+        auth_module = sys.modules["evalhub.adapter.auth"]
+        auth_module.read_model_auth_key = lambda name: model_auth_keys.get(name)
+
+        result = module.GarakAdapter._read_s3_from_model_auth()
+        assert result["access_key"] == "upper-ak"
+
+    def test_returns_empty_when_no_keys_set(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+
+        auth_module = sys.modules["evalhub.adapter.auth"]
+        auth_module.read_model_auth_key = lambda _name: None
+
+        result = module.GarakAdapter._read_s3_from_model_auth()
+        assert result["access_key"] == ""
+        assert result["bucket"] == ""
+
+    def test_returns_empty_dict_when_evalhub_not_importable(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        monkeypatch.delitem(sys.modules, "evalhub.adapter.auth", raising=False)
+
+        result = module.GarakAdapter._read_s3_from_model_auth()
+        assert result == {}
 
 
 class TestPollKFPRun:

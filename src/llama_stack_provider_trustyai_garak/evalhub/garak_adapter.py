@@ -929,78 +929,179 @@ class GarakAdapter(FrameworkAdapter):
         cluster or missing RBAC), returning an empty dict so env-var fallback
         in ``create_s3_client`` still applies.
 
-        .. note:: **RBAC requirement** — The Job pod's service account must
-           have ``get`` permission on Secrets in the target namespace.
-           Example Role/RoleBinding::
+        Resolution chain (first success wins):
 
-               apiVersion: rbac.authorization.k8s.io/v1
-               kind: Role
-               metadata:
-                 name: secret-reader
-                 namespace: <namespace>
-               rules:
-               - apiGroups: [""]
-                 resources: ["secrets"]
-                 verbs: ["get"]
-               ---
-               apiVersion: rbac.authorization.k8s.io/v1
-               kind: RoleBinding
-               metadata:
-                 name: evalhub-secret-reader
-                 namespace: <namespace>
-               subjects:
-               - kind: ServiceAccount
-                 name: <job-service-account>
-                 namespace: <namespace>
-               roleRef:
-                 kind: Role
-                 name: secret-reader
-                 apiGroup: rbac.authorization.k8s.io
-
-           Without this, the call returns an empty dict and S3 operations
-           fall back to environment variables (which may also be empty,
-           causing job failures).
+        1. **Direct K8s API** (``load_incluster_config``) — works on
+           pre-sidecar evalhub where the SA token is auto-mounted.
+        2. **``KFP_AUTH_TOKEN`` + ``KUBERNETES_SERVICE_HOST``** env vars —
+           fallback when SA token file is absent but env vars are set.
+        3. **Sidecar proxy** (``k8s_sa_token:ref``) — evalhub >= 0.4.4
+           sidecar model.  Reads the secret via the K8s API through the
+           sidecar at ``localhost:8080``, which resolves the ref token and
+           injects the pod SA token.  Requires ``k8s_sa_token`` and
+           ``k8s_url`` keys in the model auth secret.
+        4. **Model auth secret** (``read_model_auth_key``) — last resort
+           if the user placed S3 credentials directly in the model auth
+           secret (keys: ``s3_access_key``, ``s3_secret_key``,
+           ``s3_endpoint``, ``s3_bucket``, ``s3_region``).
+        5. **``load_kube_config``** — local development only.
         """
         import base64
 
+        _S3_KEYS = {
+            "access_key": "AWS_ACCESS_KEY_ID",
+            "secret_key": "AWS_SECRET_ACCESS_KEY",
+            "region": "AWS_DEFAULT_REGION",
+            "bucket": "AWS_S3_BUCKET",
+            "endpoint_url": "AWS_S3_ENDPOINT",
+        }
+
+        def _extract_from_secret_data(data: dict) -> dict:
+            def _decode(key: str) -> str:
+                val = data.get(key, "")
+                return base64.b64decode(val).decode() if val else ""
+
+            return {field: _decode(secret_key) for field, secret_key in _S3_KEYS.items()}
+
+        # --- Step 1: Direct K8s API (pre-sidecar evalhub) ---
         try:
             from kubernetes import client as k8s_client, config as k8s_config
 
             try:
                 k8s_config.load_incluster_config()
+                v1 = k8s_client.CoreV1Api()
+                secret = v1.read_namespaced_secret(secret_name, namespace)
+                logger.info("Read S3 credentials from secret %s/%s via in-cluster config", namespace, secret_name)
+                return _extract_from_secret_data(secret.data or {})
             except k8s_config.ConfigException:
-                # evalhub PR #672: SA token is no longer auto-mounted on the adapter
-                # pod. Try authenticating via KFP_AUTH_TOKEN (already required for
-                # KFP client auth), then fall back to kubeconfig for local dev.
-                auth_token = os.getenv("KFP_AUTH_TOKEN", "")
-                k8s_host = os.getenv("KUBERNETES_SERVICE_HOST", "")
-                k8s_port = os.getenv("KUBERNETES_SERVICE_PORT", "443")
-                if auth_token and k8s_host:
-                    configuration = k8s_client.Configuration()
-                    configuration.host = f"https://{k8s_host}:{k8s_port}"
-                    configuration.api_key = {"authorization": f"Bearer {auth_token}"}
-                    configuration.verify_ssl = False
-                    k8s_client.Configuration.set_default(configuration)
-                else:
-                    k8s_config.load_kube_config()
+                logger.debug("load_incluster_config failed, trying fallbacks")
+        except Exception as exc:
+            logger.debug("K8s client import or in-cluster config failed: %s", exc)
+
+        # --- Step 2: KFP_AUTH_TOKEN + KUBERNETES_SERVICE_HOST env vars ---
+        auth_token = os.getenv("KFP_AUTH_TOKEN", "")
+        k8s_host = os.getenv("KUBERNETES_SERVICE_HOST", "")
+        k8s_port = os.getenv("KUBERNETES_SERVICE_PORT", "443")
+        if auth_token and k8s_host:
+            try:
+                from kubernetes import client as k8s_client
+
+                configuration = k8s_client.Configuration()
+                configuration.host = f"https://{k8s_host}:{k8s_port}"
+                configuration.api_key = {"authorization": f"Bearer {auth_token}"}
+                configuration.verify_ssl = False
+                k8s_client.Configuration.set_default(configuration)
+                v1 = k8s_client.CoreV1Api()
+                secret = v1.read_namespaced_secret(secret_name, namespace)
+                logger.info("Read S3 credentials from secret %s/%s via KFP_AUTH_TOKEN", namespace, secret_name)
+                return _extract_from_secret_data(secret.data or {})
+            except Exception as exc:
+                logger.debug("KFP_AUTH_TOKEN K8s API call failed: %s", exc)
+
+        # --- Step 3: Sidecar proxy with k8s_sa_token:ref (evalhub >= 0.4.4) ---
+        try:
+            result = GarakAdapter._read_secret_via_sidecar(secret_name, namespace)
+            if result:
+                logger.info("Read S3 credentials from secret %s/%s via sidecar proxy", namespace, secret_name)
+                return _extract_from_secret_data(result)
+        except Exception as exc:
+            logger.debug("Sidecar proxy K8s API call failed: %s", exc)
+
+        # --- Step 4: read_model_auth_key for S3 keys in model auth secret ---
+        try:
+            model_auth_creds = GarakAdapter._read_s3_from_model_auth()
+            if any(model_auth_creds.values()):
+                logger.info("Read S3 credentials from model auth secret")
+                return model_auth_creds
+        except Exception as exc:
+            logger.debug("read_model_auth_key for S3 failed: %s", exc)
+
+        # --- Step 5: load_kube_config (local dev) ---
+        try:
+            from kubernetes import client as k8s_client, config as k8s_config
+
+            k8s_config.load_kube_config()
             v1 = k8s_client.CoreV1Api()
             secret = v1.read_namespaced_secret(secret_name, namespace)
-            data = secret.data or {}
-
-            def _decode(key: str) -> str:
-                val = data.get(key, "")
-                return base64.b64decode(val).decode() if val else ""
-
-            return {
-                "access_key": _decode("AWS_ACCESS_KEY_ID"),
-                "secret_key": _decode("AWS_SECRET_ACCESS_KEY"),
-                "region": _decode("AWS_DEFAULT_REGION"),
-                "bucket": _decode("AWS_S3_BUCKET"),
-                "endpoint_url": _decode("AWS_S3_ENDPOINT"),
-            }
+            logger.info("Read S3 credentials from secret %s/%s via kubeconfig", namespace, secret_name)
+            return _extract_from_secret_data(secret.data or {})
         except Exception as exc:
             logger.warning("Could not read S3 credentials from secret %s/%s: %s", namespace, secret_name, exc)
             return {}
+
+    @staticmethod
+    def _read_secret_via_sidecar(secret_name: str, namespace: str) -> dict | None:
+        """Read a K8s secret via the evalhub sidecar proxy.
+
+        Uses the ``k8s_sa_token:ref`` / ``k8s_url`` convention from evalhub
+        PR #681.  The sidecar resolves the ref token (injecting the pod SA
+        token when the secret value is empty) and routes the request to the
+        K8s API server specified by ``k8s_url``.
+
+        Returns the secret's ``.data`` dict (base64-encoded values) on
+        success, or None if the sidecar proxy is not configured.
+        """
+        try:
+            from evalhub.adapter.auth import read_model_auth_key
+        except ImportError:
+            return None
+
+        k8s_url = (read_model_auth_key("k8s_url") or "").strip()
+        if not k8s_url:
+            return None
+
+        import urllib.request
+        import ssl
+
+        token_header = "Bearer k8s_sa_token:ref"
+        api_path = f"/api/v1/namespaces/{namespace}/secrets/{secret_name}"
+        sidecar_url = f"http://localhost:8080{api_path}"
+
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        req = urllib.request.Request(
+            sidecar_url,
+            headers={
+                "Authorization": token_header,
+                "Accept": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
+            body = json.loads(resp.read().decode())
+            return body.get("data", {})
+
+    @staticmethod
+    def _read_s3_from_model_auth() -> dict:
+        """Read S3 credentials from the model auth secret.
+
+        Uses ``read_model_auth_key`` to read S3 credential keys that the
+        user may have placed directly in the model auth secret.  This is
+        a last-resort fallback when the adapter cannot read the Data
+        Connection secret via the K8s API.
+        """
+        try:
+            from evalhub.adapter.auth import read_model_auth_key
+        except ImportError:
+            return {}
+
+        _MODEL_AUTH_S3_KEYS: list[tuple[str, list[str]]] = [
+            ("access_key", ["AWS_ACCESS_KEY_ID", "aws_access_key_id", "s3_access_key"]),
+            ("secret_key", ["AWS_SECRET_ACCESS_KEY", "aws_secret_access_key", "s3_secret_key"]),
+            ("region", ["AWS_DEFAULT_REGION", "aws_default_region", "s3_region"]),
+            ("bucket", ["AWS_S3_BUCKET", "aws_s3_bucket", "s3_bucket"]),
+            ("endpoint_url", ["AWS_S3_ENDPOINT", "aws_s3_endpoint", "s3_endpoint"]),
+        ]
+        result: dict[str, str] = {}
+        for field, candidates in _MODEL_AUTH_S3_KEYS:
+            val = ""
+            for key in candidates:
+                val = (read_model_auth_key(key) or "").strip()
+                if val:
+                    break
+            result[field] = val
+        return result
 
     @staticmethod
     def _resolve_s3_credentials(kfp_config: "KFPConfig", secret_creds: dict) -> dict:
@@ -1045,8 +1146,15 @@ class GarakAdapter(FrameworkAdapter):
 
             resolved[field] = cfg_val or secret_val or env_val or None
 
-        for field in ("access_key", "secret_key", "region"):
-            resolved[field] = (secret_creds.get(field, "") or "").strip() or None
+        _CRED_ENV_MAP = {
+            "access_key": "AWS_ACCESS_KEY_ID",
+            "secret_key": "AWS_SECRET_ACCESS_KEY",
+            "region": "AWS_DEFAULT_REGION",
+        }
+        for field, env_var in _CRED_ENV_MAP.items():
+            secret_val = (secret_creds.get(field, "") or "").strip()
+            env_val = (os.getenv(env_var, "") or "").strip()
+            resolved[field] = secret_val or env_val or None
 
         return resolved
 
