@@ -989,7 +989,11 @@ class GarakAdapter(FrameworkAdapter):
                 configuration = k8s_client.Configuration()
                 configuration.host = f"https://{k8s_host}:{k8s_port}"
                 configuration.api_key = {"authorization": f"Bearer {auth_token}"}
-                configuration.verify_ssl = False
+                ca_cert = os.getenv("SSL_CA_CERT", "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+                if os.path.isfile(ca_cert):
+                    configuration.ssl_ca_cert = ca_cert
+                else:
+                    configuration.verify_ssl = False
                 k8s_client.Configuration.set_default(configuration)
                 v1 = k8s_client.CoreV1Api()
                 secret = v1.read_namespaced_secret(secret_name, namespace)
