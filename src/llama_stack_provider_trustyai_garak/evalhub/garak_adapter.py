@@ -39,9 +39,9 @@ from evalhub.adapter import (
     JobSpec,
     JobStatus,
     JobStatusUpdate,
+    MessageInfo,
     OCIArtifactSpec,
 )
-from evalhub.adapter.models.job import ErrorInfo, MessageInfo
 from evalhub.models.api import EvaluationResult
 
 from ..core.command_builder import build_generator_options
@@ -111,17 +111,8 @@ class GarakAdapter(FrameworkAdapter):
 
         try:
             # Phase 1: Initialize
-            callbacks.report_status(
-                JobStatusUpdate(
-                    status=JobStatus.RUNNING,
-                    phase=JobPhase.INITIALIZING,
-                    progress=0.0,
-                    message=MessageInfo(
-                        message="Validating configuration and building scan command",
-                        message_code="initializing",
-                    ),
-                )
-            )
+            callbacks.report_status(JobStatusUpdate(status=JobStatus.RUNNING, phase=JobPhase.INITIALIZING))
+            logger.info("Validating configuration and building scan command")
 
             self._validate_config(config)
 
@@ -149,7 +140,7 @@ class GarakAdapter(FrameworkAdapter):
 
             eval_threshold = float(garak_config_dict.get("run", {}).get("eval_threshold", DEFAULT_EVAL_THRESHOLD))
 
-            # Phase 2: Execute scan (mode-dependent)
+            # Phase 2–3: Loading data + Execute scan (mode-dependent)
             if execution_mode == EXECUTION_MODE_KFP:
                 result, scan_dir = self._run_via_kfp(
                     config=config,
@@ -187,23 +178,17 @@ class GarakAdapter(FrameworkAdapter):
                 callbacks.report_status(
                     JobStatusUpdate(
                         status=JobStatus.FAILED,
-                        error=ErrorInfo(message=error_msg, message_code="scan_failed"),
+                        error_message=MessageInfo(
+                            message=error_msg,
+                            message_code="scan_failed",
+                        ),
                     )
                 )
                 raise RuntimeError(error_msg)
 
-            # Phase 3: Parse results (common to both modes)
-            callbacks.report_status(
-                JobStatusUpdate(
-                    status=JobStatus.RUNNING,
-                    phase=JobPhase.POST_PROCESSING,
-                    progress=0.8,
-                    message=MessageInfo(
-                        message="Parsing scan results",
-                        message_code="parsing_results",
-                    ),
-                )
-            )
+            # Phase 4: Parse results (common to both modes)
+            callbacks.report_status(JobStatusUpdate(status=JobStatus.RUNNING, phase=JobPhase.POST_PROCESSING))
+            logger.info("Parsing scan results")
 
             metrics, overall_score, num_examples, overall_summary = self._parse_results(
                 result,
@@ -212,7 +197,7 @@ class GarakAdapter(FrameworkAdapter):
             )
             logger.info(f"Parsed {len(metrics)} probe metrics, overall score: {overall_score}")
 
-            # Phase 3b: Generate ART HTML report for intents scans
+            # Phase 4b: Generate ART HTML report for intents scans
             if art_intents and result.report_jsonl.exists():
                 try:
                     report_content = result.report_jsonl.read_text()
@@ -236,13 +221,15 @@ class GarakAdapter(FrameworkAdapter):
                 except Exception as exc:
                     logger.warning("Could not redact config.json: %s", exc)
 
-            # Phase 4: Persist artifacts
+            # Phase 5: Persist artifacts
             oci_artifact = None
-            if config.exports and config.exports.oci:
+            oci_exports = config.exports.oci if config.exports else None
+            if oci_exports is not None:
+                callbacks.report_status(JobStatusUpdate(status=JobStatus.RUNNING, phase=JobPhase.PERSISTING_ARTIFACTS))
                 oci_artifact = callbacks.create_oci_artifact(
                     OCIArtifactSpec(
                         files_path=scan_dir,
-                        coordinates=config.exports.oci.coordinates,
+                        coordinates=oci_exports.coordinates,
                     )
                 )
                 logger.info(f"Persisted scan artifacts: {oci_artifact.reference}")
@@ -302,7 +289,7 @@ class GarakAdapter(FrameworkAdapter):
                 oci_artifact=oci_artifact,
             )
 
-            # Phase 5: Save to MLflow (if experiment_name configured)
+            # Phase 6: Save to MLflow (if experiment_name configured)
             try:
                 from evalhub.adapter.mlflow import MlflowArtifact
 
@@ -373,8 +360,10 @@ class GarakAdapter(FrameworkAdapter):
             callbacks.report_status(
                 JobStatusUpdate(
                     status=JobStatus.FAILED,
-                    error=ErrorInfo(message=str(e), message_code="job_failed"),
-                    error_details={"exception_type": type(e).__name__},
+                    error_message=MessageInfo(
+                        message=str(e),
+                        message_code="job_failed",
+                    ),
                 )
             )
             raise
@@ -412,28 +401,20 @@ class GarakAdapter(FrameworkAdapter):
         log_file = scan_dir / "scan.log"
         report_prefix = scan_dir / "scan"
 
+        callbacks.report_status(JobStatusUpdate(status=JobStatus.RUNNING, phase=JobPhase.LOADING_DATA))
+
         config_file = scan_dir / "config.json"
         with open(config_file, "w") as f:
             json.dump(garak_config_dict, f, indent=1)
-
-        callbacks.report_status(
-            JobStatusUpdate(
-                status=JobStatus.RUNNING,
-                phase=JobPhase.RUNNING_EVALUATION,
-                progress=0.1,
-                message=MessageInfo(
-                    message=f"Running Garak scan for {config.benchmark_id}",
-                    message_code="running_scan",
-                ),
-                current_step="Executing probes",
-            )
-        )
 
         env: dict[str, str] = {}
         hf_cache = (config.parameters or {}).get("hf_cache_path", "")
         if hf_cache:
             env["HF_HUB_CACHE"] = hf_cache
             logger.info("Using HF cache from mounted path: %s", hf_cache)
+
+        callbacks.report_status(JobStatusUpdate(status=JobStatus.RUNNING, phase=JobPhase.RUNNING_EVALUATION))
+        logger.info("Running Garak scan for %s", config.benchmark_id)
 
         result = run_garak_scan(
             config_file=config_file,
@@ -445,17 +426,7 @@ class GarakAdapter(FrameworkAdapter):
 
         # AVID conversion
         if result.success:
-            callbacks.report_status(
-                JobStatusUpdate(
-                    status=JobStatus.RUNNING,
-                    phase=JobPhase.POST_PROCESSING,
-                    progress=0.7,
-                    message=MessageInfo(
-                        message="Converting results to AVID format",
-                        message_code="post_processing",
-                    ),
-                )
-            )
+            logger.info("Converting results to AVID format")
             convert_to_avid_report(result.report_jsonl)
 
         return result
@@ -493,24 +464,15 @@ class GarakAdapter(FrameworkAdapter):
             setup_and_run_garak,
         )
 
+        callbacks.report_status(JobStatusUpdate(status=JobStatus.RUNNING, phase=JobPhase.LOADING_DATA))
+        logger.info("Resolving taxonomy for intents scan")
+
         policy_path = intents_params.get("policy_s3_key", "")
         policy_format = intents_params.get("policy_format", "csv")
         intents_path = intents_params.get("intents_s3_key", "")
         intents_format = intents_params.get("intents_format", "csv")
 
         # -- Step 1: Resolve taxonomy --------------------------------
-        callbacks.report_status(
-            JobStatusUpdate(
-                status=JobStatus.RUNNING,
-                phase=JobPhase.RUNNING_EVALUATION,
-                progress=0.05,
-                message=MessageInfo(
-                    message="Resolving taxonomy for intents scan",
-                    message_code="resolving_taxonomy",
-                ),
-                current_step="Resolving taxonomy",
-            )
-        )
 
         policy_content: bytes | None = None
         if policy_path and policy_path.strip():
@@ -529,18 +491,7 @@ class GarakAdapter(FrameworkAdapter):
         raw_content: str | None = None
 
         if intents_path and intents_path.strip():
-            callbacks.report_status(
-                JobStatusUpdate(
-                    status=JobStatus.RUNNING,
-                    phase=JobPhase.RUNNING_EVALUATION,
-                    progress=0.1,
-                    message=MessageInfo(
-                        message="Loading pre-generated prompts (bypass SDG)",
-                        message_code="bypass_sdg",
-                    ),
-                    current_step="Loading bypass prompts",
-                )
-            )
+            logger.info("Loading pre-generated prompts (bypass SDG)")
             intents_file = Path(intents_path)
             if not intents_file.exists():
                 raise FileNotFoundError(
@@ -549,18 +500,7 @@ class GarakAdapter(FrameworkAdapter):
             raw_content = intents_file.read_text(encoding="utf-8")
             logger.info("Read bypass prompts from local path: %s (%d bytes)", intents_path, len(raw_content))
         else:
-            callbacks.report_status(
-                JobStatusUpdate(
-                    status=JobStatus.RUNNING,
-                    phase=JobPhase.RUNNING_EVALUATION,
-                    progress=0.1,
-                    message=MessageInfo(
-                        message="Running Synthetic Data Generation",
-                        message_code="running_sdg",
-                    ),
-                    current_step="Generating adversarial prompts via SDG",
-                )
-            )
+            logger.info("Running Synthetic Data Generation")
             sdg_model = intents_params.get("sdg_model", "")
             sdg_api_base = intents_params.get("sdg_api_base", "")
             if not sdg_model or not sdg_api_base:
@@ -587,19 +527,7 @@ class GarakAdapter(FrameworkAdapter):
         logger.info("Saved raw SDG output to %s", raw_output_path)
 
         # -- Step 3: Normalize prompts -------------------------------
-        callbacks.report_status(
-            JobStatusUpdate(
-                status=JobStatus.RUNNING,
-                phase=JobPhase.RUNNING_EVALUATION,
-                progress=0.3,
-                message=MessageInfo(
-                    message="Normalizing prompts",
-                    message_code="normalizing_prompts",
-                ),
-                current_step="Normalizing prompts",
-            )
-        )
-
+        logger.info("Normalizing prompts")
         if not (intents_path and intents_path.strip()) and intents_format.strip().lower() != "csv":
             logger.warning(
                 "intents_format=%r ignored — SDG output is always CSV. "
@@ -617,19 +545,8 @@ class GarakAdapter(FrameworkAdapter):
         normalized_df.to_csv(prompts_csv_path, index=False)
 
         # -- Step 4: Run garak scan ----------------------------------
-        callbacks.report_status(
-            JobStatusUpdate(
-                status=JobStatus.RUNNING,
-                phase=JobPhase.RUNNING_EVALUATION,
-                progress=0.4,
-                message=MessageInfo(
-                    message=f"Running Garak intents scan for {config.benchmark_id}",
-                    message_code="running_scan",
-                ),
-                current_step="Executing intents probes",
-            )
-        )
-
+        callbacks.report_status(JobStatusUpdate(status=JobStatus.RUNNING, phase=JobPhase.RUNNING_EVALUATION))
+        logger.info("Running Garak intents scan for %s", config.benchmark_id)
         config_json = json.dumps(garak_config_dict)
         result = setup_and_run_garak(
             config_json=config_json,
@@ -667,6 +584,8 @@ class GarakAdapter(FrameworkAdapter):
             Tuple of (GarakScanResult, local scan_dir with downloaded results).
         """
         from .kfp_pipeline import KFPConfig, evalhub_garak_pipeline
+
+        callbacks.report_status(JobStatusUpdate(status=JobStatus.RUNNING, phase=JobPhase.LOADING_DATA))
 
         benchmark_config = config.parameters or {}
         kfp_config = KFPConfig.from_env_and_config(benchmark_config)
@@ -710,18 +629,8 @@ class GarakAdapter(FrameworkAdapter):
                         "is not provided."
                     )
 
-        callbacks.report_status(
-            JobStatusUpdate(
-                status=JobStatus.RUNNING,
-                phase=JobPhase.RUNNING_EVALUATION,
-                progress=0.1,
-                message=MessageInfo(
-                    message=f"Submitting KFP pipeline for {config.benchmark_id}",
-                    message_code="kfp_submitting",
-                ),
-                current_step="Submitting to Kubeflow Pipelines",
-            )
-        )
+        logger.info("Submitting KFP pipeline for %s", config.benchmark_id)
+        callbacks.report_status(JobStatusUpdate(status=JobStatus.RUNNING, phase=JobPhase.RUNNING_EVALUATION))
 
         # Resolve model auth secret from EvalHub SDK model.auth.secret_ref
         # Falls back to pipeline default ("model-auth") when not specified.
@@ -785,17 +694,7 @@ class GarakAdapter(FrameworkAdapter):
         success = final_state == "SUCCEEDED"
 
         if success:
-            callbacks.report_status(
-                JobStatusUpdate(
-                    status=JobStatus.RUNNING,
-                    phase=JobPhase.POST_PROCESSING,
-                    progress=0.7,
-                    message=MessageInfo(
-                        message="Downloading scan results from S3",
-                        message_code="downloading_results",
-                    ),
-                )
-            )
+            logger.info("Downloading scan results from S3")
             creds = (
                 self._read_s3_credentials_from_secret(
                     kfp_config.s3_secret_name,
@@ -897,7 +796,6 @@ class GarakAdapter(FrameworkAdapter):
         """
         terminal_states = {"SUCCEEDED", "FAILED", "SKIPPED", "CANCELED", "CANCELING"}
         deadline = (time.monotonic() + timeout) if timeout > 0 else None
-
         while True:
             run = kfp_client.get_run(run_id)
             state = run.state or "UNKNOWN"
@@ -915,19 +813,8 @@ class GarakAdapter(FrameworkAdapter):
                 )
                 return "TIMED_OUT"
 
-            callbacks.report_status(
-                JobStatusUpdate(
-                    status=JobStatus.RUNNING,
-                    phase=JobPhase.RUNNING_EVALUATION,
-                    progress=0.3,
-                    message=MessageInfo(
-                        message=f"KFP pipeline running (state: {state})",
-                        message_code="kfp_running",
-                    ),
-                    current_step=f"KFP state: {state}",
-                )
-            )
-
+            callbacks.report_status(JobStatusUpdate(status=JobStatus.RUNNING, phase=JobPhase.RUNNING_EVALUATION))
+            logger.info("KFP pipeline running (state: %s)", state)
             time.sleep(poll_interval)
 
     @staticmethod

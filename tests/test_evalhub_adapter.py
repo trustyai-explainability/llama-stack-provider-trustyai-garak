@@ -37,8 +37,10 @@ def _load_evalhub_garak_adapter(monkeypatch) -> types.ModuleType:
 
     class JobPhase(str, Enum):
         INITIALIZING = "initializing"
+        LOADING_DATA = "loading_data"
         RUNNING_EVALUATION = "running_evaluation"
         POST_PROCESSING = "post_processing"
+        PERSISTING_ARTIFACTS = "persisting_artifacts"
 
     adapter_module = types.ModuleType("evalhub.adapter")
     adapter_models_job_module = types.ModuleType("evalhub.adapter.models.job")
@@ -55,9 +57,9 @@ def _load_evalhub_garak_adapter(monkeypatch) -> types.ModuleType:
     adapter_module.JobSpec = _SimpleModel
     adapter_module.JobStatus = JobStatus
     adapter_module.JobStatusUpdate = _SimpleModel
+    adapter_module.MessageInfo = _SimpleModel
     adapter_module.OCIArtifactSpec = _SimpleModel
 
-    adapter_models_job_module.ErrorInfo = _SimpleModel
     adapter_models_job_module.MessageInfo = _SimpleModel
     models_api_module.EvaluationResult = _SimpleModel
 
@@ -1484,6 +1486,345 @@ class TestPollKFPRun:
             timeout=100,
         )
         assert state == "TIMED_OUT"
+
+
+class TestJobPhaseReporting:
+    """Tests for JobPhase lifecycle reporting added by the SDK contract alignment."""
+
+    def test_run_simple_phase_sequence(self, monkeypatch, tmp_path):
+        """_run_simple emits LOADING_DATA then RUNNING_EVALUATION."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+
+        report_prefix = tmp_path / "scan"
+        report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+
+        def _fake_run(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
+            return module.GarakScanResult(
+                returncode=0,
+                stdout="",
+                stderr="",
+                report_prefix=report_prefix,
+            )
+
+        monkeypatch.setattr(module, "run_garak_scan", _fake_run)
+        monkeypatch.setattr(module, "convert_to_avid_report", lambda _: True)
+
+        statuses = []
+
+        class _Callbacks:
+            def report_status(self, update):
+                statuses.append(update)
+
+        job = SimpleNamespace(
+            benchmark_id="trustyai_garak::quick",
+            parameters={},
+        )
+        adapter._run_simple(job, _Callbacks(), {"run": {}}, tmp_path, timeout=60)
+
+        phases = [s.phase for s in statuses]
+        assert phases == [module.JobPhase.LOADING_DATA, module.JobPhase.RUNNING_EVALUATION]
+        assert all(s.status == module.JobStatus.RUNNING for s in statuses)
+
+    def test_run_simple_intents_phase_sequence(self, monkeypatch, tmp_path):
+        """_run_simple_intents emits LOADING_DATA then RUNNING_EVALUATION."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+
+        import pandas as pd
+
+        fake_df = pd.DataFrame({"policy_concept": ["X"], "concept_definition": ["x"], "prompt": ["p"]})
+
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.resolve_taxonomy_data",
+            lambda *a, **kw: fake_df,
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.run_sdg_generation",
+            lambda **kw: fake_df,
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.normalize_prompts",
+            lambda *a, **kw: fake_df,
+        )
+
+        report_prefix = tmp_path / "scan"
+        report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.setup_and_run_garak",
+            lambda **kw: module.GarakScanResult(
+                returncode=0,
+                stdout="",
+                stderr="",
+                report_prefix=report_prefix,
+            ),
+        )
+
+        statuses = []
+
+        class _Callbacks:
+            def report_status(self, update):
+                statuses.append(update)
+
+        job = SimpleNamespace(benchmark_id="trustyai_garak::intents", parameters={})
+        intents_params = {
+            "sdg_model": "sdg-m",
+            "sdg_api_base": "http://sdg:7000/v1",
+        }
+        adapter._run_simple_intents(job, _Callbacks(), {"run": {}}, tmp_path, 60, intents_params)
+
+        phases = [s.phase for s in statuses]
+        assert phases == [module.JobPhase.LOADING_DATA, module.JobPhase.RUNNING_EVALUATION]
+
+    def test_run_via_kfp_phase_sequence(self, monkeypatch, tmp_path):
+        """_run_via_kfp emits LOADING_DATA then RUNNING_EVALUATION."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        report_prefix = tmp_path / "kfp-job" / "scan"
+        report_prefix.parent.mkdir(parents=True, exist_ok=True)
+        report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+
+        kfp_cfg = SimpleNamespace(
+            endpoint="http://kfp:8080",
+            namespace="ns",
+            s3_secret_name="s3-secret",
+            s3_prefix="prefix",
+            s3_bucket="bucket",
+            poll_interval_seconds=5,
+            timeout_seconds=0,
+            pipeline_root="",
+            experiment_name="default",
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline.KFPConfig.from_env_and_config",
+            staticmethod(lambda _cfg: kfp_cfg),
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline.evalhub_garak_pipeline",
+            lambda **kw: None,
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.redact_api_keys",
+            lambda d: d,
+        )
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_create_kfp_client",
+            lambda self, _cfg: SimpleNamespace(
+                create_run_from_pipeline_func=lambda *a, **kw: SimpleNamespace(run_id="run-1"),
+            ),
+        )
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_poll_kfp_run",
+            staticmethod(lambda *a, **kw: "SUCCEEDED"),
+        )
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_read_s3_credentials_from_secret",
+            staticmethod(lambda *a, **kw: {}),
+        )
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_resolve_s3_credentials",
+            staticmethod(
+                lambda *a, **kw: {
+                    "bucket": "test-bucket",
+                    "endpoint_url": None,
+                    "access_key": None,
+                    "secret_key": None,
+                    "region": None,
+                }
+            ),
+        )
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_download_results_from_s3",
+            lambda self, *a, **kw: None,
+        )
+
+        statuses = []
+
+        class _Callbacks:
+            def report_status(self, update):
+                statuses.append(update)
+
+        job = SimpleNamespace(
+            id="kfp-job",
+            benchmark_id="trustyai_garak::quick",
+            model=SimpleNamespace(url="http://localhost:8000", name="m"),
+            parameters={},
+        )
+        adapter._run_via_kfp(job, _Callbacks(), {"run": {}}, timeout=60)
+
+        phases = [s.phase for s in statuses]
+        assert phases == [module.JobPhase.LOADING_DATA, module.JobPhase.RUNNING_EVALUATION]
+
+    def test_full_lifecycle_with_oci(self, monkeypatch, tmp_path):
+        """Full run_benchmark_job with OCI exports emits the complete phase sequence."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        report_prefix = tmp_path / "oci-job" / "scan"
+        report_prefix.parent.mkdir(parents=True, exist_ok=True)
+        report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+
+        def _fake_run(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
+            return module.GarakScanResult(
+                returncode=0,
+                stdout="",
+                stderr="",
+                report_prefix=report_prefix,
+            )
+
+        monkeypatch.setattr(module, "run_garak_scan", _fake_run)
+        monkeypatch.setattr(module, "convert_to_avid_report", lambda _: True)
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_parse_results",
+            lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
+        )
+
+        statuses = []
+
+        class _Callbacks:
+            def report_status(self, update):
+                statuses.append(update)
+
+            def create_oci_artifact(self, _spec):
+                return SimpleNamespace(reference="oci://ref", digest="sha256:test")
+
+            def report_results(self, _results):
+                return None
+
+        job = SimpleNamespace(
+            id="oci-job",
+            benchmark_id="trustyai_garak::quick",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
+            parameters={},
+            exports=SimpleNamespace(
+                oci=SimpleNamespace(coordinates="quay.io/test/artifact:latest"),
+            ),
+        )
+        adapter.run_benchmark_job(job, _Callbacks())
+
+        phases = [s.phase for s in statuses if hasattr(s, "phase")]
+        assert phases == [
+            module.JobPhase.INITIALIZING,
+            module.JobPhase.LOADING_DATA,
+            module.JobPhase.RUNNING_EVALUATION,
+            module.JobPhase.POST_PROCESSING,
+            module.JobPhase.PERSISTING_ARTIFACTS,
+        ]
+
+    def test_full_lifecycle_without_oci(self, monkeypatch, tmp_path):
+        """Without OCI exports, PERSISTING_ARTIFACTS is not emitted."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        report_prefix = tmp_path / "no-oci-job" / "scan"
+        report_prefix.parent.mkdir(parents=True, exist_ok=True)
+        report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+
+        def _fake_run(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
+            return module.GarakScanResult(
+                returncode=0,
+                stdout="",
+                stderr="",
+                report_prefix=report_prefix,
+            )
+
+        monkeypatch.setattr(module, "run_garak_scan", _fake_run)
+        monkeypatch.setattr(module, "convert_to_avid_report", lambda _: True)
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_parse_results",
+            lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
+        )
+
+        statuses = []
+
+        class _Callbacks:
+            def report_status(self, update):
+                statuses.append(update)
+
+            def report_results(self, _results):
+                return None
+
+        job = SimpleNamespace(
+            id="no-oci-job",
+            benchmark_id="trustyai_garak::quick",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
+            parameters={},
+            exports=None,
+        )
+        adapter.run_benchmark_job(job, _Callbacks())
+
+        phases = [s.phase for s in statuses if hasattr(s, "phase")]
+        assert module.JobPhase.PERSISTING_ARTIFACTS not in phases
+        assert phases == [
+            module.JobPhase.INITIALIZING,
+            module.JobPhase.LOADING_DATA,
+            module.JobPhase.RUNNING_EVALUATION,
+            module.JobPhase.POST_PROCESSING,
+        ]
+
+    def test_error_uses_message_info_not_error_info(self, monkeypatch, tmp_path):
+        """Scan failure reports status=FAILED with error_message (not error)."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        report_prefix = tmp_path / "err-job" / "scan"
+        report_prefix.parent.mkdir(parents=True, exist_ok=True)
+        report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+
+        def _fake_run(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
+            return module.GarakScanResult(
+                returncode=1,
+                stdout="",
+                stderr="boom",
+                report_prefix=report_prefix,
+            )
+
+        monkeypatch.setattr(module, "run_garak_scan", _fake_run)
+        monkeypatch.setattr(module, "convert_to_avid_report", lambda _: True)
+
+        statuses = []
+
+        class _Callbacks:
+            def report_status(self, update):
+                statuses.append(update)
+
+            def report_results(self, _results):
+                return None
+
+        job = SimpleNamespace(
+            id="err-job",
+            benchmark_id="trustyai_garak::quick",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
+            parameters={},
+            exports=None,
+        )
+
+        with pytest.raises(RuntimeError, match="boom"):
+            adapter.run_benchmark_job(job, _Callbacks())
+
+        failed = [s for s in statuses if s.status == module.JobStatus.FAILED]
+        assert len(failed) == 2
+        # First FAILED: scan_failed (from the result.success check)
+        assert "boom" in failed[0].error_message.message
+        assert failed[0].error_message.message_code == "scan_failed"
+        # Second FAILED: job_failed (from the outer exception handler)
+        assert failed[1].error_message.message_code == "job_failed"
 
 
 class TestResolveExecutionModeNonString:
