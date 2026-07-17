@@ -77,8 +77,10 @@ logger = logging.getLogger(__name__)
 # How it works
 # ------------
 # - **Simple mode**: The EvalHub service mounts the secret at
-#   ``/var/run/secrets/model/``. The adapter reads ``api-key`` via the
-#   EvalHub SDK's ``read_model_auth_key()``.
+#   ``/var/run/secrets/model/``. ``resolve_api_key(role)`` checks both
+#   the KFP path and the evalhub SDK path via ``read_model_auth_key()``,
+#   so role-specific keys (e.g. ``JUDGE_API_KEY``) are resolved from
+#   whichever mount point exists.
 # - **KFP mode**: The pipeline mounts the secret at ``/mnt/model-auth``
 #   via ``use_secret_as_volume(optional=True)``. ``resolve_api_key(role)``
 #   reads files from that path.
@@ -102,29 +104,62 @@ def _read_secret_file(name: str) -> str:
         return ""
 
 
+def _read_evalhub_secret(name: str) -> str:
+    """Read a key from the evalhub model auth secret (simple mode).
+
+    In simple (non-KFP) mode, the eval-hub service mounts the model auth
+    secret at ``/var/run/secrets/model/``.  This function delegates to the
+    evalhub SDK's ``read_model_auth_key`` which reads from that path.
+
+    Returns the value or empty string if unavailable.
+    """
+    try:
+        from evalhub.adapter.auth import read_model_auth_key
+
+        return read_model_auth_key(name) or ""
+    except ImportError:
+        return ""
+
+
 def resolve_api_key(role: str) -> str:
     """Resolve an API key for a model role.
 
-    Keys may come from environment variables (e.g. local / simple mode)
-    or from a Kubernetes Secret mounted as a volume at
-    ``/mnt/model-auth`` (KFP mode).
+    Keys may come from environment variables, a Kubernetes Secret mounted
+    at ``/mnt/model-auth`` (KFP mode), or the evalhub model auth secret
+    at ``/var/run/secrets/model/`` (simple mode).
+
+    Both uppercase (``JUDGE_API_KEY``) and lowercase hyphenated
+    (``judge-api-key``) key names are checked to support common K8s
+    Secret naming conventions.
 
     Resolution order (first non-empty wins):
 
-    1. ``{ROLE}_API_KEY`` env var  (e.g. ``SDG_API_KEY``)
-    2. ``{ROLE}_API_KEY`` secret file
-    3. ``API_KEY`` env var          (generic fallback)
-    4. ``API_KEY`` secret file
-    5. ``api-key`` secret file      (EvalHub SDK convention)
-    6. ``"DUMMY"``                  (unauthenticated / local endpoints)
+    1.  ``{ROLE}_API_KEY`` env var  (e.g. ``SDG_API_KEY``)
+    2.  ``{ROLE}_API_KEY`` KFP secret file (``/mnt/model-auth/``)
+    3.  ``{ROLE}_API_KEY`` evalhub secret (``/var/run/secrets/model/``)
+    4.  ``{role}-api-key`` KFP secret file (lowercase, K8s convention)
+    5.  ``{role}-api-key`` evalhub secret
+    6.  ``API_KEY`` env var          (generic fallback)
+    7.  ``API_KEY`` KFP secret file
+    8.  ``API_KEY`` evalhub secret
+    9.  ``api-key`` KFP secret file  (EvalHub convention)
+    10. ``api-key`` evalhub secret   (EvalHub convention)
+    11. ``"DUMMY"``                  (unauthenticated / local endpoints)
     """
-    role_var = f"{role.upper()}_API_KEY"
+    role_upper = role.upper()
+    role_var = f"{role_upper}_API_KEY"
+    role_lower = f"{role.lower()}-api-key"
     return (
         os.environ.get(role_var)
         or _read_secret_file(role_var)
+        or _read_evalhub_secret(role_var)
+        or _read_secret_file(role_lower)
+        or _read_evalhub_secret(role_lower)
         or os.environ.get("API_KEY")
         or _read_secret_file("API_KEY")
+        or _read_evalhub_secret("API_KEY")
         or _read_secret_file("api-key")
+        or _read_evalhub_secret("api-key")
         or "DUMMY"
     )
 

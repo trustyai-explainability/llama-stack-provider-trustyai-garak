@@ -126,6 +126,67 @@ class TestResolveApiKey:
         )
         assert resolve_api_key("sdg") == "DUMMY"
 
+    def test_lowercase_hyphenated_key_from_volume(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        (tmp_path / "judge-api-key").write_text("lower-key")
+        assert resolve_api_key("judge") == "lower-key"
+
+    def test_uppercase_file_takes_precedence_over_lowercase(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        (tmp_path / "JUDGE_API_KEY").write_text("upper-key")
+        (tmp_path / "judge-api-key").write_text("lower-key")
+        assert resolve_api_key("judge") == "upper-key"
+
+    def test_evalhub_secret_role_specific_fallback(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps._read_evalhub_secret",
+            lambda name: "evalhub-judge" if name == "JUDGE_API_KEY" else "",
+        )
+        assert resolve_api_key("judge") == "evalhub-judge"
+
+    def test_evalhub_secret_lowercase_fallback(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("SDG_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps._read_evalhub_secret",
+            lambda name: "evalhub-sdg" if name == "sdg-api-key" else "",
+        )
+        assert resolve_api_key("sdg") == "evalhub-sdg"
+
+    def test_kfp_volume_takes_precedence_over_evalhub_secret(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        (tmp_path / "JUDGE_API_KEY").write_text("kfp-key")
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps._read_evalhub_secret",
+            lambda name: "evalhub-key",
+        )
+        assert resolve_api_key("judge") == "kfp-key"
+
 
 class TestRedactApiKeys:
     def test_simple_redaction(self):
