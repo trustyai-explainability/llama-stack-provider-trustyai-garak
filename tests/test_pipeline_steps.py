@@ -187,6 +187,47 @@ class TestResolveApiKey:
         )
         assert resolve_api_key("judge") == "kfp-key"
 
+    def test_evalhub_secret_generic_api_key_fallback(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps._read_evalhub_secret",
+            lambda name: "evalhub-generic" if name == "API_KEY" else "",
+        )
+        assert resolve_api_key("judge") == "evalhub-generic"
+
+    def test_evalhub_secret_generic_lowercase_api_key_fallback(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps._read_evalhub_secret",
+            lambda name: "evalhub-apikey" if name == "api-key" else "",
+        )
+        assert resolve_api_key("judge") == "evalhub-apikey"
+
+    def test_evalhub_secret_uppercase_takes_precedence_over_lowercase(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps._read_evalhub_secret",
+            lambda name: (
+                "evalhub-upper" if name == "JUDGE_API_KEY" else "evalhub-lower" if name == "judge-api-key" else ""
+            ),
+        )
+        assert resolve_api_key("judge") == "evalhub-upper"
+
 
 class TestRedactApiKeys:
     def test_simple_redaction(self):
