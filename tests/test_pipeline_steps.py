@@ -228,6 +228,27 @@ class TestResolveApiKey:
         )
         assert resolve_api_key("judge") == "evalhub-upper"
 
+    def test_evalhub_multimodel_naming_from_volume(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        (tmp_path / "judge_api-key").write_text("evalhub-multimodel")
+        assert resolve_api_key("judge") == "evalhub-multimodel"
+
+    def test_hyphenated_takes_precedence_over_evalhub_multimodel(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        (tmp_path / "judge-api-key").write_text("hyphenated-key")
+        (tmp_path / "judge_api-key").write_text("evalhub-key")
+        assert resolve_api_key("judge") == "hyphenated-key"
+
 
 class TestRedactApiKeys:
     def test_simple_redaction(self):
@@ -469,6 +490,22 @@ class TestResolveConfigApiKeys:
         }
         _resolve_config_api_keys(config)
         assert "api_key" not in config["run"]["langproviders"][0]
+
+    def test_ref_tokens_not_treated_as_placeholders(self, monkeypatch):
+        from llama_stack_provider_trustyai_garak.core.pipeline_steps import _resolve_config_api_keys
+
+        monkeypatch.setenv("TARGET_API_KEY", "should-not-be-used")
+        monkeypatch.setenv("JUDGE_API_KEY", "should-not-be-used")
+
+        config = {
+            "plugins": {
+                "generators": {"openai": {"OpenAICompatible": {"api_key": "api-key:ref", "uri": "http://gen"}}},
+                "detectors": {"judge": {"detector_model_config": {"api_key": "judge_api-key:ref", "uri": "http://j"}}},
+            }
+        }
+        _resolve_config_api_keys(config)
+        assert config["plugins"]["generators"]["openai"]["OpenAICompatible"]["api_key"] == "api-key:ref"
+        assert config["plugins"]["detectors"]["judge"]["detector_model_config"]["api_key"] == "judge_api-key:ref"
 
 
 class TestBuildTranslationLangproviders:

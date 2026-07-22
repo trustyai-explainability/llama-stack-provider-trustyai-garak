@@ -503,7 +503,21 @@ class GarakAdapter(FrameworkAdapter):
             logger.info("Running Synthetic Data Generation")
             sdg_model = intents_params.get("sdg_model", "")
             sdg_api_base = intents_params.get("sdg_api_base", "")
-            if not sdg_model or not sdg_api_base:
+
+            sdg_secret_url, sdg_secret_key = self._read_role_from_secret("sdg", config.model.url)
+            if sdg_secret_url:
+                params = config.parameters or {}
+                sdg_role_cfg = (params.get("intents_models") or {}).get("sdg") or {}
+                sdg_append_v1 = as_bool(sdg_role_cfg.get("append_v1", True))
+                if sdg_append_v1:
+                    effective_sdg_base = self._normalize_url(sdg_secret_url)
+                else:
+                    effective_sdg_base = sdg_secret_url
+            else:
+                effective_sdg_base = sdg_api_base
+            sdg_source = "model auth secret" if sdg_secret_url else "intents_params (job request)"
+            logger.info("Intents sdg model: api_base=%s (source: %s)", effective_sdg_base, sdg_source)
+            if not sdg_model or not effective_sdg_base:
                 raise ValueError(
                     "Intents benchmark requires sdg_model and sdg_api_base "
                     "for prompt generation when intents_s3_key is not provided."
@@ -512,11 +526,12 @@ class GarakAdapter(FrameworkAdapter):
             raw_df = run_sdg_generation(
                 taxonomy_df=taxonomy_df,
                 sdg_model=sdg_model,
-                sdg_api_base=sdg_api_base,
+                sdg_api_base=effective_sdg_base,
                 sdg_flow_id=intents_params.get("sdg_flow_id", DEFAULT_SDG_FLOW_ID),
                 sdg_max_concurrency=intents_params.get("sdg_max_concurrency", DEFAULT_SDG_MAX_CONCURRENCY),
                 sdg_num_samples=intents_params.get("sdg_num_samples", DEFAULT_SDG_NUM_SAMPLES),
                 sdg_max_tokens=intents_params.get("sdg_max_tokens", DEFAULT_SDG_MAX_TOKENS),
+                api_key=sdg_secret_key,
             )
             raw_content = raw_df.to_csv(index=False)
             logger.info("SDG produced %d rows", len(raw_df))
@@ -622,12 +637,8 @@ class GarakAdapter(FrameworkAdapter):
                         "sdg_model for prompt generation when intents_s3_key "
                         "is not provided."
                     )
-                if not ip.get("sdg_api_base"):
-                    raise ValueError(
-                        "Intents benchmark (art_intents=True) requires "
-                        "sdg_api_base for prompt generation when intents_s3_key "
-                        "is not provided."
-                    )
+                # sdg_api_base may be empty here — the KFP SDG pod will
+                # resolve it from the mounted secret (sdg_url) at runtime.
 
         logger.info("Submitting KFP pipeline for %s", config.benchmark_id)
         callbacks.report_status(JobStatusUpdate(status=JobStatus.RUNNING, phase=JobPhase.RUNNING_EVALUATION))
@@ -1243,7 +1254,9 @@ class GarakAdapter(FrameworkAdapter):
         }
 
         if art_intents:
-            sdg_params, attacker_info = self._apply_intents_model_config(garak_config, benchmark_config, profile)
+            sdg_params, attacker_info = self._apply_intents_model_config(
+                garak_config, benchmark_config, profile, model_url=config.model.url
+            )
             intents_params.update(sdg_params)
 
             from ..core.pipeline_steps import build_translation_langproviders
@@ -1256,7 +1269,9 @@ class GarakAdapter(FrameworkAdapter):
                 benchmark_config,
                 attacker_url=attacker_info.get("url", ""),
                 attacker_name=attacker_info.get("name", ""),
+                attacker_api_key=attacker_info.get("api_key", ""),
                 probe_spec=resolved_probe_spec,
+                model_url=config.model.url,
             )
             if langproviders is not None:
                 garak_config.run.langproviders = langproviders
@@ -1272,6 +1287,7 @@ class GarakAdapter(FrameworkAdapter):
         garak_config: GarakCommandConfig,
         benchmark_config: dict,
         profile: dict,
+        model_url: str = "",
     ) -> tuple[dict[str, Any], dict[str, str]]:
         """Configure judge/attacker/evaluator/SDG models from ``intents_models``.
 
@@ -1329,26 +1345,36 @@ class GarakAdapter(FrameworkAdapter):
             if cfg.get("url")
         }
 
+        # Check if model auth secret has role URLs (secret-only config)
+        secret_has_roles = False
         if len(provided) == 0:
+            judge_probe_url, _ = self._read_role_from_secret("judge", model_url)
+            if judge_probe_url:
+                secret_has_roles = True
+
+        if len(provided) == 0 and not secret_has_roles:
             if garak_config.plugins and self._models_preconfigured_in_garak_config(garak_config.plugins):
                 logger.info(
                     "No intents_models provided but models are already "
                     "configured in garak_config — skipping intents_models "
-                    "override. API keys will be resolved by "
-                    "_resolve_config_api_keys in the KFP pod."
+                    "override."
                 )
                 preconfigured_attacker = self._extract_preconfigured_attacker(garak_config.plugins)
                 return self._extract_sdg_params(sdg_cfg, benchmark_config, profile), preconfigured_attacker
 
-            raise ValueError(
-                "Intents benchmark requires model configuration for "
-                "judge/attacker/evaluator roles. Either:\n"
-                "  1. Provide intents_models with at least one role "
-                "(url + name), or\n"
-                "  2. Configure models directly in garak_config "
-                "(plugins.detectors.judge with detector_model_name and "
-                "detector_model_config.uri)."
-            )
+            # Check if names are provided (secret has URLs, user only provides names)
+            has_names = any(cfg.get("name") for cfg in [judge_cfg, attacker_cfg, evaluator_cfg])
+            if not has_names:
+                raise ValueError(
+                    "Intents benchmark requires model configuration for "
+                    "judge/attacker/evaluator roles. Either:\n"
+                    "  1. Provide intents_models with at least one role "
+                    "(url + name, or just name if URLs are in the model auth secret), or\n"
+                    "  2. Configure models directly in garak_config "
+                    "(plugins.detectors.judge with detector_model_name and "
+                    "detector_model_config.uri)."
+                )
+
         if len(provided) == 2:
             missing = {"judge", "attacker", "evaluator"} - set(provided)
             raise ValueError(
@@ -1363,21 +1389,69 @@ class GarakAdapter(FrameworkAdapter):
             attacker_cfg = {**base_cfg, **attacker_cfg}
             evaluator_cfg = {**base_cfg, **evaluator_cfg}
 
+        # Fan-out names: if only judge has a name (secret-based config
+        # where URLs come from secret, user only specifies judge name),
+        # propagate it to attacker/evaluator.
+        if judge_cfg.get("name") and not attacker_cfg.get("name"):
+            attacker_cfg["name"] = judge_cfg["name"]
+        if judge_cfg.get("name") and not evaluator_cfg.get("name"):
+            evaluator_cfg["name"] = judge_cfg["name"]
+
         for role, cfg in [("judge", judge_cfg), ("attacker", attacker_cfg), ("evaluator", evaluator_cfg)]:
             if not cfg.get("name"):
                 raise ValueError(f"intents_models.{role}.name is required. Provide a model identifier for the {role}.")
 
-        judge_url = judge_cfg["url"]
+        judge_url = judge_cfg.get("url", "")
         judge_name = judge_cfg["name"]
 
-        attacker_url = attacker_cfg["url"]
+        attacker_url = attacker_cfg.get("url", "")
         attacker_name = attacker_cfg["name"]
 
-        evaluator_url = evaluator_cfg["url"]
+        evaluator_url = evaluator_cfg.get("url", "")
         evaluator_name = evaluator_cfg["name"]
 
-        # Use placeholder — real keys are injected via K8s Secret at pod level
         _PLACEHOLDER = "__FROM_ENV__"
+
+        judge_secret_url, judge_secret_key = self._read_role_from_secret("judge", model_url)
+        attacker_secret_url, attacker_secret_key = self._read_role_from_secret("attacker", model_url)
+        evaluator_secret_url, evaluator_secret_key = self._read_role_from_secret("evaluator", model_url)
+
+        # Fan-out: if judge has secret credentials but attacker/evaluator
+        # don't, inherit from judge (same model for all roles).
+        if judge_secret_url:
+            if not attacker_secret_url and not attacker_secret_key:
+                attacker_secret_url, attacker_secret_key = judge_secret_url, judge_secret_key
+            if not evaluator_secret_url and not evaluator_secret_key:
+                evaluator_secret_url, evaluator_secret_key = judge_secret_url, judge_secret_key
+
+        # Sidecar returns host only (no path). Append /v1 by default for
+        # models that serve behind a versioned API path. Per-role
+        # "append_v1" flag (defaults to true) in intents_models config
+        # controls this: set to false for endpoints that don't use /v1.
+        def _should_append_v1(role_cfg: dict) -> bool:
+            return as_bool(role_cfg.get("append_v1", True))
+
+        def _resolve_url(secret_url: str | None, fallback_url: str, role_cfg: dict) -> str:
+            if secret_url:
+                return self._normalize_url(secret_url) if _should_append_v1(role_cfg) else secret_url
+            return fallback_url
+
+        effective_judge_url = _resolve_url(judge_secret_url, judge_url, judge_cfg)
+        effective_judge_key = judge_secret_key or _PLACEHOLDER
+
+        effective_attacker_url = _resolve_url(attacker_secret_url, attacker_url, attacker_cfg)
+        effective_attacker_key = attacker_secret_key or _PLACEHOLDER
+
+        effective_evaluator_url = _resolve_url(evaluator_secret_url, evaluator_url, evaluator_cfg)
+        effective_evaluator_key = evaluator_secret_key or _PLACEHOLDER
+
+        for role, eff_url, name, from_secret in [
+            ("judge", effective_judge_url, judge_name, judge_secret_url),
+            ("attacker", effective_attacker_url, attacker_name, attacker_secret_url),
+            ("evaluator", effective_evaluator_url, evaluator_name, evaluator_secret_url),
+        ]:
+            source = "model auth secret" if from_secret else "intents_models (job request)"
+            logger.info("Intents %s model: name=%s, url=%s (source: %s)", role, name, eff_url, source)
 
         plugins = garak_config.plugins
 
@@ -1386,8 +1460,8 @@ class GarakAdapter(FrameworkAdapter):
         existing_judge["detector_model_type"] = existing_judge.get("detector_model_type") or "openai.OpenAICompatible"
         existing_judge["detector_model_name"] = existing_judge.get("detector_model_name") or judge_name
         existing_det_cfg = existing_judge.get("detector_model_config", {})
-        existing_det_cfg["uri"] = existing_det_cfg.get("uri") or judge_url
-        existing_det_cfg["api_key"] = _PLACEHOLDER
+        existing_det_cfg["uri"] = existing_det_cfg.get("uri") or effective_judge_url
+        existing_det_cfg["api_key"] = effective_judge_key
         existing_judge["detector_model_config"] = existing_det_cfg
         plugins.detectors["judge"] = existing_judge
 
@@ -1397,21 +1471,21 @@ class GarakAdapter(FrameworkAdapter):
                 tap_cfg["attack_model_name"] = tap_cfg.get("attack_model_name") or attacker_name
                 existing_attack_cfg = tap_cfg.get("attack_model_config", {})
                 existing_attack_cfg.setdefault("max_tokens", 500)
-                existing_attack_cfg["uri"] = existing_attack_cfg.get("uri") or attacker_url
-                existing_attack_cfg["api_key"] = _PLACEHOLDER
+                existing_attack_cfg["uri"] = existing_attack_cfg.get("uri") or effective_attacker_url
+                existing_attack_cfg["api_key"] = effective_attacker_key
                 tap_cfg["attack_model_config"] = existing_attack_cfg
 
                 tap_cfg["evaluator_model_name"] = tap_cfg.get("evaluator_model_name") or evaluator_name
                 existing_eval_cfg = tap_cfg.get("evaluator_model_config", {})
                 existing_eval_cfg.setdefault("max_tokens", 10)
                 existing_eval_cfg.setdefault("temperature", 0.0)
-                existing_eval_cfg["uri"] = existing_eval_cfg.get("uri") or evaluator_url
-                existing_eval_cfg["api_key"] = _PLACEHOLDER
+                existing_eval_cfg["uri"] = existing_eval_cfg.get("uri") or effective_evaluator_url
+                existing_eval_cfg["api_key"] = effective_evaluator_key
                 tap_cfg["evaluator_model_config"] = existing_eval_cfg
 
                 plugins.probes["tap"]["TAPIntent"] = tap_cfg
 
-        attacker_info = {"url": attacker_url, "name": attacker_name}
+        attacker_info = {"url": effective_attacker_url, "name": attacker_name, "api_key": effective_attacker_key}
         return self._extract_sdg_params(sdg_cfg, benchmark_config, profile), attacker_info
 
     @staticmethod
@@ -1458,20 +1532,24 @@ class GarakAdapter(FrameworkAdapter):
         benchmark_config: dict,
         profile: dict,
     ) -> dict[str, str]:
-        """Extract SDG model params from intents_models.sdg or flat keys."""
+        """Extract SDG model params from intents_models.sdg or flat keys.
+
+        The SDG URL may come from the model auth secret (sdg_url) rather
+        than the job request, so ``name`` alone is sufficient — the URL
+        will be resolved later from the secret in ``_run_simple_intents``.
+        """
         sdg_params: dict[str, str] = {
             "sdg_model": "",
             "sdg_api_base": "",
         }
-        if sdg_cfg.get("url") and sdg_cfg.get("name"):
+        if sdg_cfg.get("name"):
             sdg_params["sdg_model"] = sdg_cfg["name"]
-            sdg_params["sdg_api_base"] = sdg_cfg["url"]
+            sdg_params["sdg_api_base"] = sdg_cfg.get("url", "")
         else:
             sdg_model = benchmark_config.get("sdg_model", profile.get("sdg_model", ""))
             sdg_api_base = benchmark_config.get("sdg_api_base", profile.get("sdg_api_base", ""))
-            if sdg_model and sdg_api_base:
-                sdg_params["sdg_model"] = sdg_model
-                sdg_params["sdg_api_base"] = sdg_api_base
+            sdg_params["sdg_model"] = sdg_model
+            sdg_params["sdg_api_base"] = sdg_api_base
         return sdg_params
 
     @staticmethod
@@ -1532,16 +1610,49 @@ class GarakAdapter(FrameworkAdapter):
 
     def _normalize_url(self, url: str) -> str:
         """Normalize model URL to include /v1 suffix if needed."""
-        import re
+        from ..utils import normalize_model_url
 
-        url = url.strip().rstrip("/")
-        if not re.match(r"^.*\/v\d+$", url):
-            url = f"{url}/v1"
-        return url
+        return normalize_model_url(url)
 
     @staticmethod
     def _is_sidecar_address(url: str) -> bool:
         return "localhost" in url or "127.0.0.1" in url
+
+    @staticmethod
+    def _read_role_from_secret(role: str, model_url: str = "") -> tuple[str | None, str | None]:
+        """Read URL and api-key for a role from evalhub model auth secret.
+
+        Returns (url, api_key) tuple.
+
+        Resolution logic:
+        - If <role>_url is in secret: use it (sidecar address)
+        - If <role>_api-key is in secret but <role>_url is not: use model_url
+          (sidecar default route -- same endpoint as target model)
+        - If neither is in secret: returns (None, None) -- unauthenticated
+        - If url is resolved but <role>_api-key is absent: fall back to
+          generic 'api-key'
+
+        Key naming follows EvalHub multi-model convention:
+        <role>_url, <role>_api-key.
+        """
+        try:
+            from evalhub.adapter.auth import read_model_auth_key
+        except ImportError:
+            return None, None
+
+        url = read_model_auth_key(f"{role}_url")
+        api_key = read_model_auth_key(f"{role}_api-key")
+
+        if not url and not api_key:
+            return None, None
+
+        if not url:
+            url = model_url
+
+        if not api_key:
+            api_key = read_model_auth_key("api-key")
+
+        return url, api_key
 
     @staticmethod
     def _resolve_kfp_model_url(model_url: str, benchmark_config: dict) -> str:

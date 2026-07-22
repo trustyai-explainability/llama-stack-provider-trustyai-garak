@@ -4,10 +4,21 @@ import httpx
 import os
 from pathlib import Path
 from .constants import XDG_CACHE_HOME, XDG_DATA_HOME, XDG_CONFIG_HOME
+import re
 
 logger = logging.getLogger(__name__)
 
 _FALSY_STRINGS = frozenset({"false", "0", "no", "off", ""})
+
+_VERSION_PATH_RE = re.compile(r"^.*\/v\d+$")
+
+
+def normalize_model_url(url: str) -> str:
+    """Ensure model URL includes /v1 suffix for OpenAI-compatible endpoints."""
+    url = url.strip().rstrip("/")
+    if not _VERSION_PATH_RE.match(url):
+        url = f"{url}/v1"
+    return url
 
 
 def safe_int(value: Any, fallback: int) -> int:
