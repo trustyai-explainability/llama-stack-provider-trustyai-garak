@@ -505,16 +505,7 @@ class GarakAdapter(FrameworkAdapter):
             sdg_api_base = intents_params.get("sdg_api_base", "")
 
             sdg_secret_url, sdg_secret_key = self._read_role_from_secret("sdg", config.model.url)
-            if sdg_secret_url:
-                params = config.parameters or {}
-                sdg_role_cfg = (params.get("intents_models") or {}).get("sdg") or {}
-                sdg_append_v1 = as_bool(sdg_role_cfg.get("append_v1", True))
-                if sdg_append_v1:
-                    effective_sdg_base = self._normalize_url(sdg_secret_url)
-                else:
-                    effective_sdg_base = sdg_secret_url
-            else:
-                effective_sdg_base = sdg_api_base
+            effective_sdg_base = sdg_secret_url or sdg_api_base
             sdg_source = "model auth secret" if sdg_secret_url else "intents_params (job request)"
             logger.info("Intents sdg model: api_base=%s (source: %s)", effective_sdg_base, sdg_source)
             if not sdg_model or not effective_sdg_base:
@@ -1214,7 +1205,7 @@ class GarakAdapter(FrameworkAdapter):
             )
             raw_model_url = self._resolve_kfp_model_url(config.model.url, benchmark_config)
             garak_config.plugins.generators = build_generator_options(
-                model_endpoint=self._normalize_url(raw_model_url),
+                model_endpoint=raw_model_url.strip().rstrip("/"),
                 model_name=config.model.name,
                 api_key=api_key,
                 extra_params=model_params or TARGET_DEFAULT_PARAMETERS,
@@ -1424,25 +1415,13 @@ class GarakAdapter(FrameworkAdapter):
             if not evaluator_secret_url and not evaluator_secret_key:
                 evaluator_secret_url, evaluator_secret_key = judge_secret_url, judge_secret_key
 
-        # Sidecar returns host only (no path). Append /v1 by default for
-        # models that serve behind a versioned API path. Per-role
-        # "append_v1" flag (defaults to true) in intents_models config
-        # controls this: set to false for endpoints that don't use /v1.
-        def _should_append_v1(role_cfg: dict) -> bool:
-            return as_bool(role_cfg.get("append_v1", True))
-
-        def _resolve_url(secret_url: str | None, fallback_url: str, role_cfg: dict) -> str:
-            if secret_url:
-                return self._normalize_url(secret_url) if _should_append_v1(role_cfg) else secret_url
-            return fallback_url
-
-        effective_judge_url = _resolve_url(judge_secret_url, judge_url, judge_cfg)
+        effective_judge_url = judge_secret_url or judge_url
         effective_judge_key = judge_secret_key or _PLACEHOLDER
 
-        effective_attacker_url = _resolve_url(attacker_secret_url, attacker_url, attacker_cfg)
+        effective_attacker_url = attacker_secret_url or attacker_url
         effective_attacker_key = attacker_secret_key or _PLACEHOLDER
 
-        effective_evaluator_url = _resolve_url(evaluator_secret_url, evaluator_url, evaluator_cfg)
+        effective_evaluator_url = evaluator_secret_url or evaluator_url
         effective_evaluator_key = evaluator_secret_key or _PLACEHOLDER
 
         for role, eff_url, name, from_secret in [
@@ -1607,12 +1586,6 @@ class GarakAdapter(FrameworkAdapter):
             return key
 
         return "DUMMY"
-
-    def _normalize_url(self, url: str) -> str:
-        """Normalize model URL to include /v1 suffix if needed."""
-        from ..utils import normalize_model_url
-
-        return normalize_model_url(url)
 
     @staticmethod
     def _is_sidecar_address(url: str) -> bool:

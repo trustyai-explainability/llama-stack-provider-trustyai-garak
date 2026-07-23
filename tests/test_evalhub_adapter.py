@@ -3371,7 +3371,7 @@ class TestSimpleIntentsMode:
 
         auth_module = sys.modules["evalhub.adapter.auth"]
         auth_module.read_model_auth_key = lambda name: {
-            "sdg_url": "http://localhost:8080",
+            "sdg_url": "http://localhost:8080/v1",
             "sdg_api-key": "sdg_api-key:ref",
         }.get(name)
 
