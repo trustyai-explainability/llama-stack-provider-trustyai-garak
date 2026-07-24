@@ -1567,7 +1567,11 @@ class TestJobPhaseReporting:
             def report_status(self, update):
                 statuses.append(update)
 
-        job = SimpleNamespace(benchmark_id="trustyai_garak::intents", parameters={})
+        job = SimpleNamespace(
+            benchmark_id="trustyai_garak::intents",
+            parameters={},
+            model=SimpleNamespace(url="http://localhost:8080", name="test-model"),
+        )
         intents_params = {
             "sdg_model": "sdg-m",
             "sdg_api_base": "http://sdg:7000/v1",
@@ -2834,6 +2838,67 @@ class TestTranslationLangproviders:
         assert "langproviders" not in run_config
 
 
+class TestReadRoleFromSecret:
+    """Tests for _read_role_from_secret static method."""
+
+    def _setup(self, monkeypatch, fake_read):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        auth_module = sys.modules["evalhub.adapter.auth"]
+        auth_module.read_model_auth_key = fake_read
+        return module
+
+    def test_both_url_and_key_from_secret(self, monkeypatch):
+        def _fake(name):
+            return {"judge_url": "http://localhost:8080", "judge_api-key": "judge_api-key:ref"}.get(name)
+
+        module = self._setup(monkeypatch, _fake)
+        url, key = module.GarakAdapter._read_role_from_secret("judge", "http://fallback:8080")
+        assert url == "http://localhost:8080"
+        assert key == "judge_api-key:ref"
+
+    def test_key_present_url_absent_uses_model_url(self, monkeypatch):
+        def _fake(name):
+            return {"judge_api-key": "judge_api-key:ref"}.get(name)
+
+        module = self._setup(monkeypatch, _fake)
+        url, key = module.GarakAdapter._read_role_from_secret("judge", "http://localhost:8080")
+        assert url == "http://localhost:8080"
+        assert key == "judge_api-key:ref"
+
+    def test_url_present_key_absent_uses_generic_api_key(self, monkeypatch):
+        def _fake(name):
+            return {"judge_url": "http://localhost:8080", "api-key": "api-key:ref"}.get(name)
+
+        module = self._setup(monkeypatch, _fake)
+        url, key = module.GarakAdapter._read_role_from_secret("judge", "http://fallback:8080")
+        assert url == "http://localhost:8080"
+        assert key == "api-key:ref"
+
+    def test_neither_url_nor_key_returns_none(self, monkeypatch):
+        module = self._setup(monkeypatch, lambda name: None)
+        url, key = module.GarakAdapter._read_role_from_secret("judge", "http://localhost:8080")
+        assert url is None
+        assert key is None
+
+    def test_url_present_no_generic_key_returns_none_for_key(self, monkeypatch):
+        def _fake(name):
+            return {"sdg_url": "http://localhost:8080"}.get(name)
+
+        module = self._setup(monkeypatch, _fake)
+        url, key = module.GarakAdapter._read_role_from_secret("sdg", "http://fallback:8080")
+        assert url == "http://localhost:8080"
+        assert key is None
+
+    def test_secret_url_wins_over_job_request_url(self, monkeypatch):
+        def _fake(name):
+            return {"judge_url": "http://localhost:8080", "judge_api-key": "judge_api-key:ref"}.get(name)
+
+        module = self._setup(monkeypatch, _fake)
+        url, key = module.GarakAdapter._read_role_from_secret("judge", "http://real-model:9000/v1")
+        assert url == "http://localhost:8080"
+        assert key == "judge_api-key:ref"
+
+
 class TestResolveIntentsApiKey:
     """Tests for _resolve_intents_api_key static method."""
 
@@ -3299,6 +3364,58 @@ class TestSimpleIntentsMode:
         assert "category" in norm_df.columns
         assert "prompt" in norm_df.columns
         assert len(norm_df) == 2
+
+    def test_simple_intents_sdg_uses_secret_url_and_key(self, monkeypatch, tmp_path):
+        """SDG reads sdg_url and sdg_api-key from secret when available."""
+        module, adapter, job = self._make_adapter_and_job(monkeypatch, tmp_path)
+
+        auth_module = sys.modules["evalhub.adapter.auth"]
+        auth_module.read_model_auth_key = lambda name: {
+            "sdg_url": "http://localhost:8080/v1",
+            "sdg_api-key": "sdg_api-key:ref",
+        }.get(name)
+
+        scan_dir = tmp_path / "simple-intents-job"
+        scan_dir.mkdir(parents=True, exist_ok=True)
+
+        import pandas as pd
+
+        fake_raw_df = pd.DataFrame({"policy_concept": ["X"], "concept_definition": ["x"], "prompt": ["p"]})
+
+        sdg_captured = {}
+
+        def _fake_run_sdg_generation(taxonomy_df, sdg_model, sdg_api_base, **kwargs):
+            sdg_captured["sdg_api_base"] = sdg_api_base
+            sdg_captured["api_key"] = kwargs.get("api_key")
+            return fake_raw_df
+
+        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds):
+            report_prefix = scan_dir / "scan"
+            report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+            return module.GarakScanResult(returncode=0, stdout="", stderr="", report_prefix=report_prefix)
+
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.run_sdg_generation",
+            _fake_run_sdg_generation,
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.setup_and_run_garak",
+            _fake_setup_and_run,
+        )
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_parse_results",
+            lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
+        )
+
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+
+        adapter.run_benchmark_job(job, _Callbacks())
+
+        assert sdg_captured["sdg_api_base"] == "http://localhost:8080/v1"
+        assert sdg_captured["api_key"] == "sdg_api-key:ref"
 
 
 class TestKFPIntentsMode:

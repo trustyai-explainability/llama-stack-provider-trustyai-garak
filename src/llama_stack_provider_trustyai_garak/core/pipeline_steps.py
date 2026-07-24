@@ -77,8 +77,10 @@ logger = logging.getLogger(__name__)
 # How it works
 # ------------
 # - **Simple mode**: The EvalHub service mounts the secret at
-#   ``/var/run/secrets/model/``. The adapter reads ``api-key`` via the
-#   EvalHub SDK's ``read_model_auth_key()``.
+#   ``/var/run/secrets/model/``. ``resolve_api_key(role)`` checks both
+#   the KFP path and the evalhub SDK path via ``read_model_auth_key()``,
+#   so role-specific keys (e.g. ``JUDGE_API_KEY``) are resolved from
+#   whichever mount point exists.
 # - **KFP mode**: The pipeline mounts the secret at ``/mnt/model-auth``
 #   via ``use_secret_as_volume(optional=True)``. ``resolve_api_key(role)``
 #   reads files from that path.
@@ -102,29 +104,67 @@ def _read_secret_file(name: str) -> str:
         return ""
 
 
+def _read_evalhub_secret(name: str) -> str:
+    """Read a key from the evalhub model auth secret (simple mode).
+
+    In simple (non-KFP) mode, the eval-hub service mounts the model auth
+    secret at ``/var/run/secrets/model/``.  This function delegates to the
+    evalhub SDK's ``read_model_auth_key`` which reads from that path.
+
+    Returns the value or empty string if unavailable.
+    """
+    try:
+        from evalhub.adapter.auth import read_model_auth_key
+
+        return read_model_auth_key(name) or ""
+    except ImportError:
+        return ""
+
+
 def resolve_api_key(role: str) -> str:
     """Resolve an API key for a model role.
 
-    Keys may come from environment variables (e.g. local / simple mode)
-    or from a Kubernetes Secret mounted as a volume at
-    ``/mnt/model-auth`` (KFP mode).
+    Keys may come from environment variables, a Kubernetes Secret mounted
+    at ``/mnt/model-auth`` (KFP mode), or the evalhub model auth secret
+    at ``/var/run/secrets/model/`` (simple mode).
+
+    Both uppercase (``JUDGE_API_KEY``), lowercase hyphenated
+    (``judge-api-key``), and EvalHub multi-model convention
+    (``judge_api-key``) key names are checked.
 
     Resolution order (first non-empty wins):
 
-    1. ``{ROLE}_API_KEY`` env var  (e.g. ``SDG_API_KEY``)
-    2. ``{ROLE}_API_KEY`` secret file
-    3. ``API_KEY`` env var          (generic fallback)
-    4. ``API_KEY`` secret file
-    5. ``api-key`` secret file      (EvalHub SDK convention)
-    6. ``"DUMMY"``                  (unauthenticated / local endpoints)
+    1.  ``{ROLE}_API_KEY`` env var  (e.g. ``SDG_API_KEY``)
+    2.  ``{ROLE}_API_KEY`` KFP secret file (``/mnt/model-auth/``)
+    3.  ``{ROLE}_API_KEY`` evalhub secret (``/var/run/secrets/model/``)
+    4.  ``{role}-api-key`` KFP secret file (lowercase, K8s convention)
+    5.  ``{role}-api-key`` evalhub secret
+    6.  ``{role}_api-key`` KFP secret file (EvalHub multi-model convention)
+    7.  ``{role}_api-key`` evalhub secret
+    8.  ``API_KEY`` env var          (generic fallback)
+    9.  ``API_KEY`` KFP secret file
+    10. ``API_KEY`` evalhub secret
+    11. ``api-key`` KFP secret file  (EvalHub convention)
+    12. ``api-key`` evalhub secret   (EvalHub convention)
+    13. ``"DUMMY"``                  (unauthenticated / local endpoints)
     """
-    role_var = f"{role.upper()}_API_KEY"
+    role_upper = role.upper()
+    role_var = f"{role_upper}_API_KEY"
+    role_lower = f"{role.lower()}-api-key"
+    role_evalhub = f"{role.lower()}_api-key"
     return (
         os.environ.get(role_var)
         or _read_secret_file(role_var)
+        or _read_evalhub_secret(role_var)
+        or _read_secret_file(role_lower)
+        or _read_evalhub_secret(role_lower)
+        or _read_secret_file(role_evalhub)
+        or _read_evalhub_secret(role_evalhub)
         or os.environ.get("API_KEY")
         or _read_secret_file("API_KEY")
+        or _read_evalhub_secret("API_KEY")
         or _read_secret_file("api-key")
+        or _read_evalhub_secret("api-key")
         or "DUMMY"
     )
 
@@ -168,13 +208,70 @@ def _resolve_config_api_keys(config: dict) -> None:
     _PLACEHOLDERS = {"", "DUMMY", "__FROM_ENV__", "***"}
 
     def _is_placeholder(value: str) -> bool:
-        return value.strip().upper() in _PLACEHOLDERS
+        stripped = value.strip()
+        if stripped.endswith(":ref"):
+            return False
+        return stripped.upper() in _PLACEHOLDERS
+
+    _ROLE_URL_KEYS = {
+        "JUDGE": ["judge_url"],
+        "ATTACKER": ["attacker_url", "judge_url"],
+        "EVALUATOR": ["evaluator_url", "judge_url"],
+        "TRANSLATION": ["translation_url", "attacker_url", "judge_url"],
+    }
+
+    def _is_sidecar_uri(value: str) -> bool:
+        return not value or "localhost" in value or "127.0.0.1" in value
+
+    def _resolve_uri(role: str, current_uri: str) -> str:
+        """Resolve URI from mounted secret when current value is a sidecar address."""
+        if not _is_sidecar_uri(current_uri):
+            return current_uri
+        secret_keys = _ROLE_URL_KEYS.get(role, [])
+        for secret_key in secret_keys:
+            real_url = _read_secret_file(secret_key) or _read_evalhub_secret(secret_key)
+            if real_url:
+                return real_url.strip().rstrip("/")
+        return current_uri
+
+    _ROLE_KEY_FALLBACKS = {
+        "ATTACKER": ["JUDGE"],
+        "EVALUATOR": ["JUDGE"],
+        "TRANSLATION": ["ATTACKER", "JUDGE"],
+    }
+
+    def _has_role_specific_key(role: str) -> str:
+        """Check only role-specific keys (not generic fallbacks)."""
+        role_lower = role.lower()
+        return (
+            os.environ.get(f"{role}_API_KEY")
+            or _read_secret_file(f"{role}_API_KEY")
+            or _read_secret_file(f"{role_lower}-api-key")
+            or _read_secret_file(f"{role_lower}_api-key")
+            or _read_evalhub_secret(f"{role}_API_KEY")
+            or _read_evalhub_secret(f"{role_lower}-api-key")
+            or _read_evalhub_secret(f"{role_lower}_api-key")
+            or ""
+        )
+
+    def _resolve_key_with_fallback(role: str) -> str:
+        """Resolve API key for role, falling back to related roles before generic."""
+        own_key = _has_role_specific_key(role)
+        if own_key:
+            return own_key
+        for fallback_role in _ROLE_KEY_FALLBACKS.get(role, []):
+            fallback_key = _has_role_specific_key(fallback_role)
+            if fallback_key:
+                return fallback_key
+        return resolve_api_key(role)
 
     def _walk(obj: Any, role: str = "TARGET") -> None:
         if isinstance(obj, dict):
             if "api_key" in obj and isinstance(obj["api_key"], str):
                 if _is_placeholder(obj["api_key"]):
-                    obj["api_key"] = resolve_api_key(role)
+                    obj["api_key"] = _resolve_key_with_fallback(role)
+            if "uri" in obj and isinstance(obj["uri"], str):
+                obj["uri"] = _resolve_uri(role, obj["uri"])
             for key, val in obj.items():
                 child_role = role
                 if key == "detector_model_config":
@@ -213,7 +310,7 @@ _HF_LANGPROVIDERS = [
 ]
 
 
-def _build_llm_langproviders(url: str, name: str) -> list[dict[str, str]]:
+def _build_llm_langproviders(url: str, name: str, api_key: str = "__FROM_ENV__") -> list[dict[str, str]]:
     """Build ``llm.LLMTranslator`` langprovider entries for zh/en pair."""
     return [
         {
@@ -221,14 +318,14 @@ def _build_llm_langproviders(url: str, name: str) -> list[dict[str, str]]:
             "model_type": "llm.LLMTranslator",
             "uri": url,
             "model_name": name,
-            "api_key": "__FROM_ENV__",
+            "api_key": api_key,
         },
         {
             "language": "en,zh",
             "model_type": "llm.LLMTranslator",
             "uri": url,
             "model_name": name,
-            "api_key": "__FROM_ENV__",
+            "api_key": api_key,
         },
     ]
 
@@ -245,7 +342,9 @@ def build_translation_langproviders(
     benchmark_config: dict[str, Any],
     attacker_url: str = "",
     attacker_name: str = "",
+    attacker_api_key: str = "",
     probe_spec: str = "",
+    model_url: str = "",
 ) -> list[dict[str, str]] | None:
     """Resolve langproviders for the ``multilingual.TranslationIntent`` probe.
 
@@ -257,15 +356,17 @@ def build_translation_langproviders(
 
     1. ``translation_use_hf=True`` in *benchmark_config* -- use HuggingFace
        ``local.LocalHFTranslator`` models (Helsinki-NLP).
-    2. ``intents_models.translation`` has ``url`` + ``name`` -- use a
+    2. ``translation_url`` / ``translation_api-key`` from the evalhub model
+       auth secret (sidecar multi-model convention).
+    3. ``intents_models.translation`` has ``url`` + ``name`` -- use a
        dedicated LLM endpoint via ``llm.LLMTranslator``.
-    3. *attacker_url* / *attacker_name* available (from the resolved
+    4. *attacker_url* / *attacker_name* available (from the resolved
        attacker model) -- reuse the attacker LLM for translation.
-    4. Fallback to HF models (safety net when no LLM is available).
+    5. Fallback to HF models (safety net when no LLM is available).
 
     API keys for LLM translators use the ``__FROM_ENV__`` placeholder
     and are resolved at pod level by :func:`_resolve_config_api_keys`
-    with role ``TRANSLATION``.
+    with role ``TRANSLATION``, unless a ref token is read from the secret.
     """
     if probe_spec and not _probe_spec_includes_translation(probe_spec):
         logger.info("TranslationIntent not in probe_spec — skipping langproviders")
@@ -277,6 +378,24 @@ def build_translation_langproviders(
         logger.info("Translation mode: HF (translation_use_hf=True)")
         return list(_HF_LANGPROVIDERS)
 
+    try:
+        from evalhub.adapter.auth import read_model_auth_key
+
+        trans_secret_url = read_model_auth_key("translation_url")
+        trans_secret_key = read_model_auth_key("translation_api-key")
+        if trans_secret_url or trans_secret_key:
+            effective_url = trans_secret_url or model_url
+            effective_key = trans_secret_key or read_model_auth_key("api-key") or "__FROM_ENV__"
+            intents_models = benchmark_config.get("intents_models", {})
+            if not isinstance(intents_models, dict):
+                intents_models = {}
+            translation_cfg = intents_models.get("translation") or {}
+            trans_name = translation_cfg.get("name") or "translation-model"
+            logger.info("Translation mode: secret-based LLM (%s)", trans_name)
+            return _build_llm_langproviders(effective_url, trans_name, api_key=effective_key)
+    except ImportError:
+        pass
+
     intents_models = benchmark_config.get("intents_models", {})
     if not isinstance(intents_models, dict):
         intents_models = {}
@@ -287,8 +406,9 @@ def build_translation_langproviders(
         return _build_llm_langproviders(translation_cfg["url"], translation_cfg["name"])
 
     if attacker_url and attacker_name:
+        api_key = attacker_api_key or "__FROM_ENV__"
         logger.info("Translation mode: attacker LLM (%s)", attacker_name)
-        return _build_llm_langproviders(attacker_url, attacker_name)
+        return _build_llm_langproviders(attacker_url, attacker_name, api_key=api_key)
 
     logger.info("Translation mode: HF fallback (no LLM available)")
     return list(_HF_LANGPROVIDERS)
@@ -375,21 +495,33 @@ def run_sdg_generation(
     sdg_max_concurrency: int = 0,
     sdg_num_samples: int = 0,
     sdg_max_tokens: int = 0,
+    api_key: str | None = None,
 ) -> pd.DataFrame:
     """Run Synthetic Data Generation on a taxonomy.  Returns the raw DataFrame.
 
-    The SDG API key is resolved via ``resolve_api_key("sdg")`` which reads
-    ``SDG_API_KEY`` or ``API_KEY`` environment variables (injected from a
-    Kubernetes Secret in KFP mode), falling back to ``"DUMMY"``.
+    When *api_key* is provided (e.g. a sidecar ref token), it is used
+    directly.  Otherwise the key is resolved via ``resolve_api_key("sdg")``
+    which reads ``SDG_API_KEY`` or ``API_KEY`` environment variables
+    (injected from a Kubernetes Secret in KFP mode), falling back to
+    ``"DUMMY"``.
     """
     from ..sdg import generate_sdg_dataset
 
     if not sdg_model or not sdg_model.strip():
         raise GarakValidationError("sdg_model is required for intents scans when SDG must run.")
-    if not sdg_api_base or not sdg_api_base.strip():
-        raise GarakValidationError("sdg_api_base is required for intents scans when SDG must run.")
 
-    effective_key = resolve_api_key("sdg")
+    # Resolve SDG URL from mounted secret if sidecar address or empty
+    effective_base = sdg_api_base
+    if not effective_base or "localhost" in effective_base or "127.0.0.1" in effective_base:
+        secret_url = _read_secret_file("sdg_url") or _read_evalhub_secret("sdg_url")
+        if secret_url:
+            effective_base = secret_url.strip().rstrip("/")
+            logger.info("Resolved sdg_api_base from secret: %s", effective_base)
+    if not effective_base or not effective_base.strip():
+        raise GarakValidationError("sdg_api_base is required for intents scans when SDG must run.")
+    sdg_api_base = effective_base
+
+    effective_key = api_key or resolve_api_key("sdg")
 
     effective_flow_id = (sdg_flow_id.strip() if sdg_flow_id else "") or DEFAULT_SDG_FLOW_ID
 
