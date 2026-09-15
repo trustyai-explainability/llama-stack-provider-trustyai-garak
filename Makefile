@@ -1,4 +1,4 @@
-RHAI_INDEX_URL := https://packages.redhat.com/api/pypi/public-rhai/rhoai/3.5/cpu-ubi9/simple/
+RHAI_INDEX_URL := https://console.redhat.com/api/pypi/public-rhai/rhoai/3.6-EA2/cpu-ubi9-test/simple/
 
 .PHONY: test coverage lint format typecheck check build lock install install-dev
 

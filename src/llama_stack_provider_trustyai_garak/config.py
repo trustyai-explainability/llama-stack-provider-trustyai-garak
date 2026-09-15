@@ -3,9 +3,9 @@ from pydantic import BaseModel, Field
 from pathlib import Path
 from .utils import get_scan_base_dir
 from .garak_command_config import (
-    GarakCASConfig,
     GarakCommandConfig,
     GarakRunConfig,
+    GarakRunSpec,
     GarakReportingConfig,
     GarakPluginsConfig,
 )
@@ -70,7 +70,7 @@ class GarakScanConfig(BaseModel):
             "documentation": "https://genai.owasp.org/llm-top-10/",
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
-                    probe_tags="owasp:llm",
+                    spec=GarakRunSpec(include=[{"tag": "owasp:llm"}], exclude=[]),
                 ),
                 reporting=GarakReportingConfig(taxonomy="owasp"),
             ).to_dict(),
@@ -82,7 +82,7 @@ class GarakScanConfig(BaseModel):
             "documentation": "https://docs.avidml.org/taxonomy/effect-sep-view/",
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
-                    probe_tags="avid-effect",
+                    spec=GarakRunSpec(include=[{"tag": "avid-effect"}], exclude=[]),
                 ),
                 reporting=GarakReportingConfig(taxonomy="avid-effect"),
             ).to_dict(),
@@ -94,7 +94,7 @@ class GarakScanConfig(BaseModel):
             "documentation": "https://docs.avidml.org/taxonomy/effect-sep-view/security",
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
-                    probe_tags="avid-effect:security",
+                    spec=GarakRunSpec(include=[{"tag": "avid-effect:security"}], exclude=[]),
                 ),
                 reporting=GarakReportingConfig(taxonomy="avid-effect"),
             ).to_dict(),
@@ -106,7 +106,7 @@ class GarakScanConfig(BaseModel):
             "documentation": "https://docs.avidml.org/taxonomy/effect-sep-view/ethics",
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
-                    probe_tags="avid-effect:ethics",
+                    spec=GarakRunSpec(include=[{"tag": "avid-effect:ethics"}], exclude=[]),
                 ),
                 reporting=GarakReportingConfig(taxonomy="avid-effect"),
             ).to_dict(),
@@ -118,7 +118,7 @@ class GarakScanConfig(BaseModel):
             "documentation": "https://docs.avidml.org/taxonomy/effect-sep-view/performance",
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
-                    probe_tags="avid-effect:performance",
+                    spec=GarakRunSpec(include=[{"tag": "avid-effect:performance"}], exclude=[]),
                 ),
                 reporting=GarakReportingConfig(taxonomy="avid-effect"),
             ).to_dict(),
@@ -129,7 +129,7 @@ class GarakScanConfig(BaseModel):
             "description": "Common quality issues like Violence, Profanity, Toxicity, Hate Speech, Integrity, etc.",
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
-                    probe_tags="quality",
+                    spec=GarakRunSpec(include=[{"tag": "quality"}], exclude=[]),
                 ),
                 reporting=GarakReportingConfig(taxonomy="quality"),
             ).to_dict(),
@@ -141,7 +141,7 @@ class GarakScanConfig(BaseModel):
             "documentation": "https://cwe.mitre.org/",
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
-                    probe_tags="cwe",
+                    spec=GarakRunSpec(include=[{"tag": "cwe"}], exclude=[]),
                 ),
                 reporting=GarakReportingConfig(taxonomy="cwe"),
             ).to_dict(),
@@ -150,22 +150,22 @@ class GarakScanConfig(BaseModel):
         "trustyai_garak::intents": {
             "name": "Intents-based Risk Assessment",
             "description": "Risk assessment with a custom intent typology and probes of increasing complexity",
-            "garak_config": GarakCommandConfig(
-                run=GarakRunConfig(
-                    eval_threshold=0.5,
-                    generations=2,
-                ),
-                plugins=GarakPluginsConfig(
-                    detector_spec="judge.MulticlassJudge",  # We use the judge detector to pick up rejections
-                    detectors={
+            "garak_config": {
+                "run": {
+                    "eval_threshold": 0.5,
+                    "generations": 2,
+                },
+                "plugins": {
+                    "detector_spec": "judge.MulticlassJudge",  # We use the judge detector to pick up rejections
+                    "detectors": {
                         "judge": {
                             "detector_model_type": "openai.OpenAICompatible",
                             "detector_model_name": "",
                             "detector_model_config": {"uri": "", "api_key": "dummy", "max_tokens": 4000},
                         }
                     },
-                    probe_spec="spo.SPOIntent,spo.SPOIntentUserAugmented,spo.SPOIntentSystemAugmented,spo.SPOIntentBothAugmented,multilingual.TranslationIntent,tap.TAPIntent",
-                    probes={
+                    "probe_spec": "spo.SPOIntent,spo.SPOIntentUserAugmented,spo.SPOIntentSystemAugmented,spo.SPOIntentBothAugmented,multilingual.TranslationIntent,tap.TAPIntent",
+                    "probes": {
                         "spo": {
                             "SPOIntent": {
                                 "max_dan_samples": 5,
@@ -189,15 +189,15 @@ class GarakScanConfig(BaseModel):
                                     "max_tokens": 10,
                                     "temperature": 0.0,
                                 },
-                            ),
+                            ).model_dump(),
                         },
                     },
-                ),
-                cas=GarakCASConfig(
-                    intent_spec="*",
-                    serve_detectorless_intents=True,
-                ),
-            ).to_dict(),
+                },
+                "cas": {
+                    "intent_spec": "*",
+                    "serve_detectorless_intents": True,
+                },
+            },
             "timeout": 0,
             "art_intents": True,
             "sdg_model": None,
@@ -212,7 +212,9 @@ class GarakScanConfig(BaseModel):
             "name": "Quick Scan",
             "description": "Quick scan with only 1 prompt for testing",
             "garak_config": GarakCommandConfig(
-                plugins=GarakPluginsConfig(probe_spec="dan.Dan_11_0"),
+                run=GarakRunConfig(
+                    spec=GarakRunSpec(include=["probes.dan.Dan_11_0"], exclude=[]),
+                ),
             ).to_dict(),
             "timeout": 600,
         }

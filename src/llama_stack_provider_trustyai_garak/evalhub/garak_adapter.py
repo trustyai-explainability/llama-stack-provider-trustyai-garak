@@ -1151,13 +1151,24 @@ class GarakAdapter(FrameworkAdapter):
         if not isinstance(explicit_garak_cfg, dict):
             explicit_garak_cfg = {}
 
-        explicit_probes = benchmark_config.get("probes") or explicit_garak_cfg.get("plugins", {}).get("probe_spec")
-        explicit_tags = benchmark_config.get("probe_tags") or explicit_garak_cfg.get("run", {}).get("probe_tags")
+        explicit_plugins = explicit_garak_cfg.get("plugins", {})
+        explicit_run = explicit_garak_cfg.get("run", {})
+        if not isinstance(explicit_plugins, dict):
+            explicit_plugins = {}
+        if not isinstance(explicit_run, dict):
+            explicit_run = {}
 
-        if not explicit_probes and not explicit_tags and not profile:
+        explicit_selection = any(
+            benchmark_config.get(key) for key in ("probes", "probe_tags", "buffs")
+        ) or any(
+            explicit_plugins.get(key)
+            for key in ("probe_spec", "buff_spec")
+        ) or explicit_run.get("probe_tags") or "spec" in explicit_run
+
+        if not explicit_selection and not profile:
             logger.warning(
-                "benchmark_id '%s' does not match a known profile and no probes or "
-                "probe_tags provided in parameters — all probes will run",
+                "benchmark_id '%s' does not match a known profile and no probes, buffs, "
+                "or probe_tags provided in parameters — all probes will run",
                 config.benchmark_id,
             )
 
@@ -1252,9 +1263,10 @@ class GarakAdapter(FrameworkAdapter):
 
             from ..core.pipeline_steps import build_translation_langproviders
 
-            resolved_probe_spec = garak_config.plugins.probe_spec or ""
-            if isinstance(resolved_probe_spec, list):
-                resolved_probe_spec = ",".join(resolved_probe_spec)
+            spec_include = garak_config.run.spec.include if garak_config.run.spec else []
+            resolved_probe_spec = ",".join(
+                selector for selector in spec_include if isinstance(selector, str)
+            )
 
             langproviders = build_translation_langproviders(
                 benchmark_config,

@@ -511,7 +511,7 @@ class TestResolveConfigApiKeys:
 class TestBuildTranslationLangproviders:
     """Tests for build_translation_langproviders in core/pipeline_steps."""
 
-    _TRANSLATION_PROBE_SPEC = "spo.SPOIntent,spo.SPOIntentUserAugmented,multilingual.TranslationIntent,tap.TAPIntent"
+    _TRANSLATION_PROBE_SPEC = "probes.spo.SPOIntent,probes.spo.SPOIntentUserAugmented,probes.multilingual.TranslationIntent,probes.tap.TAPIntent"
 
     def test_default_uses_attacker_llm(self):
         from llama_stack_provider_trustyai_garak.core.pipeline_steps import build_translation_langproviders
@@ -631,15 +631,27 @@ class TestBuildTranslationLangproviders:
         assert result[0]["model_name"] == "atk-model"
 
     def test_returns_none_when_no_translation_probe(self):
-        """When probe_spec doesn't include TranslationIntent, return None."""
+        """When probe_spec does not include TranslationIntent, return None."""
         from llama_stack_provider_trustyai_garak.core.pipeline_steps import build_translation_langproviders
 
         result = build_translation_langproviders(
             benchmark_config={},
             attacker_url="http://attacker:9000/v1",
             attacker_name="atk-model",
-            probe_spec="spo.SPOIntent,tap.TAPIntent",
+            probe_spec="probes.spo.SPOIntent,probes.tap.TAPIntent",
         )
+        assert result is None
+
+    def test_similar_translation_probe_name_does_not_match(self):
+        from llama_stack_provider_trustyai_garak.core.pipeline_steps import build_translation_langproviders
+
+        result = build_translation_langproviders(
+            benchmark_config={},
+            attacker_url="http://attacker:9000/v1",
+            attacker_name="atk-model",
+            probe_spec="probes.custom.NotTranslationIntent",
+        )
+
         assert result is None
 
     def test_empty_probe_spec_still_resolves(self):

@@ -330,12 +330,12 @@ def _build_llm_langproviders(url: str, name: str, api_key: str = "__FROM_ENV__")
     ]
 
 
-_TRANSLATION_PROBE = "TranslationIntent"
+_TRANSLATION_PROBE = "probes.multilingual.TranslationIntent"
 
 
 def _probe_spec_includes_translation(probe_spec: str) -> bool:
-    """Return True if *probe_spec* contains the TranslationIntent probe."""
-    return _TRANSLATION_PROBE in probe_spec
+    """Return True if *probe_spec* contains the canonical TranslationIntent selector."""
+    return _TRANSLATION_PROBE in {selector.strip() for selector in probe_spec.split(",")}
 
 
 def build_translation_langproviders(

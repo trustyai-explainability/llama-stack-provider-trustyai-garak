@@ -10,15 +10,15 @@ run:
   eval_threshold: 0.5
   generations: 5
   deprefix: true
-  extended_detectors: false
+  spec:
+    include:
+      - probes.encoding.InjectBase64
+      - probes.promptinject.HijackHateHumans
+    exclude: []
 
 plugins:
-  model_type: openai.OpenAICompatible
-  model_name: target-llm
-
-  probe_spec:
-    - encoding.InjectBase64
-    - promptinject.HijackHateHumans
+  target_type: openai.OpenAICompatible
+  target_name: target-llm
 
   extended_detectors: false
 

@@ -85,7 +85,7 @@ def test_resolve_scan_profile_accepts_prefixed_and_unprefixed_ids():
 
     assert prefixed["name"] == "OWASP LLM Top 10"
     assert unprefixed["name"] == "OWASP LLM Top 10"
-    assert unprefixed["garak_config"]["run"]["probe_tags"] == prefixed["garak_config"]["run"]["probe_tags"]
+    assert unprefixed["garak_config"]["run"]["spec"] == prefixed["garak_config"]["run"]["spec"]
 
 
 def test_build_effective_garak_config_honors_precedence():
@@ -104,8 +104,10 @@ def test_build_effective_garak_config_honors_precedence():
     resolved_dict = resolved.to_dict(exclude_none=True)
 
     assert resolved_dict["run"]["generations"] == 5
-    assert resolved_dict["run"]["probe_tags"] == "owasp:llm"
-    assert resolved_dict["plugins"]["probe_spec"] == "promptinject"
+    assert resolved_dict["run"]["spec"] == {"include": [{"tag": "owasp:llm"}], "exclude": []}
+    assert "probe_tags" not in resolved_dict["run"]
+    assert "probe_spec" not in resolved_dict["plugins"]
+    assert "buff_spec" not in resolved_dict["plugins"]
     assert resolved_dict["plugins"]["extended_detectors"] is False
 
 

@@ -42,8 +42,7 @@ sdg = [
     "sdg-hub>=0.8.8",
 ]
 inline = [
-    "llama-stack-provider-trustyai-garak[sdg]",
-    "garak==0.15.0+rhaiv.5",
+    "garak==0.17.0+rhaiv.3",
 ]
 test = ["pytest", "pytest-cov", "pytest-asyncio"]
 dev = ["llama-stack-provider-trustyai-garak[test]", "ruff", "pre-commit"]

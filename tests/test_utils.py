@@ -3,6 +3,8 @@
 import pytest
 import os
 import json
+import sys
+import types
 from pathlib import Path
 from unittest.mock import patch
 
@@ -841,6 +843,57 @@ class TestResultUtils:
 
         assert result[0]["probe_name"] == "Baseline"
         assert result[1]["probe_name"] == "SPO + user + system augmentation"
+
+    def test_standard_v017_report_parsing_and_html(self, monkeypatch):
+        fixture_dir = Path(__file__).parent / "_resources"
+        report_content = (fixture_dir / "garak_v017_standard_run.jsonl").read_text()
+        avid_content = (fixture_dir / "garak_v017_standard_run.avid.jsonl").read_text()
+
+        from llama_stack_provider_trustyai_garak.result_utils import (
+            combine_parsed_results,
+            generate_art_report,
+            parse_aggregated_from_avid_content,
+            parse_digest_from_report_content,
+            parse_generations_from_report_content,
+        )
+
+        generations, score_rows, raw_entries = parse_generations_from_report_content(report_content, 0.5)
+        aggregated = parse_aggregated_from_avid_content(avid_content)
+        digest = parse_digest_from_report_content(report_content)
+
+        assert [item["probe"] for item in generations] == ["encoding.InjectBase64", "encoding.InjectBase64"]
+        assert aggregated["encoding.InjectBase64"]["total_attempts"] == 2
+        assert aggregated["encoding.InjectBase64"]["vulnerable_responses"] == 1
+        assert aggregated["encoding.InjectBase64"]["attack_success_rate"] == 50.0
+        assert digest["eval"]["encoding"]["encoding.InjectBase64"]["garak.detectors.always.Pass"]["absolute_score"] == 0.5
+
+        tbsa_module = types.ModuleType("garak.analyze.tbsa")
+        tbsa_module.digest_to_tbsa = lambda _digest: (4.5, "probe-hash", 1)
+        analyze_module = types.ModuleType("garak.analyze")
+        analyze_module.tbsa = tbsa_module
+        garak_module = types.ModuleType("garak")
+        garak_module.analyze = analyze_module
+        monkeypatch.setitem(sys.modules, "garak", garak_module)
+        monkeypatch.setitem(sys.modules, "garak.analyze", analyze_module)
+        monkeypatch.setitem(sys.modules, "garak.analyze.tbsa", tbsa_module)
+
+        combined = combine_parsed_results(
+            generations,
+            score_rows,
+            aggregated,
+            0.5,
+            digest,
+            raw_entries_by_probe=raw_entries,
+        )
+        overall = combined["scores"]["_overall"]["aggregated_results"]
+        assert overall["total_attempts"] == 2
+        assert overall["vulnerable_responses"] == 1
+        assert overall["attack_success_rate"] == 50.0
+        assert overall["tbsa"] == 4.5
+        assert combined["scores"]["encoding.InjectBase64"]["aggregated_results"]["detector_scores"]
+
+        rendered = generate_art_report(report_content)
+        assert "<!DOCTYPE html>" in rendered
 
     def test_result_parsing_with_art_result(self):
         # Load test data
