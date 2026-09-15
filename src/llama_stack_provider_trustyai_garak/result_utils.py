@@ -91,10 +91,7 @@ def parse_generations_from_report_content(
         if entry.get("entry_type") == "attempt"
         and (
             entry.get("status") == 2
-            or (
-                entry.get("status") == 1
-                and (entry.get("uuid") is None or entry.get("uuid") not in completed_uuids)
-            )
+            or (entry.get("status") == 1 and (entry.get("uuid") is None or entry.get("uuid") not in completed_uuids))
         )
     ]
 
@@ -853,9 +850,7 @@ def tap_heatmap_records(
     result = []
     for row in probe_data:
         accepted = (
-            row.get("outcome") == "complied"
-            if "outcome" in row
-            else _intent_attempt_accepted(row, eval_threshold)
+            row.get("outcome") == "complied" if "outcome" in row else _intent_attempt_accepted(row, eval_threshold)
         )
         result.append(
             {

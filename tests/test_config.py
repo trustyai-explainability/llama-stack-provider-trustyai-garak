@@ -225,9 +225,7 @@ class TestGarakSelectorMigration:
     def test_flat_selectors_override_an_explicit_spec(self):
         resolved = build_effective_garak_config(
             {
-                "garak_config": {
-                    "run": {"spec": {"include": ["probes.user"], "exclude": ["probes.keep-out"]}}
-                },
+                "garak_config": {"run": {"spec": {"include": ["probes.user"], "exclude": ["probes.keep-out"]}}},
                 "probes": "probes.flat",
             },
             {},

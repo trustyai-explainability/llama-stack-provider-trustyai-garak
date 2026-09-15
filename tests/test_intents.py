@@ -340,9 +340,7 @@ class TestGenerateIntentsFromDataset:
         assert typology["S001fraud"]["default_stub"] == "Sell counterfeit goods"
 
     def test_repeated_generation_removes_stale_stub_files(self):
-        generate_intents_from_dataset(
-            pd.DataFrame({"category": ["fraud", "harm"], "prompt": ["first", "second"]})
-        )
+        generate_intents_from_dataset(pd.DataFrame({"category": ["fraud", "harm"], "prompt": ["first", "second"]}))
         generate_intents_from_dataset(pd.DataFrame({"category": ["fraud"], "prompt": ["replacement"]}))
 
         stub_dir = Path(self.temp_dir) / "garak" / "data" / "cas" / "intent_stubs"

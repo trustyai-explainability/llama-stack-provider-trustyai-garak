@@ -1160,12 +1160,12 @@ class GarakAdapter(FrameworkAdapter):
         if not isinstance(explicit_run, dict):
             explicit_run = {}
 
-        explicit_selection = any(
-            benchmark_config.get(key) for key in ("probes", "probe_tags", "buffs")
-        ) or any(
-            explicit_plugins.get(key)
-            for key in ("probe_spec", "buff_spec")
-        ) or explicit_run.get("probe_tags") or "spec" in explicit_run
+        explicit_selection = (
+            any(benchmark_config.get(key) for key in ("probes", "probe_tags", "buffs"))
+            or any(explicit_plugins.get(key) for key in ("probe_spec", "buff_spec"))
+            or explicit_run.get("probe_tags")
+            or "spec" in explicit_run
+        )
 
         if not explicit_selection and not profile:
             logger.warning(
@@ -1266,9 +1266,7 @@ class GarakAdapter(FrameworkAdapter):
             from ..core.pipeline_steps import build_translation_langproviders
 
             spec_include = garak_config.run.spec.include if garak_config.run.spec else []
-            resolved_probe_spec = ",".join(
-                selector for selector in spec_include if isinstance(selector, str)
-            )
+            resolved_probe_spec = ",".join(selector for selector in spec_include if isinstance(selector, str))
 
             langproviders = build_translation_langproviders(
                 benchmark_config,

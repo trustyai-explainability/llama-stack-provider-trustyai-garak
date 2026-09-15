@@ -690,7 +690,9 @@ def parse_and_build_results(
     aggregated_by_probe = result_utils.parse_aggregated_from_avid_content(avid_content or "")
     digest = result_utils.parse_digest_from_report_content(report_content)
     harness_summary = result_utils.parse_harness_summary(report_content) if art_intents else None
-    harness_stub_summaries = (result_utils.parse_harness_stub_summaries(report_content) or None) if art_intents else None
+    harness_stub_summaries = (
+        (result_utils.parse_harness_stub_summaries(report_content) or None) if art_intents else None
+    )
 
     effective_raw = raw_entries_by_probe if raw_entries_by_probe is not None else parsed_raw
 

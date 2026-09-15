@@ -993,7 +993,9 @@ class TestResultUtils:
         assert aggregated["encoding.InjectBase64"]["total_attempts"] == 2
         assert aggregated["encoding.InjectBase64"]["vulnerable_responses"] == 1
         assert aggregated["encoding.InjectBase64"]["attack_success_rate"] == 50.0
-        assert digest["eval"]["encoding"]["encoding.InjectBase64"]["garak.detectors.always.Pass"]["absolute_score"] == 0.5
+        assert (
+            digest["eval"]["encoding"]["encoding.InjectBase64"]["garak.detectors.always.Pass"]["absolute_score"] == 0.5
+        )
 
         tbsa_module = types.ModuleType("garak.analyze.tbsa")
         tbsa_module.digest_to_tbsa = lambda _digest: (4.5, "probe-hash", 1)

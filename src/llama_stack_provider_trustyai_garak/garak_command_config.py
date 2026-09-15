@@ -114,9 +114,7 @@ class GarakRunSpec(BaseModel):
     def validate_selectors(cls, selectors: List[Union[str, Dict[str, Union[str, int]]]]) -> List:
         allowed_mapping_keys = {"tag", "tier", "intent"}
         for selector in selectors:
-            if isinstance(selector, dict) and (
-                len(selector) != 1 or next(iter(selector)) not in allowed_mapping_keys
-            ):
+            if isinstance(selector, dict) and (len(selector) != 1 or next(iter(selector)) not in allowed_mapping_keys):
                 raise ValueError("run.spec selectors must be strings or single-key tag, tier, or intent mappings")
         return selectors
 

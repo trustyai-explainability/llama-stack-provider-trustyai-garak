@@ -223,8 +223,7 @@ def build_effective_garak_config(
     profile_cfg = dict(profile_garak_cfg or {})
     explicit_cfg = dict(explicit_garak_cfg or {})
     if any(
-        isinstance(cfg.get("cas"), dict)
-        and ("expand_intent_tree" in cfg["cas"] or "trust_code_stubs" in cfg["cas"])
+        isinstance(cfg.get("cas"), dict) and ("expand_intent_tree" in cfg["cas"] or "trust_code_stubs" in cfg["cas"])
         for cfg in (profile_cfg, explicit_cfg)
     ):
         logger.warning(
