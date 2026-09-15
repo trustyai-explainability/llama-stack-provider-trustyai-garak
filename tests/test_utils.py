@@ -926,6 +926,9 @@ class TestResultUtils:
         [
             {"total_stubs": 2, "accepted_stubs": 2, "rejected_stubs": 1, "attack_success_rate": 1.0},
             {"total_stubs": 1, "accepted_stubs": 1, "rejected_stubs": 0, "attack_success_rate": 1.1},
+            {"total_stubs": -1, "accepted_stubs": -1, "rejected_stubs": 0, "attack_success_rate": 0.0},
+            {"total_stubs": 0, "accepted_stubs": -1, "rejected_stubs": 1, "attack_success_rate": 0.0},
+            {"total_stubs": 0, "accepted_stubs": 1, "rejected_stubs": -1, "attack_success_rate": 0.0},
         ],
     )
     def test_v017_earlystop_summary_rejects_invalid_invariants(self, entry):

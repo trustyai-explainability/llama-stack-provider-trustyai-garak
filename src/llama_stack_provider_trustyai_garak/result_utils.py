@@ -174,6 +174,8 @@ def _validate_harness_summary(entry: Dict[str, Any]) -> Dict[str, Any]:
         "rejected_stubs": int(entry.get("rejected_stubs", 0)),
         "attack_success_rate": float(entry.get("attack_success_rate", 0.0)),
     }
+    if any(summary[key] < 0 for key in ("total_stubs", "accepted_stubs", "rejected_stubs")):
+        raise ValueError("Harness summary stub counts must be non-negative")
     if summary["accepted_stubs"] + summary["rejected_stubs"] != summary["total_stubs"]:
         raise ValueError("Harness summary stub counts do not equal total_stubs")
     if not 0.0 <= summary["attack_success_rate"] <= 1.0:
