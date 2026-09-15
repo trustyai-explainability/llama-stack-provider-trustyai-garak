@@ -255,6 +255,30 @@ class TestGarakSelectorMigration:
         assert "cas" not in resolved
 
 
+class TestEarlyStopProfile:
+    def test_intents_profile_uses_earlystop_harness(self):
+        profile = resolve_scan_profile("intents")
+        garak_config = profile["garak_config"]
+
+        assert garak_config["run"]["harness"] == "earlystop"
+        assert garak_config["run"]["serve_detectorless_intents"] is True
+        assert garak_config["run"]["spec"] == {
+            "include": [
+                "probes.spo.SPOIntent",
+                "probes.spo.SPOIntentUserAugmented",
+                "probes.spo.SPOIntentSystemAugmented",
+                "probes.spo.SPOIntentBothAugmented",
+                "probes.multilingual.TranslationIntent",
+                "probes.tap.TAPIntent",
+                {"intent": "all"},
+            ],
+            "exclude": [],
+        }
+        assert garak_config["plugins"]["detector_spec"] == "judge.MulticlassJudge"
+        assert garak_config["plugins"]["extended_detectors"] is False
+        assert "cas" not in garak_config
+
+
 class TestDeepMergeDicts:
     """Verify deep_merge_dicts honours leaf-level overrides without clobbering siblings."""
 

@@ -613,9 +613,11 @@ def setup_and_run_garak(
             df = pd.read_csv(prompts_csv_path)
             if not df.empty:
                 desc_col = "description" if "description" in df.columns else None
+                xdg_data_home = scan_dir / "xdg_data"
                 generate_intents_from_dataset(
                     df,
                     category_description_column_name=desc_col,
+                    xdg_data_home=xdg_data_home,
                 )
                 logger.info(
                     "Generated intent stubs for %d prompts across %d categories",
@@ -629,11 +631,13 @@ def setup_and_run_garak(
         scan_dir,
     )
 
+    scan_env = {"XDG_DATA_HOME": str(scan_dir / "xdg_data")} if prompts_csv_path is not None else None
     result = run_garak_scan(
         config_file=config_file,
         timeout_seconds=timeout_seconds,
         report_prefix=report_prefix,
         log_file=log_file,
+        env=scan_env,
     )
 
     if result.success:
@@ -681,10 +685,12 @@ def parse_and_build_results(
     from .. import result_utils
 
     generations, score_rows_by_probe, parsed_raw = result_utils.parse_generations_from_report_content(
-        report_content, eval_threshold
+        report_content, eval_threshold, art_intents=art_intents
     )
     aggregated_by_probe = result_utils.parse_aggregated_from_avid_content(avid_content or "")
     digest = result_utils.parse_digest_from_report_content(report_content)
+    harness_summary = result_utils.parse_harness_summary(report_content) if art_intents else None
+    harness_stub_summaries = (result_utils.parse_harness_stub_summaries(report_content) or None) if art_intents else None
 
     effective_raw = raw_entries_by_probe if raw_entries_by_probe is not None else parsed_raw
 
@@ -696,6 +702,9 @@ def parse_and_build_results(
         digest,
         art_intents=art_intents,
         raw_entries_by_probe=effective_raw,
+        harness_summary=harness_summary,
+        harness_stub_summaries=harness_stub_summaries,
+        allow_legacy_intent_inference=art_intents and "EarlyStopHarness" in report_content,
     )
 
 

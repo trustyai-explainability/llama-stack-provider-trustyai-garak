@@ -697,7 +697,7 @@ def write_kfp_outputs(
         html_content = None
         if art_intents:
             try:
-                html_content = generate_art_report(report_content)
+                html_content = generate_art_report(report_content, eval_threshold=eval_threshold)
                 log.info("Generated ART intents HTML report")
             except Exception as exc:
                 log.warning("Failed to generate ART HTML report: %s", exc)

@@ -844,6 +844,131 @@ class TestResultUtils:
         assert result[0]["probe_name"] == "Baseline"
         assert result[1]["probe_name"] == "SPO + user + system augmentation"
 
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (1.0, [1.0]),
+            ([1.0], [1.0]),
+            ([[1.0]], [1.0]),
+            ([1.0, None], [1.0, None]),
+            ([], []),
+            (None, [None]),
+        ],
+    )
+    def test_detector_score_normalization(self, value, expected):
+        from llama_stack_provider_trustyai_garak.result_utils import _detector_scores
+
+        assert _detector_scores(value) == expected
+
+    def test_v017_earlystop_summary_is_authoritative(self):
+        from llama_stack_provider_trustyai_garak.result_utils import (
+            combine_parsed_results,
+            derive_template_vars,
+            parse_digest_from_report_content,
+            parse_generations_from_report_content,
+            parse_harness_stub_summaries,
+            parse_harness_summary,
+            parse_jsonl,
+        )
+
+        report_content = (Path(__file__).parent / "_resources" / "garak_v017_earlystop_run.jsonl").read_text()
+        generations, score_rows, raw_entries = parse_generations_from_report_content(
+            report_content,
+            0.5,
+            art_intents=True,
+        )
+        summary = parse_harness_summary(report_content)
+        stub_summaries = parse_harness_stub_summaries(report_content)
+        digest = parse_digest_from_report_content(report_content)
+        combined = combine_parsed_results(
+            generations,
+            score_rows,
+            {},
+            0.5,
+            digest,
+            art_intents=True,
+            raw_entries_by_probe=raw_entries,
+            harness_summary=summary,
+            harness_stub_summaries=stub_summaries,
+        )
+
+        assert summary == {
+            "total_stubs": 2,
+            "accepted_stubs": 1,
+            "rejected_stubs": 1,
+            "attack_success_rate": 0.5,
+        }
+        assert [row["outcome"] for row in stub_summaries] == ["complied", "refused"]
+        assert [row["source_stub"] for row in generations] == [
+            "accepted request",
+            "rejected request",
+            "rejected request",
+        ]
+        assert [row["vulnerable"] for row in generations] == [True, False, False]
+
+        overall = combined["scores"]["_overall"]["aggregated_results"]
+        assert overall["total_attempts"] == 3
+        assert overall["total_stubs"] == 2
+        assert overall["unsafe_stubs"] == 1
+        assert overall["safe_stubs"] == 1
+        assert overall["attack_success_rate"] == 50.0
+        assert "tbsa" not in overall
+        assert "garak.harnesses.earlystop.EarlyStopHarness" not in combined["scores"]
+        assert "harness_summary" not in combined["scores"]
+
+        template_vars = derive_template_vars(parse_jsonl(report_content))
+        assert [row["probe_name"] for row in template_vars["probe_details"]] == ["Baseline", "TAP"]
+        assert template_vars["high_level_stats"][1]["value"] == 1
+        assert template_vars["high_level_stats"][2]["value"] == 1
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            {"total_stubs": 2, "accepted_stubs": 2, "rejected_stubs": 1, "attack_success_rate": 1.0},
+            {"total_stubs": 1, "accepted_stubs": 1, "rejected_stubs": 0, "attack_success_rate": 1.1},
+        ],
+    )
+    def test_v017_earlystop_summary_rejects_invalid_invariants(self, entry):
+        from llama_stack_provider_trustyai_garak.result_utils import parse_harness_summary
+
+        content = json.dumps({"entry_type": "harness_summary", **entry})
+        with pytest.raises(ValueError):
+            parse_harness_summary(content)
+
+    def test_v017_earlystop_direct_summary_wins_over_digest(self):
+        from llama_stack_provider_trustyai_garak.result_utils import (
+            combine_parsed_results,
+            parse_digest_from_report_content,
+            parse_generations_from_report_content,
+            parse_harness_stub_summaries,
+            parse_harness_summary,
+        )
+
+        report_content = (Path(__file__).parent / "_resources" / "garak_v017_earlystop_run.jsonl").read_text()
+        generations, score_rows, raw_entries = parse_generations_from_report_content(
+            report_content, 0.5, art_intents=True
+        )
+        digest = parse_digest_from_report_content(report_content)
+        digest["harness_summary"] = {
+            "total_stubs": 2,
+            "accepted_stubs": 0,
+            "rejected_stubs": 2,
+            "attack_success_rate": 0.0,
+        }
+        result = combine_parsed_results(
+            generations,
+            score_rows,
+            {},
+            0.5,
+            digest,
+            art_intents=True,
+            raw_entries_by_probe=raw_entries,
+            harness_summary=parse_harness_summary(report_content),
+            harness_stub_summaries=parse_harness_stub_summaries(report_content),
+        )
+
+        assert result["scores"]["_overall"]["aggregated_results"]["attack_success_rate"] == 50.0
+
     def test_standard_v017_report_parsing_and_html(self, monkeypatch):
         fixture_dir = Path(__file__).parent / "_resources"
         report_content = (fixture_dir / "garak_v017_standard_run.jsonl").read_text()
@@ -1048,6 +1173,7 @@ class TestIntentsAggregation:
             digest,
             art_intents=True,
             raw_entries_by_probe=raw_entries_by_probe,
+            allow_legacy_intent_inference=True,
         )
         result_native = combine_parsed_results(
             generations,

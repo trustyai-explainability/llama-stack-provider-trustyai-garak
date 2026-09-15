@@ -58,6 +58,8 @@ from ..result_utils import (
     parse_aggregated_from_avid_content,
     parse_digest_from_report_content,
     parse_generations_from_report_content,
+    parse_harness_stub_summaries,
+    parse_harness_summary,
 )
 from ..utils import get_scan_base_dir, as_bool, safe_int
 from ..constants import (
@@ -204,7 +206,7 @@ class GarakAdapter(FrameworkAdapter):
                     if report_content.strip():
                         art_html_path = scan_dir / "scan.intents.html"
                         if not art_html_path.exists():
-                            art_html = generate_art_report(report_content)
+                            art_html = generate_art_report(report_content, eval_threshold=eval_threshold)
                             art_html_path.write_text(art_html)
                             logger.info("Generated ART HTML report: %s", art_html_path)
                 except Exception as e:
@@ -1746,10 +1748,13 @@ class GarakAdapter(FrameworkAdapter):
             avid_content = result.avid_jsonl.read_text()
 
         generations, score_rows_by_probe, raw_entries_by_probe = parse_generations_from_report_content(
-            report_content, eval_threshold
+            report_content, eval_threshold, art_intents=art_intents
         )
         aggregated_by_probe = parse_aggregated_from_avid_content(avid_content)
         digest = parse_digest_from_report_content(report_content)
+        harness_summary = parse_harness_summary(report_content) if art_intents else None
+        harness_stub_summaries = (parse_harness_stub_summaries(report_content) or None) if art_intents else None
+        legacy_intent_report = art_intents and "EarlyStopHarness" in report_content
 
         # Combine results
         combined = combine_parsed_results(
@@ -1760,6 +1765,9 @@ class GarakAdapter(FrameworkAdapter):
             digest,
             art_intents=art_intents,
             raw_entries_by_probe=raw_entries_by_probe,
+            harness_summary=harness_summary,
+            harness_stub_summaries=harness_stub_summaries,
+            allow_legacy_intent_inference=legacy_intent_report,
         )
         overall_summary = combined.get("scores", {}).get("_overall", {}).get("aggregated_results", {})
 

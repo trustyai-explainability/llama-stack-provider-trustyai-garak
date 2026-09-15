@@ -289,7 +289,7 @@ def test_parse_results_uses_overall_without_double_count(monkeypatch, tmp_path):
     monkeypatch.setattr(
         module,
         "parse_generations_from_report_content",
-        lambda _content, _threshold: ([], {"probe.alpha": [{}]}, {"probe.alpha": [{}]}),
+        lambda _content, _threshold, **_kwargs: ([], {"probe.alpha": [{}]}, {"probe.alpha": [{}]}),
     )
     monkeypatch.setattr(
         module,
@@ -3588,7 +3588,7 @@ class TestParseResultsIntentsMode:
         monkeypatch.setattr(
             module,
             "parse_generations_from_report_content",
-            lambda _content, _threshold: (
+            lambda _content, _threshold, **_kwargs: (
                 [],
                 {"spo.SPOIntent": [{}]},
                 {"spo.SPOIntent": [{"detector_results": {}, "notes": {}}]},
@@ -4530,7 +4530,7 @@ class TestWriteKfpOutputsComponent:
 
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.result_utils.parse_generations_from_report_content",
-            lambda content, threshold: ([], {}, {}),
+            lambda content, threshold, **kwargs: ([], {}, {}),
         )
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.result_utils.parse_aggregated_from_avid_content",
@@ -4599,7 +4599,7 @@ class TestWriteKfpOutputsComponent:
         )
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.result_utils.parse_generations_from_report_content",
-            lambda content, threshold: ([], {}, {}),
+            lambda content, threshold, **kwargs: ([], {}, {}),
         )
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.result_utils.parse_aggregated_from_avid_content",
@@ -4655,7 +4655,7 @@ class TestWriteKfpOutputsComponent:
         )
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.result_utils.parse_generations_from_report_content",
-            lambda content, threshold: ([], {}, {}),
+            lambda content, threshold, **kwargs: ([], {}, {}),
         )
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.result_utils.parse_aggregated_from_avid_content",
@@ -4717,7 +4717,7 @@ class TestWriteKfpOutputsComponent:
         )
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.result_utils.parse_generations_from_report_content",
-            lambda content, threshold: (_ for _ in ()).throw(RuntimeError("parse boom")),
+            lambda content, threshold, **kwargs: (_ for _ in ()).throw(RuntimeError("parse boom")),
         )
 
         metrics = _FakeMetrics()
