@@ -2773,6 +2773,11 @@ class TestTranslationLangproviders:
         config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
 
         assert "langproviders" not in config_dict.get("run", {})
+        assert config_dict["run"]["spec"]["include"] == [
+            "probes.spo.SPOIntent",
+            "probes.tap.TAPIntent",
+            {"intent": "all"},
+        ]
 
     def test_list_probe_spec_with_translation_injects_langproviders(self, monkeypatch, tmp_path):
         """When probe_spec is a list containing TranslationIntent, langproviders are injected."""
@@ -4454,7 +4459,7 @@ class TestArtifactMetadataSurfacing:
 class TestWriteKfpOutputsComponent:
     """Targeted tests for the write_kfp_outputs KFP component."""
 
-    def test_missing_s3_bucket_skips_gracefully(self, monkeypatch, tmp_path):
+    def test_missing_s3_bucket_fails_component(self, monkeypatch, tmp_path):
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import write_kfp_outputs
 
         monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
@@ -4463,17 +4468,16 @@ class TestWriteKfpOutputsComponent:
         html = _FakeArtifact(str(tmp_path / "report.html"))
 
         fn = _get_component_fn(write_kfp_outputs)
-        fn(
-            s3_prefix="test/prefix",
-            eval_threshold=0.5,
-            art_intents=False,
-            summary_metrics=metrics,
-            html_report=html,
-        )
+        with pytest.raises(RuntimeError, match="AWS_S3_BUCKET"):
+            fn(
+                s3_prefix="test/prefix",
+                eval_threshold=0.5,
+                art_intents=False,
+                summary_metrics=metrics,
+                html_report=html,
+            )
 
-        assert metrics.logged == {}
-
-    def test_empty_report_skips_gracefully(self, monkeypatch, tmp_path):
+    def test_empty_report_fails_component(self, monkeypatch, tmp_path):
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import write_kfp_outputs
 
         monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
@@ -4493,15 +4497,14 @@ class TestWriteKfpOutputsComponent:
         html = _FakeArtifact(str(tmp_path / "report.html"))
 
         fn = _get_component_fn(write_kfp_outputs)
-        fn(
-            s3_prefix="test/prefix",
-            eval_threshold=0.5,
-            art_intents=False,
-            summary_metrics=metrics,
-            html_report=html,
-        )
-
-        assert metrics.logged == {}
+        with pytest.raises(RuntimeError, match="report file is empty or absent"):
+            fn(
+                s3_prefix="test/prefix",
+                eval_threshold=0.5,
+                art_intents=False,
+                summary_metrics=metrics,
+                html_report=html,
+            )
 
     def test_native_probes_logs_metrics_and_html(self, monkeypatch, tmp_path):
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import write_kfp_outputs
@@ -4698,7 +4701,7 @@ class TestWriteKfpOutputsComponent:
         assert "total_attempts" not in metrics.logged
         assert "ART" in Path(html.path).read_text()
 
-    def test_parse_failure_writes_fallback_html(self, monkeypatch, tmp_path):
+    def test_parse_failure_writes_fallback_html_and_fails_component(self, monkeypatch, tmp_path):
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import write_kfp_outputs
 
         monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
@@ -4724,13 +4727,14 @@ class TestWriteKfpOutputsComponent:
         html = _FakeArtifact(str(tmp_path / "report.html"))
 
         fn = _get_component_fn(write_kfp_outputs)
-        fn(
-            s3_prefix="test/prefix",
-            eval_threshold=0.5,
-            art_intents=False,
-            summary_metrics=metrics,
-            html_report=html,
-        )
+        with pytest.raises(RuntimeError, match="parse boom"):
+            fn(
+                s3_prefix="test/prefix",
+                eval_threshold=0.5,
+                art_intents=False,
+                summary_metrics=metrics,
+                html_report=html,
+            )
 
         html_content = Path(html.path).read_text()
         assert "Report generation failed" in html_content

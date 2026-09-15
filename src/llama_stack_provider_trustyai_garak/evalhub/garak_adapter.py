@@ -1258,6 +1258,15 @@ class GarakAdapter(FrameworkAdapter):
         }
 
         if art_intents:
+            # A probe-only override replaces the profile include list. Restore the
+            # independent intent axis so generated typologies do not use Garak's
+            # built-in "S" default, which is absent from job-specific typologies.
+            spec = garak_config.run.spec
+            if spec is not None and not any(
+                isinstance(selector, dict) and "intent" in selector for selector in spec.include
+            ):
+                spec.include.append({"intent": "all"})
+
             sdg_params, attacker_info = self._apply_intents_model_config(
                 garak_config, benchmark_config, profile, model_url=config.model.url
             )
