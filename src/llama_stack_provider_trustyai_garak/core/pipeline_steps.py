@@ -310,7 +310,7 @@ _HF_LANGPROVIDERS = [
 ]
 
 
-def _build_llm_langproviders(url: str, name: str, api_key: str = "__FROM_ENV__") -> list[dict[str, str]]:
+def _build_llm_langproviders(url: str, name: str, api_key: str = "__FROM_ENV__") -> list[dict[str, Any]]:
     """Build ``llm`` langprovider entries for zh/en pair."""
     from ..constants import DEFAULT_MODEL_TYPE
 
