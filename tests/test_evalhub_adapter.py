@@ -2643,10 +2643,10 @@ class TestTranslationLangproviders:
 
         langproviders = config_dict["run"]["langproviders"]
         assert len(langproviders) == 2
-        assert langproviders[0]["model_type"] == "llm.LLMTranslator"
-        assert langproviders[0]["uri"] == "http://judge:8000/v1"
-        assert langproviders[0]["model_name"] == "judge-model"
-        assert langproviders[0]["api_key"] == "__FROM_ENV__"
+        assert langproviders[0]["model_type"] == "llm"
+        assert langproviders[0]["translation_model_config"]["uri"] == "http://judge:8000/v1"
+        assert langproviders[0]["translation_model_name"] == "judge-model"
+        assert langproviders[0]["translation_model_config"]["api_key"] == "__FROM_ENV__"
         assert langproviders[1]["language"] == "en,zh"
 
     def test_separate_attacker_used_for_translation(self, monkeypatch, tmp_path):
@@ -2668,9 +2668,9 @@ class TestTranslationLangproviders:
         config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
 
         langproviders = config_dict["run"]["langproviders"]
-        assert langproviders[0]["model_type"] == "llm.LLMTranslator"
-        assert langproviders[0]["uri"] == "http://attacker:9000/v1"
-        assert langproviders[0]["model_name"] == "atk-model"
+        assert langproviders[0]["model_type"] == "llm"
+        assert langproviders[0]["translation_model_config"]["uri"] == "http://attacker:9000/v1"
+        assert langproviders[0]["translation_model_name"] == "atk-model"
 
     def test_dedicated_translation_model(self, monkeypatch, tmp_path):
         """intents_models.translation takes priority over attacker."""
@@ -2696,9 +2696,9 @@ class TestTranslationLangproviders:
         config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
 
         langproviders = config_dict["run"]["langproviders"]
-        assert langproviders[0]["model_type"] == "llm.LLMTranslator"
-        assert langproviders[0]["uri"] == "http://translator:6000/v1"
-        assert langproviders[0]["model_name"] == "translator-llm"
+        assert langproviders[0]["model_type"] == "llm"
+        assert langproviders[0]["translation_model_config"]["uri"] == "http://translator:6000/v1"
+        assert langproviders[0]["translation_model_name"] == "translator-llm"
 
     def test_translation_use_hf_flag(self, monkeypatch, tmp_path):
         """translation_use_hf=True forces HF models even when attacker is available."""
@@ -2806,7 +2806,7 @@ class TestTranslationLangproviders:
 
         langproviders = config_dict["run"]["langproviders"]
         assert len(langproviders) == 2
-        assert langproviders[0]["model_type"] == "llm.LLMTranslator"
+        assert langproviders[0]["model_type"] == "llm"
 
     def test_list_probe_spec_without_translation_skips_langproviders(self, monkeypatch, tmp_path):
         """When probe_spec is a list without TranslationIntent, langproviders are not set."""

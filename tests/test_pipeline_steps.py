@@ -431,17 +431,21 @@ class TestResolveConfigApiKeys:
                 "langproviders": [
                     {
                         "language": "zh,en",
-                        "model_type": "llm.LLMTranslator",
-                        "uri": "http://translator:8000/v1",
-                        "model_name": "trans-model",
-                        "api_key": "__FROM_ENV__",
+                        "model_type": "llm",
+                        "translation_model_name": "trans-model",
+                        "translation_model_config": {
+                            "uri": "http://translator:8000/v1",
+                            "api_key": "__FROM_ENV__",
+                        },
                     },
                     {
                         "language": "en,zh",
-                        "model_type": "llm.LLMTranslator",
-                        "uri": "http://translator:8000/v1",
-                        "model_name": "trans-model",
-                        "api_key": "__FROM_ENV__",
+                        "model_type": "llm",
+                        "translation_model_name": "trans-model",
+                        "translation_model_config": {
+                            "uri": "http://translator:8000/v1",
+                            "api_key": "__FROM_ENV__",
+                        },
                     },
                 ]
             },
@@ -449,7 +453,7 @@ class TestResolveConfigApiKeys:
         }
         _resolve_config_api_keys(config)
         for lp in config["run"]["langproviders"]:
-            assert lp["api_key"] == "trans-key"
+            assert lp["translation_model_config"]["api_key"] == "trans-key"
 
     def test_langproviders_fallback_to_generic_key(self, monkeypatch):
         from llama_stack_provider_trustyai_garak.core.pipeline_steps import _resolve_config_api_keys
@@ -462,15 +466,19 @@ class TestResolveConfigApiKeys:
                 "langproviders": [
                     {
                         "language": "zh,en",
-                        "model_type": "llm.LLMTranslator",
-                        "api_key": "__FROM_ENV__",
+                        "model_type": "llm",
+                        "translation_model_name": "trans-model",
+                        "translation_model_config": {
+                            "uri": "http://translator:8000/v1",
+                            "api_key": "__FROM_ENV__",
+                        },
                     },
                 ]
             },
             "plugins": {},
         }
         _resolve_config_api_keys(config)
-        assert config["run"]["langproviders"][0]["api_key"] == "generic-key"
+        assert config["run"]["langproviders"][0]["translation_model_config"]["api_key"] == "generic-key"
 
     def test_hf_langproviders_untouched(self, monkeypatch):
         """HF langproviders have no api_key field; resolution should not crash."""
@@ -524,10 +532,10 @@ class TestBuildTranslationLangproviders:
         )
         assert result is not None
         assert len(result) == 2
-        assert result[0]["model_type"] == "llm.LLMTranslator"
-        assert result[0]["uri"] == "http://attacker:9000/v1"
-        assert result[0]["model_name"] == "atk-model"
-        assert result[0]["api_key"] == "__FROM_ENV__"
+        assert result[0]["model_type"] == "llm"
+        assert result[0]["translation_model_config"]["uri"] == "http://attacker:9000/v1"
+        assert result[0]["translation_model_name"] == "atk-model"
+        assert result[0]["translation_model_config"]["api_key"] == "__FROM_ENV__"
         assert result[1]["language"] == "en,zh"
 
     def test_dedicated_translation_model(self):
@@ -545,9 +553,9 @@ class TestBuildTranslationLangproviders:
         )
         assert result is not None
         assert len(result) == 2
-        assert result[0]["model_type"] == "llm.LLMTranslator"
-        assert result[0]["uri"] == "http://trans:7000/v1"
-        assert result[0]["model_name"] == "trans-model"
+        assert result[0]["model_type"] == "llm"
+        assert result[0]["translation_model_config"]["uri"] == "http://trans:7000/v1"
+        assert result[0]["translation_model_name"] == "trans-model"
 
     def test_translation_use_hf_flag(self):
         from llama_stack_provider_trustyai_garak.core.pipeline_steps import build_translation_langproviders
@@ -609,8 +617,8 @@ class TestBuildTranslationLangproviders:
             probe_spec=self._TRANSLATION_PROBE_SPEC,
         )
         assert result is not None
-        assert result[0]["uri"] == "http://trans:7000/v1"
-        assert result[0]["model_name"] == "trans-model"
+        assert result[0]["translation_model_config"]["uri"] == "http://trans:7000/v1"
+        assert result[0]["translation_model_name"] == "trans-model"
 
     def test_translation_url_only_falls_to_attacker(self):
         """translation with url but no name should not be used."""
@@ -627,8 +635,8 @@ class TestBuildTranslationLangproviders:
             probe_spec=self._TRANSLATION_PROBE_SPEC,
         )
         assert result is not None
-        assert result[0]["uri"] == "http://attacker:9000/v1"
-        assert result[0]["model_name"] == "atk-model"
+        assert result[0]["translation_model_config"]["uri"] == "http://attacker:9000/v1"
+        assert result[0]["translation_model_name"] == "atk-model"
 
     def test_returns_none_when_no_translation_probe(self):
         """When probe_spec does not include TranslationIntent, return None."""
@@ -665,7 +673,9 @@ class TestBuildTranslationLangproviders:
             probe_spec="",
         )
         assert result is not None
-        assert result[0]["model_type"] == "llm.LLMTranslator"
+        assert result[0]["model_type"] == "llm"
+        assert result[0]["translation_model_config"]["uri"] == "http://attacker:9000/v1"
+        assert result[0]["translation_model_name"] == "atk-model"
 
 
 class TestValidateScanConfig:
