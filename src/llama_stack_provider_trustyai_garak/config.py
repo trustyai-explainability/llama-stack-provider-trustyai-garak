@@ -70,6 +70,7 @@ class GarakScanConfig(BaseModel):
             "documentation": "https://genai.owasp.org/llm-top-10/",
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
+                    generations=1,
                     spec=GarakRunSpec(include=[{"tag": "owasp:llm"}], exclude=[]),
                 ),
                 reporting=GarakReportingConfig(taxonomy="owasp"),
@@ -82,6 +83,7 @@ class GarakScanConfig(BaseModel):
             "documentation": "https://docs.avidml.org/taxonomy/effect-sep-view/",
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
+                    generations=1,
                     spec=GarakRunSpec(include=[{"tag": "avid-effect"}], exclude=[]),
                 ),
                 reporting=GarakReportingConfig(taxonomy="avid-effect"),
@@ -94,6 +96,7 @@ class GarakScanConfig(BaseModel):
             "documentation": "https://docs.avidml.org/taxonomy/effect-sep-view/security",
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
+                    generations=1,
                     spec=GarakRunSpec(include=[{"tag": "avid-effect:security"}], exclude=[]),
                 ),
                 reporting=GarakReportingConfig(taxonomy="avid-effect"),
@@ -129,6 +132,7 @@ class GarakScanConfig(BaseModel):
             "description": "Common quality issues like Violence, Profanity, Toxicity, Hate Speech, Integrity, etc.",
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
+                    generations=1,
                     spec=GarakRunSpec(include=[{"tag": "quality"}], exclude=[]),
                 ),
                 reporting=GarakReportingConfig(taxonomy="quality"),
@@ -141,6 +145,7 @@ class GarakScanConfig(BaseModel):
             "documentation": "https://cwe.mitre.org/",
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
+                    generations=3,
                     spec=GarakRunSpec(include=[{"tag": "cwe"}], exclude=[]),
                 ),
                 reporting=GarakReportingConfig(taxonomy="cwe"),
@@ -223,10 +228,11 @@ class GarakScanConfig(BaseModel):
             "description": "Quick scan with only 1 prompt for testing",
             "garak_config": GarakCommandConfig(
                 run=GarakRunConfig(
+                    generations=1,
                     spec=GarakRunSpec(include=["probes.dan.Dan_11_0"], exclude=[]),
                 ),
             ).to_dict(),
-            "timeout": 600,
+            "timeout": 300,
         }
     }
 
