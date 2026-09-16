@@ -311,21 +311,32 @@ _HF_LANGPROVIDERS = [
 
 
 def _build_llm_langproviders(url: str, name: str, api_key: str = "__FROM_ENV__") -> list[dict[str, str]]:
-    """Build ``llm.LLMTranslator`` langprovider entries for zh/en pair."""
+    """Build ``llm`` langprovider entries for zh/en pair."""
+    from ..constants import DEFAULT_MODEL_TYPE
     return [
         {
             "language": "zh,en",
-            "model_type": "llm.LLMTranslator",
-            "uri": url,
-            "model_name": name,
-            "api_key": api_key,
+            "model_type": "llm",
+            "translation_model_type": DEFAULT_MODEL_TYPE,
+            "translation_model_name": name,
+            "translation_model_config": {
+                "uri": url,
+                "api_key": api_key,
+                "max_tokens": 4096,
+                "temperature": 0.2
+            }
         },
         {
             "language": "en,zh",
-            "model_type": "llm.LLMTranslator",
-            "uri": url,
-            "model_name": name,
-            "api_key": api_key,
+            "model_type": "llm",
+            "translation_model_type": DEFAULT_MODEL_TYPE,
+            "translation_model_name": name,
+            "translation_model_config": {
+                "uri": url,
+                "api_key": api_key,
+                "max_tokens": 4096,
+                "temperature": 0.2
+            }
         },
     ]
 
