@@ -185,6 +185,25 @@ class TestGenerateSDGDatasetParams:
         generate_sdg_dataset(model="m", api_base="http://x", max_tokens=4096)
         mock_override.assert_any_call(mock_flow, DEFAULT_SDG_MAX_TOKENS_BLOCK_NAME, {"max_tokens": 4096})
 
+    def test_model_config_applied_after_overrides(self, monkeypatch):
+        """Runtime model settings survive LLM block reconstruction."""
+        monkeypatch.delenv("SDG_MAX_CONCURRENCY", raising=False)
+        mock_flow, mock_override = _setup_sdg_mocks(monkeypatch)
+        events = []
+        mock_override.side_effect = lambda *args, **kwargs: events.append("override")
+        mock_flow.set_model_config.side_effect = lambda **kwargs: events.append("configure")
+
+        from llama_stack_provider_trustyai_garak.sdg import generate_sdg_dataset
+
+        generate_sdg_dataset(model="m", api_base="http://x", max_tokens=4096)
+
+        assert events == ["override", "configure"]
+        mock_flow.set_model_config.assert_called_once_with(
+            model="m",
+            api_base="http://x",
+            api_key="dummy",
+        )
+
     def test_zero_values_skip_overrides(self, monkeypatch):
         monkeypatch.delenv("SDG_MAX_CONCURRENCY", raising=False)
         mock_flow, mock_override = _setup_sdg_mocks(monkeypatch)
