@@ -243,6 +243,7 @@ def generate_intents_from_dataset(
     category_description_column_name=None,
     take_per_category: Optional[int] = None,
     sample_per_category: Optional[int] = None,
+    xdg_data_home: Optional[Path | str] = None,
 ):
     """
     Given a dataset of prompts that we want to test the model against (input taxonomy),
@@ -260,15 +261,17 @@ def generate_intents_from_dataset(
        `$XDG_DATA_HOME/garak/data/cas/intent_stubs/S002fraud.json` with the prompts as a JSON list of strings
     """
     _ensure_xdg_vars()
-    xdg_data_home = os.environ.get("XDG_DATA_HOME", XDG_DATA_HOME)
+    resolved_data_home = Path(xdg_data_home or os.environ.get("XDG_DATA_HOME", XDG_DATA_HOME))
 
     # Define paths
-    garak_data_dir = Path(xdg_data_home) / "garak" / "data" / "cas"
+    garak_data_dir = resolved_data_home / "garak" / "data" / "cas"
     typology_file = garak_data_dir / "trait_typology.json"
     intent_stubs_dir = garak_data_dir / "intent_stubs"
 
-    # Create directories if they don't exist
+    # Create directories and remove stubs from a previous run in this data directory.
     intent_stubs_dir.mkdir(parents=True, exist_ok=True)
+    for stale_stub in intent_stubs_dir.glob("*.json"):
+        stale_stub.unlink()
 
     # Group by category and generate typology
     typology_dict = {}

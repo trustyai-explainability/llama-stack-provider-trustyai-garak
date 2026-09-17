@@ -339,6 +339,26 @@ class TestGenerateIntentsFromDataset:
         assert typology["S002selfharm"]["default_stub"] == "How to hurt myself"
         assert typology["S001fraud"]["default_stub"] == "Sell counterfeit goods"
 
+    def test_repeated_generation_removes_stale_stub_files(self):
+        generate_intents_from_dataset(pd.DataFrame({"category": ["fraud", "harm"], "prompt": ["first", "second"]}))
+        generate_intents_from_dataset(pd.DataFrame({"category": ["fraud"], "prompt": ["replacement"]}))
+
+        stub_dir = Path(self.temp_dir) / "garak" / "data" / "cas" / "intent_stubs"
+        assert sorted(path.name for path in stub_dir.glob("*.json")) == ["S001fraud.json"]
+        assert json.loads((stub_dir / "S001fraud.json").read_text()) == ["replacement"]
+
+    def test_explicit_data_home_is_isolated_from_process_environment(self, tmp_path):
+        isolated_home = tmp_path / "job-data"
+        generate_intents_from_dataset(
+            pd.DataFrame({"category": ["fraud"], "prompt": ["isolated"]}),
+            xdg_data_home=isolated_home,
+        )
+
+        isolated_typology = isolated_home / "garak" / "data" / "cas" / "trait_typology.json"
+        default_typology = Path(self.temp_dir) / "garak" / "data" / "cas" / "trait_typology.json"
+        assert isolated_typology.exists()
+        assert not default_typology.exists()
+
     def test_generate_intents_empty_dataset(self):
         """Test behavior with empty dataset"""
         # Create empty dataset

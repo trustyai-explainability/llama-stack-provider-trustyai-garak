@@ -17,7 +17,7 @@ dependencies = [
     "kfp-server-api>=2.14.6",
     "boto3>=1.35.88",
     # eval-hub integration
-    "eval-hub-sdk[adapter]~=0.4.2",
+    "eval-hub-sdk[adapter]~=1.0.4",
     "pandas>=2.3.3",
     "Jinja2>=3.1.6",
 ]
@@ -39,11 +39,11 @@ where = ["src"]
 [project.optional-dependencies]
 sdg = [
     "nest_asyncio>=1.6.0",
-    "sdg-hub>=0.8.8",
+    "sdg-hub~=0.9.4",
 ]
 inline = [
     "llama-stack-provider-trustyai-garak[sdg]",
-    "garak==0.15.0+rhaiv.5",
+    "garak==0.17.0+rhaiv.4",
 ]
 test = ["pytest", "pytest-cov", "pytest-asyncio"]
 dev = ["llama-stack-provider-trustyai-garak[test]", "ruff", "pre-commit"]

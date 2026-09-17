@@ -310,32 +310,34 @@ _HF_LANGPROVIDERS = [
 ]
 
 
-def _build_llm_langproviders(url: str, name: str, api_key: str = "__FROM_ENV__") -> list[dict[str, str]]:
-    """Build ``llm.LLMTranslator`` langprovider entries for zh/en pair."""
+def _build_llm_langproviders(url: str, name: str, api_key: str = "__FROM_ENV__") -> list[dict[str, Any]]:
+    """Build ``llm`` langprovider entries for zh/en pair."""
+    from ..constants import DEFAULT_MODEL_TYPE
+
     return [
         {
             "language": "zh,en",
-            "model_type": "llm.LLMTranslator",
-            "uri": url,
-            "model_name": name,
-            "api_key": api_key,
+            "model_type": "llm",
+            "translation_model_type": DEFAULT_MODEL_TYPE,
+            "translation_model_name": name,
+            "translation_model_config": {"uri": url, "api_key": api_key, "max_tokens": 4096, "temperature": 0.2},
         },
         {
             "language": "en,zh",
-            "model_type": "llm.LLMTranslator",
-            "uri": url,
-            "model_name": name,
-            "api_key": api_key,
+            "model_type": "llm",
+            "translation_model_type": DEFAULT_MODEL_TYPE,
+            "translation_model_name": name,
+            "translation_model_config": {"uri": url, "api_key": api_key, "max_tokens": 4096, "temperature": 0.2},
         },
     ]
 
 
-_TRANSLATION_PROBE = "TranslationIntent"
+_TRANSLATION_PROBE = "probes.multilingual.TranslationIntent"
 
 
 def _probe_spec_includes_translation(probe_spec: str) -> bool:
-    """Return True if *probe_spec* contains the TranslationIntent probe."""
-    return _TRANSLATION_PROBE in probe_spec
+    """Return True if *probe_spec* contains the canonical TranslationIntent selector."""
+    return _TRANSLATION_PROBE in {selector.strip() for selector in probe_spec.split(",")}
 
 
 def build_translation_langproviders(
@@ -613,9 +615,11 @@ def setup_and_run_garak(
             df = pd.read_csv(prompts_csv_path)
             if not df.empty:
                 desc_col = "description" if "description" in df.columns else None
+                xdg_data_home = scan_dir / "xdg_data"
                 generate_intents_from_dataset(
                     df,
                     category_description_column_name=desc_col,
+                    xdg_data_home=xdg_data_home,
                 )
                 logger.info(
                     "Generated intent stubs for %d prompts across %d categories",
@@ -629,11 +633,13 @@ def setup_and_run_garak(
         scan_dir,
     )
 
+    scan_env = {"XDG_DATA_HOME": str(scan_dir / "xdg_data")} if prompts_csv_path is not None else None
     result = run_garak_scan(
         config_file=config_file,
         timeout_seconds=timeout_seconds,
         report_prefix=report_prefix,
         log_file=log_file,
+        env=scan_env,
     )
 
     if result.success:
@@ -681,10 +687,14 @@ def parse_and_build_results(
     from .. import result_utils
 
     generations, score_rows_by_probe, parsed_raw = result_utils.parse_generations_from_report_content(
-        report_content, eval_threshold
+        report_content, eval_threshold, art_intents=art_intents
     )
     aggregated_by_probe = result_utils.parse_aggregated_from_avid_content(avid_content or "")
     digest = result_utils.parse_digest_from_report_content(report_content)
+    harness_summary = result_utils.parse_harness_summary(report_content) if art_intents else None
+    harness_stub_summaries = (
+        (result_utils.parse_harness_stub_summaries(report_content) or None) if art_intents else None
+    )
 
     effective_raw = raw_entries_by_probe if raw_entries_by_probe is not None else parsed_raw
 
@@ -696,6 +706,9 @@ def parse_and_build_results(
         digest,
         art_intents=art_intents,
         raw_entries_by_probe=effective_raw,
+        harness_summary=harness_summary,
+        harness_stub_summaries=harness_stub_summaries,
+        allow_legacy_intent_inference=art_intents and "EarlyStopHarness" in report_content,
     )
 
 

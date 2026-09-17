@@ -639,10 +639,10 @@ def write_kfp_outputs(
     summary_metrics: dsl.Output[dsl.Metrics],
     html_report: dsl.Output[dsl.HTML],
 ):
-    """Parse scan results from S3, log KFP metrics, and write HTML report.
+    """Parse scan results from S3, log KFP metrics, and write an HTML report.
 
-    Best-effort component for the KFP dashboard UI — the adapter pod
-    performs the authoritative parse.
+    This component validates the report before KFP marks the pipeline as successful.
+    The adapter pod performs the same parse after it downloads the artifacts.
     """
     import logging
     import os
@@ -663,8 +663,7 @@ def write_kfp_outputs(
 
         s3_bucket = os.environ.get("AWS_S3_BUCKET", "")
         if not s3_bucket:
-            log.warning("AWS_S3_BUCKET not set; skipping KFP output generation")
-            return
+            raise RuntimeError("AWS_S3_BUCKET is not set for KFP output generation")
 
         s3 = create_s3_client()
 
@@ -677,8 +676,7 @@ def write_kfp_outputs(
 
         report_content = _download_text(f"{s3_prefix}/scan.report.jsonl")
         if not report_content.strip():
-            log.warning("Report file empty or not found")
-            return
+            raise RuntimeError("The Garak report file is empty or absent")
 
         avid_content = _download_text(f"{s3_prefix}/scan.avid.jsonl")
 
@@ -697,7 +695,7 @@ def write_kfp_outputs(
         html_content = None
         if art_intents:
             try:
-                html_content = generate_art_report(report_content)
+                html_content = generate_art_report(report_content, eval_threshold=eval_threshold)
                 log.info("Generated ART intents HTML report")
             except Exception as exc:
                 log.warning("Failed to generate ART HTML report: %s", exc)
@@ -723,9 +721,10 @@ def write_kfp_outputs(
                 f.write("<html><body><p>No HTML report available.</p></body></html>")
 
     except Exception as exc:
-        log.warning("KFP output generation failed (non-fatal): %s", exc)
+        log.error("KFP output generation failed: %s", exc)
         with open(html_report.path, "w") as f:
             f.write(f"<html><body><p>Report generation failed: {exc}</p></body></html>")
+        raise
 
 
 # ---------------------------------------------------------------------------

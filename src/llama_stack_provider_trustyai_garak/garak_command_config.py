@@ -6,7 +6,7 @@ References:
 - garak.core.yaml in garak repository
 """
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional, Dict, Any, List, Union
 
 
@@ -19,7 +19,7 @@ class GarakSystemConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     parallel_attempts: Union[bool, int] = Field(
-        default=16,
+        default=False,
         description="For parallelisable generators, how many attempts should be run in parallel? Raising this is a great way of speeding up garak runs for API-based models",
     )
     max_workers: int = Field(
@@ -58,10 +58,18 @@ class GarakRunConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    generations: int = Field(default=1, gt=0, description="How many times to send each prompt for inference")
-    probe_tags: Optional[str] = Field(
+    generations: int = Field(default=5, gt=0, description="How many times to send each prompt for inference")
+    spec: Optional["GarakRunSpec"] = Field(
         default=None,
-        description="If given, the probe selection is filtered according to these tags; probes that don't match the tags are not selected (e.g., 'owasp:llm')",
+        description="Unified probe, buff, tag, tier, and intent selection specification",
+    )
+    harness: Optional[str] = Field(
+        default=None,
+        description="Optional Garak harness name. Standard profiles use normal dispatch.",
+    )
+    serve_detectorless_intents: bool = Field(
+        default=False,
+        description="Whether to serve intents that have no detector",
     )
     eval_threshold: float = Field(
         default=0.5,
@@ -93,6 +101,24 @@ class GarakRunConfig(BaseModel):
     )
 
 
+class GarakRunSpec(BaseModel):
+    """Unified Garak plugin selection specification."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    include: List[Union[str, Dict[str, Union[str, int]]]] = Field(default_factory=list)
+    exclude: List[Union[str, Dict[str, Union[str, int]]]] = Field(default_factory=list)
+
+    @field_validator("include", "exclude")
+    @classmethod
+    def validate_selectors(cls, selectors: List[Union[str, Dict[str, Union[str, int]]]]) -> List:
+        allowed_mapping_keys = {"tag", "tier", "intent"}
+        for selector in selectors:
+            if isinstance(selector, dict) and (len(selector) != 1 or next(iter(selector)) not in allowed_mapping_keys):
+                raise ValueError("run.spec selectors must be strings or single-key tag, tier, or intent mappings")
+        return selectors
+
+
 class GarakPluginsConfig(BaseModel):
     """
     Garak plugins configuration.
@@ -101,28 +127,21 @@ class GarakPluginsConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    probe_spec: Union[List[str], str] = Field(
-        default="all",
-        description="A list of probe modules or probe classnames (in module.classname) format to be used. If a module is given, only active plugin in that module are chosen. If ['all'] is given, all probes are used. For example: ['dan', 'encoding']",
-    )
     detector_spec: Optional[Union[List[str], str]] = Field(
-        default=None,
-        description="A list of detectors to use, or 'all' for all. Default is to use the probe's suggestion. Specifying detector_spec means the pxd harness will be used.",
+        default="auto",
+        description="A list of detectors to use, or 'auto' to use each probe's suggestion.",
     )
     extended_detectors: bool = Field(
         default=True,
         description="Should just the primary detector be used per probe, or should the extended detectors also be run? The former is fast, the latter thorough.",
     )
-    buff_spec: Optional[Union[List[str], str]] = Field(
-        default=None, description="Comma-separated list of buffs and buff modules to use; same format as probe_spec."
-    )
     buffs_include_original_prompt: bool = Field(
-        default=True,
+        default=False,
         description="When buffing, should the original pre-buff prompt still be included in those posed to the model?",
     )
     buff_max: Optional[int] = Field(default=None, description="Upper bound on how many items a buff should return")
-    target_type: str = Field(
-        default="openai.OpenAICompatible", description="Type of target generator (e.g., 'openai', 'huggingface')"
+    target_type: Optional[str] = Field(
+        default=None, description="Type of target generator (e.g., 'openai', 'huggingface')"
     )
     target_name: Optional[str] = Field(default=None, description="Specific name of target model")
     probes: Optional[Dict[str, Any]] = Field(default=None, description="Root node for probe plugin configs")
@@ -164,29 +183,6 @@ class GarakReportingConfig(BaseModel):
     )
 
 
-class GarakCASConfig(BaseModel):
-    """
-    Context Aware Scanning configuration.
-    """
-
-    model_config = ConfigDict(extra="allow")
-
-    intent_spec: str = Field(
-        default="",
-        description="Comma-separated list of intents to scan. If not provided, disables the context aware scanning. If all intents need to be scanned, use '*'.",
-    )
-    expand_intent_tree: bool = Field(
-        default=True,
-    )
-    trust_code_stubs: bool = Field(
-        default=False,
-    )
-    serve_detectorless_intents: bool = Field(
-        default=False,
-        description="Whether to serve detectorless intents. If True, detectorless intents will be served.",
-    )
-
-
 class GarakCommandConfig(BaseModel):
     """
     Complete Garak command configuration.
@@ -196,21 +192,19 @@ class GarakCommandConfig(BaseModel):
 
     Example:
         >>> config = GarakCommandConfig(
-        ...     plugins=GarakPluginsConfig(
-        ...         probe_spec=["dan", "encoding"]
-        ...     ),
         ...     run=GarakRunConfig(
+        ...         spec=GarakRunSpec(include=["probes.dan", "probes.encoding"], exclude=[]),
         ...         generations=2,
         ...         seed=42,
-        ...         eval_threshold=0.6
+        ...         eval_threshold=0.6,
         ...     ),
         ...     system=GarakSystemConfig(
         ...         parallel_attempts=8,
-        ...         max_workers=10
-        ...     )
+        ...         max_workers=10,
+        ...     ),
         ... )
         >>> config.to_dict()
-        {"plugins": {"probe_spec": ["dan", "encoding"], ...}, ...}
+        {"run": {"spec": {"include": ["probes.dan", "probes.encoding"], "exclude": []}, ...}, ...}
     """
 
     model_config = ConfigDict(extra="allow")
@@ -227,7 +221,6 @@ class GarakCommandConfig(BaseModel):
     reporting: GarakReportingConfig = Field(
         default_factory=GarakReportingConfig, description="Reporting configuration (output format, taxonomy, etc.)"
     )
-    cas: GarakCASConfig = Field(default_factory=GarakCASConfig, description="Context Aware Scanning configuration")
 
     def to_dict(self, exclude_none: bool = True) -> Dict[str, Any]:
         """
@@ -258,6 +251,7 @@ class GarakCommandConfig(BaseModel):
 __all__ = [
     "GarakSystemConfig",
     "GarakRunConfig",
+    "GarakRunSpec",
     "GarakPluginsConfig",
     "GarakReportingConfig",
     "GarakCommandConfig",

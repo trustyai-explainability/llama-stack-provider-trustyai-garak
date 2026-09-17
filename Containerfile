@@ -22,6 +22,9 @@ ENV XDG_CACHE_HOME=/tmp/.cache
 ENV XDG_DATA_HOME=/tmp/.local/share
 ENV XDG_CONFIG_HOME=/tmp/.config
 
+# Allow nltk to use proxies to download words corpora for translation
+ENV NLTK_ALLOW_PROXIED_URLOPEN=1
+
 # Copy real source and reinstall only our package (deps already cached above)
 # Must happen as root so we can remove the egg-info created by the stub install
 COPY src src

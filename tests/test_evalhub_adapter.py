@@ -85,7 +85,7 @@ def test_resolve_scan_profile_accepts_prefixed_and_unprefixed_ids():
 
     assert prefixed["name"] == "OWASP LLM Top 10"
     assert unprefixed["name"] == "OWASP LLM Top 10"
-    assert unprefixed["garak_config"]["run"]["probe_tags"] == prefixed["garak_config"]["run"]["probe_tags"]
+    assert unprefixed["garak_config"]["run"]["spec"] == prefixed["garak_config"]["run"]["spec"]
 
 
 def test_build_effective_garak_config_honors_precedence():
@@ -104,8 +104,10 @@ def test_build_effective_garak_config_honors_precedence():
     resolved_dict = resolved.to_dict(exclude_none=True)
 
     assert resolved_dict["run"]["generations"] == 5
-    assert resolved_dict["run"]["probe_tags"] == "owasp:llm"
-    assert resolved_dict["plugins"]["probe_spec"] == "promptinject"
+    assert resolved_dict["run"]["spec"] == {"include": [{"tag": "owasp:llm"}], "exclude": []}
+    assert "probe_tags" not in resolved_dict["run"]
+    assert "probe_spec" not in resolved_dict["plugins"]
+    assert "buff_spec" not in resolved_dict["plugins"]
     assert resolved_dict["plugins"]["extended_detectors"] is False
 
 
@@ -287,7 +289,7 @@ def test_parse_results_uses_overall_without_double_count(monkeypatch, tmp_path):
     monkeypatch.setattr(
         module,
         "parse_generations_from_report_content",
-        lambda _content, _threshold: ([], {"probe.alpha": [{}]}, {"probe.alpha": [{}]}),
+        lambda _content, _threshold, **_kwargs: ([], {"probe.alpha": [{}]}, {"probe.alpha": [{}]}),
     )
     monkeypatch.setattr(
         module,
@@ -2641,10 +2643,10 @@ class TestTranslationLangproviders:
 
         langproviders = config_dict["run"]["langproviders"]
         assert len(langproviders) == 2
-        assert langproviders[0]["model_type"] == "llm.LLMTranslator"
-        assert langproviders[0]["uri"] == "http://judge:8000/v1"
-        assert langproviders[0]["model_name"] == "judge-model"
-        assert langproviders[0]["api_key"] == "__FROM_ENV__"
+        assert langproviders[0]["model_type"] == "llm"
+        assert langproviders[0]["translation_model_config"]["uri"] == "http://judge:8000/v1"
+        assert langproviders[0]["translation_model_name"] == "judge-model"
+        assert langproviders[0]["translation_model_config"]["api_key"] == "__FROM_ENV__"
         assert langproviders[1]["language"] == "en,zh"
 
     def test_separate_attacker_used_for_translation(self, monkeypatch, tmp_path):
@@ -2666,9 +2668,9 @@ class TestTranslationLangproviders:
         config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
 
         langproviders = config_dict["run"]["langproviders"]
-        assert langproviders[0]["model_type"] == "llm.LLMTranslator"
-        assert langproviders[0]["uri"] == "http://attacker:9000/v1"
-        assert langproviders[0]["model_name"] == "atk-model"
+        assert langproviders[0]["model_type"] == "llm"
+        assert langproviders[0]["translation_model_config"]["uri"] == "http://attacker:9000/v1"
+        assert langproviders[0]["translation_model_name"] == "atk-model"
 
     def test_dedicated_translation_model(self, monkeypatch, tmp_path):
         """intents_models.translation takes priority over attacker."""
@@ -2694,9 +2696,9 @@ class TestTranslationLangproviders:
         config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
 
         langproviders = config_dict["run"]["langproviders"]
-        assert langproviders[0]["model_type"] == "llm.LLMTranslator"
-        assert langproviders[0]["uri"] == "http://translator:6000/v1"
-        assert langproviders[0]["model_name"] == "translator-llm"
+        assert langproviders[0]["model_type"] == "llm"
+        assert langproviders[0]["translation_model_config"]["uri"] == "http://translator:6000/v1"
+        assert langproviders[0]["translation_model_name"] == "translator-llm"
 
     def test_translation_use_hf_flag(self, monkeypatch, tmp_path):
         """translation_use_hf=True forces HF models even when attacker is available."""
@@ -2771,6 +2773,11 @@ class TestTranslationLangproviders:
         config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
 
         assert "langproviders" not in config_dict.get("run", {})
+        assert config_dict["run"]["spec"]["include"] == [
+            "probes.spo.SPOIntent",
+            "probes.tap.TAPIntent",
+            {"intent": "all"},
+        ]
 
     def test_list_probe_spec_with_translation_injects_langproviders(self, monkeypatch, tmp_path):
         """When probe_spec is a list containing TranslationIntent, langproviders are injected."""
@@ -2799,7 +2806,7 @@ class TestTranslationLangproviders:
 
         langproviders = config_dict["run"]["langproviders"]
         assert len(langproviders) == 2
-        assert langproviders[0]["model_type"] == "llm.LLMTranslator"
+        assert langproviders[0]["model_type"] == "llm"
 
     def test_list_probe_spec_without_translation_skips_langproviders(self, monkeypatch, tmp_path):
         """When probe_spec is a list without TranslationIntent, langproviders are not set."""
@@ -3586,7 +3593,7 @@ class TestParseResultsIntentsMode:
         monkeypatch.setattr(
             module,
             "parse_generations_from_report_content",
-            lambda _content, _threshold: (
+            lambda _content, _threshold, **_kwargs: (
                 [],
                 {"spo.SPOIntent": [{}]},
                 {"spo.SPOIntent": [{"detector_results": {}, "notes": {}}]},
@@ -4452,7 +4459,7 @@ class TestArtifactMetadataSurfacing:
 class TestWriteKfpOutputsComponent:
     """Targeted tests for the write_kfp_outputs KFP component."""
 
-    def test_missing_s3_bucket_skips_gracefully(self, monkeypatch, tmp_path):
+    def test_missing_s3_bucket_fails_component(self, monkeypatch, tmp_path):
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import write_kfp_outputs
 
         monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
@@ -4461,17 +4468,16 @@ class TestWriteKfpOutputsComponent:
         html = _FakeArtifact(str(tmp_path / "report.html"))
 
         fn = _get_component_fn(write_kfp_outputs)
-        fn(
-            s3_prefix="test/prefix",
-            eval_threshold=0.5,
-            art_intents=False,
-            summary_metrics=metrics,
-            html_report=html,
-        )
+        with pytest.raises(RuntimeError, match="AWS_S3_BUCKET"):
+            fn(
+                s3_prefix="test/prefix",
+                eval_threshold=0.5,
+                art_intents=False,
+                summary_metrics=metrics,
+                html_report=html,
+            )
 
-        assert metrics.logged == {}
-
-    def test_empty_report_skips_gracefully(self, monkeypatch, tmp_path):
+    def test_empty_report_fails_component(self, monkeypatch, tmp_path):
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import write_kfp_outputs
 
         monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
@@ -4491,15 +4497,14 @@ class TestWriteKfpOutputsComponent:
         html = _FakeArtifact(str(tmp_path / "report.html"))
 
         fn = _get_component_fn(write_kfp_outputs)
-        fn(
-            s3_prefix="test/prefix",
-            eval_threshold=0.5,
-            art_intents=False,
-            summary_metrics=metrics,
-            html_report=html,
-        )
-
-        assert metrics.logged == {}
+        with pytest.raises(RuntimeError, match="report file is empty or absent"):
+            fn(
+                s3_prefix="test/prefix",
+                eval_threshold=0.5,
+                art_intents=False,
+                summary_metrics=metrics,
+                html_report=html,
+            )
 
     def test_native_probes_logs_metrics_and_html(self, monkeypatch, tmp_path):
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import write_kfp_outputs
@@ -4528,7 +4533,7 @@ class TestWriteKfpOutputsComponent:
 
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.result_utils.parse_generations_from_report_content",
-            lambda content, threshold: ([], {}, {}),
+            lambda content, threshold, **kwargs: ([], {}, {}),
         )
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.result_utils.parse_aggregated_from_avid_content",
@@ -4597,7 +4602,7 @@ class TestWriteKfpOutputsComponent:
         )
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.result_utils.parse_generations_from_report_content",
-            lambda content, threshold: ([], {}, {}),
+            lambda content, threshold, **kwargs: ([], {}, {}),
         )
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.result_utils.parse_aggregated_from_avid_content",
@@ -4653,7 +4658,7 @@ class TestWriteKfpOutputsComponent:
         )
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.result_utils.parse_generations_from_report_content",
-            lambda content, threshold: ([], {}, {}),
+            lambda content, threshold, **kwargs: ([], {}, {}),
         )
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.result_utils.parse_aggregated_from_avid_content",
@@ -4696,7 +4701,7 @@ class TestWriteKfpOutputsComponent:
         assert "total_attempts" not in metrics.logged
         assert "ART" in Path(html.path).read_text()
 
-    def test_parse_failure_writes_fallback_html(self, monkeypatch, tmp_path):
+    def test_parse_failure_writes_fallback_html_and_fails_component(self, monkeypatch, tmp_path):
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import write_kfp_outputs
 
         monkeypatch.setenv("AWS_S3_BUCKET", "test-bucket")
@@ -4715,20 +4720,21 @@ class TestWriteKfpOutputsComponent:
         )
         monkeypatch.setattr(
             "llama_stack_provider_trustyai_garak.result_utils.parse_generations_from_report_content",
-            lambda content, threshold: (_ for _ in ()).throw(RuntimeError("parse boom")),
+            lambda content, threshold, **kwargs: (_ for _ in ()).throw(RuntimeError("parse boom")),
         )
 
         metrics = _FakeMetrics()
         html = _FakeArtifact(str(tmp_path / "report.html"))
 
         fn = _get_component_fn(write_kfp_outputs)
-        fn(
-            s3_prefix="test/prefix",
-            eval_threshold=0.5,
-            art_intents=False,
-            summary_metrics=metrics,
-            html_report=html,
-        )
+        with pytest.raises(RuntimeError, match="parse boom"):
+            fn(
+                s3_prefix="test/prefix",
+                eval_threshold=0.5,
+                art_intents=False,
+                summary_metrics=metrics,
+                html_report=html,
+            )
 
         html_content = Path(html.path).read_text()
         assert "Report generation failed" in html_content

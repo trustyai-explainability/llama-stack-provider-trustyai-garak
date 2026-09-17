@@ -443,12 +443,16 @@ def generate_sdg_dataset(
     FlowRegistry.discover_flows()
     flow_path = FlowRegistry.get_flow_path(flow_id)
     flow = Flow.from_yaml(flow_path)
-    flow.set_model_config(model=model, api_base=api_base, api_key=api_key)
 
+    # Apply block overrides before runtime model configuration. Rebuilding an
+    # LLM block from its serialized config removes excluded runtime fields such
+    # as model, api_base, and api_key.
     if num_samples >= 1:
         _override_flow_block(flow, DEFAULT_SDG_NUM_SAMPLES_BLOCK_NAME, {"num_samples": num_samples})
     if max_tokens >= 1:
         _override_flow_block(flow, DEFAULT_SDG_MAX_TOKENS_BLOCK_NAME, {"max_tokens": max_tokens})
+
+    flow.set_model_config(model=model, api_base=api_base, api_key=api_key)
 
     logger.info("SDG generation: max_concurrency=%d", max_concurrency)
     result = flow.generate(df, max_concurrency=max_concurrency)

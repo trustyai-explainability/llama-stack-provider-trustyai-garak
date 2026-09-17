@@ -7,7 +7,11 @@ from pydantic import ValidationError
 from llama_stack_provider_trustyai_garak.config import (
     GarakScanConfig,
 )
-from llama_stack_provider_trustyai_garak.core.config_resolution import deep_merge_dicts
+from llama_stack_provider_trustyai_garak.core.config_resolution import (
+    build_effective_garak_config,
+    deep_merge_dicts,
+    resolve_scan_profile,
+)
 
 
 class TestGarakScanConfig:
@@ -50,8 +54,9 @@ class TestGarakScanConfig:
         garak_config = owasp_profile["garak_config"]
         assert "run" in garak_config
         assert "reporting" in garak_config
-        assert garak_config["run"]["probe_tags"] == "owasp:llm"  # NEW: probe_tags instead of taxonomy_filters
+        assert garak_config["run"]["spec"] == {"include": [{"tag": "owasp:llm"}], "exclude": []}
         assert garak_config["reporting"]["taxonomy"] == "owasp"
+        assert "cas" not in garak_config
 
     def test_scan_profile_structure(self):
         """Test scan profile structure with new garak_config format"""
@@ -65,10 +70,11 @@ class TestGarakScanConfig:
 
         # Check garak_config structure
         garak_config = quick_profile["garak_config"]
-        assert "plugins" in garak_config
-        assert "probe_spec" in garak_config["plugins"]  # NEW: probe_spec instead of probes
-        assert garak_config["plugins"]["probe_spec"] is not None
-        assert len(garak_config["plugins"]["probe_spec"]) > 0
+        assert "run" in garak_config
+        assert garak_config["run"]["spec"] == {"include": ["probes.dan.Dan_11_0"], "exclude": []}
+        assert "probe_tags" not in garak_config["run"]
+        assert "probe_spec" not in garak_config.get("plugins", {})
+        assert "buff_spec" not in garak_config.get("plugins", {})
 
     def test_scan_dir_path(self):
         """Test scan directory path construction"""
@@ -150,13 +156,125 @@ class TestGarakScanConfig:
         # Ensure expected garak_config sections exist
         assert "run" in garak_config
         assert "reporting" in garak_config
-        assert "probe_tags" in garak_config["run"]
+        assert "spec" in garak_config["run"]
+        assert garak_config["run"]["spec"]["include"] == [{"tag": expected_probe_tag}]
+        assert garak_config["run"]["spec"]["exclude"] == []
+        assert "harness" not in garak_config["run"]
+        assert "probe_tags" not in garak_config["run"]
+        assert "probe_spec" not in garak_config.get("plugins", {})
+        assert "buff_spec" not in garak_config.get("plugins", {})
 
-        # (1) Validate that the expected probe tag matches exactly
-        assert garak_config["run"]["probe_tags"] == expected_probe_tag
-
-        # (2) Validate taxonomy wiring
+        # Validate taxonomy wiring
         assert garak_config["reporting"]["taxonomy"] == expected_taxonomy
+
+
+class TestGarakSelectorMigration:
+    def test_flat_selectors_are_canonical_and_deduplicated(self):
+        resolved = build_effective_garak_config(
+            {
+                "probes": ["dan.Dan_11_0", "probes.dan.Dan_11_0"],
+                "buffs": ["lowercase", "buffs.lowercase"],
+                "probe_tags": ["quality", "quality"],
+            },
+            resolve_scan_profile("quick"),
+        ).to_dict()
+
+        assert resolved["run"]["spec"] == {
+            "include": [
+                "probes.dan.Dan_11_0",
+                "buffs.lowercase",
+                {"tag": "quality"},
+            ],
+            "exclude": [],
+        }
+
+    @pytest.mark.parametrize(
+        "benchmark_config",
+        [
+            {"probes": "auto"},
+            {"garak_config": {"plugins": {"probe_spec": "auto"}}},
+        ],
+    )
+    def test_legacy_auto_probe_selector_uses_default_selection(self, benchmark_config):
+        resolved = build_effective_garak_config(benchmark_config, {}).to_dict()
+
+        assert resolved["run"]["spec"] == {"include": [], "exclude": []}
+
+    def test_explicit_spec_wins_over_legacy_fields_and_preserves_exclusions(self):
+        resolved = build_effective_garak_config(
+            {
+                "garak_config": {
+                    "run": {
+                        "spec": {
+                            "include": ["probes.encoding.InjectBase64"],
+                            "exclude": ["probes.encoding.InjectBase64"],
+                        }
+                    },
+                    "plugins": {"probe_spec": "dan.Dan_11_0"},
+                }
+            },
+            {},
+        ).to_dict()
+
+        assert resolved["run"]["spec"] == {
+            "include": ["probes.encoding.InjectBase64"],
+            "exclude": ["probes.encoding.InjectBase64"],
+        }
+        assert "probe_spec" not in resolved["plugins"]
+
+    def test_flat_selectors_override_an_explicit_spec(self):
+        resolved = build_effective_garak_config(
+            {
+                "garak_config": {"run": {"spec": {"include": ["probes.user"], "exclude": ["probes.keep-out"]}}},
+                "probes": "probes.flat",
+            },
+            {},
+        ).to_dict()
+
+        assert resolved["run"]["spec"] == {"include": ["probes.flat"], "exclude": []}
+
+    def test_legacy_intent_fields_translate_before_validation(self):
+        resolved = build_effective_garak_config(
+            {
+                "garak_config": {
+                    "cas": {
+                        "intent_spec": "S001,S002",
+                        "serve_detectorless_intents": True,
+                        "expand_intent_tree": True,
+                        "trust_code_stubs": False,
+                    }
+                }
+            },
+            {},
+        ).to_dict()
+
+        assert resolved["run"]["spec"]["include"] == [{"intent": "S001"}, {"intent": "S002"}]
+        assert resolved["run"]["serve_detectorless_intents"] is True
+        assert "cas" not in resolved
+
+
+class TestEarlyStopProfile:
+    def test_intents_profile_uses_earlystop_harness(self):
+        profile = resolve_scan_profile("intents")
+        garak_config = profile["garak_config"]
+
+        assert garak_config["run"]["harness"] == "earlystop"
+        assert garak_config["run"]["serve_detectorless_intents"] is True
+        assert garak_config["run"]["spec"] == {
+            "include": [
+                "probes.spo.SPOIntent",
+                "probes.spo.SPOIntentUserAugmented",
+                "probes.spo.SPOIntentSystemAugmented",
+                "probes.spo.SPOIntentBothAugmented",
+                "probes.multilingual.TranslationIntent",
+                "probes.tap.TAPIntent",
+                {"intent": "all"},
+            ],
+            "exclude": [],
+        }
+        assert garak_config["plugins"]["detector_spec"] == "judge.MulticlassJudge"
+        assert garak_config["plugins"]["extended_detectors"] is False
+        assert "cas" not in garak_config
 
 
 class TestDeepMergeDicts:
