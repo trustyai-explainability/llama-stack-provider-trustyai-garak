@@ -19,7 +19,7 @@ class GarakSystemConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     parallel_attempts: Union[bool, int] = Field(
-        default=False,
+        default=8,
         description="For parallelisable generators, how many attempts should be run in parallel? Raising this is a great way of speeding up garak runs for API-based models",
     )
     max_workers: int = Field(
