@@ -215,8 +215,8 @@ class GarakScanConfig(BaseModel):
             ).to_dict(),
             "timeout": 0,
             "art_intents": True,
-            "sdg_model": None,
-            "sdg_api_base": None,
+            "sdg_model": "",
+            "sdg_api_base": "",
             "sdg_flow_id": DEFAULT_SDG_FLOW_ID,
         },
     }
