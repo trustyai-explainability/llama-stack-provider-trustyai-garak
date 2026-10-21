@@ -36,6 +36,7 @@ from ..constants import (
     DEFAULT_SDG_MAX_CONCURRENCY,
     DEFAULT_SDG_NUM_SAMPLES,
     DEFAULT_SDG_MAX_TOKENS,
+    DEFAULT_SDG_TIMEOUT,
 )
 from ..core.pipeline_steps import MODEL_AUTH_MOUNT_PATH
 
@@ -326,6 +327,7 @@ def sdg_generate(
     sdg_max_concurrency: int,
     sdg_num_samples: int,
     sdg_max_tokens: int,
+    sdg_timeout: float,
     taxonomy_dataset: dsl.Input[dsl.Dataset],
     sdg_dataset: dsl.Output[dsl.Dataset],
 ):
@@ -381,6 +383,7 @@ def sdg_generate(
         sdg_max_concurrency=sdg_max_concurrency,
         sdg_num_samples=sdg_num_samples,
         sdg_max_tokens=sdg_max_tokens,
+        sdg_timeout=sdg_timeout,
     )
     raw_df.to_csv(sdg_dataset.path, index=False)
     log.info("Wrote %d raw SDG rows to artifact", len(raw_df))
@@ -751,6 +754,7 @@ def evalhub_garak_pipeline(
     sdg_max_concurrency: int = DEFAULT_SDG_MAX_CONCURRENCY,
     sdg_num_samples: int = DEFAULT_SDG_NUM_SAMPLES,
     sdg_max_tokens: int = DEFAULT_SDG_MAX_TOKENS,
+    sdg_timeout: float = DEFAULT_SDG_TIMEOUT,
     hf_cache_path: str = "",
 ):
     """Six-step pipeline: validate, resolve taxonomy, SDG, prepare prompts, scan, write outputs.
@@ -812,6 +816,7 @@ def evalhub_garak_pipeline(
         sdg_max_concurrency=sdg_max_concurrency,
         sdg_num_samples=sdg_num_samples,
         sdg_max_tokens=sdg_max_tokens,
+        sdg_timeout=sdg_timeout,
         taxonomy_dataset=taxonomy_task.outputs["taxonomy_dataset"],
     )
     sdg_task.set_caching_options(True)

@@ -3894,6 +3894,7 @@ class TestSdgGenerateComponent:
             sdg_max_concurrency=10,
             sdg_num_samples=0,
             sdg_max_tokens=0,
+            sdg_timeout=0,
             taxonomy_dataset=taxonomy,
             sdg_dataset=sdg_out,
         )
@@ -3918,6 +3919,7 @@ class TestSdgGenerateComponent:
             sdg_max_concurrency=10,
             sdg_num_samples=0,
             sdg_max_tokens=0,
+            sdg_timeout=0,
             taxonomy_dataset=taxonomy,
             sdg_dataset=sdg_out,
         )
@@ -3943,6 +3945,7 @@ class TestSdgGenerateComponent:
                 sdg_max_concurrency=10,
                 sdg_num_samples=0,
                 sdg_max_tokens=0,
+                sdg_timeout=0,
                 taxonomy_dataset=taxonomy,
                 sdg_dataset=sdg_out,
             )
@@ -3966,6 +3969,7 @@ class TestSdgGenerateComponent:
                 sdg_max_concurrency=10,
                 sdg_num_samples=0,
                 sdg_max_tokens=0,
+                sdg_timeout=0,
                 taxonomy_dataset=taxonomy,
                 sdg_dataset=sdg_out,
             )
@@ -4005,6 +4009,7 @@ class TestSdgGenerateComponent:
             max_concurrency=10,
             num_samples=0,
             max_tokens=0,
+            timeout=0,
         ):
             return SDGResult(raw=raw_df, normalized=norm_df)
 
@@ -4023,6 +4028,7 @@ class TestSdgGenerateComponent:
             sdg_max_concurrency=10,
             sdg_num_samples=0,
             sdg_max_tokens=0,
+            sdg_timeout=0,
             taxonomy_dataset=taxonomy,
             sdg_dataset=sdg_out,
         )
@@ -4060,6 +4066,7 @@ class TestSdgGenerateComponent:
             sdg_max_concurrency=3,
             sdg_num_samples=25,
             sdg_max_tokens=4096,
+            sdg_timeout=0,
             taxonomy_dataset=taxonomy,
             sdg_dataset=sdg_out,
         )
@@ -4098,6 +4105,7 @@ class TestSdgGenerateComponent:
             sdg_max_concurrency=0,
             sdg_num_samples=0,
             sdg_max_tokens=0,
+            sdg_timeout=0,
             taxonomy_dataset=taxonomy,
             sdg_dataset=sdg_out,
         )

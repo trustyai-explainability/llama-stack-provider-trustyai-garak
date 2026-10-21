@@ -393,6 +393,7 @@ def generate_sdg_dataset(
     max_concurrency: int = 0,
     num_samples: int = 0,
     max_tokens: int = 0,
+    timeout: float = 0,
 ) -> SDGResult:
     """Generate a red-team prompt dataset using sdg_hub.
 
@@ -410,6 +411,9 @@ def generate_sdg_dataset(
             input row).  ``0`` keeps the flow default.
         max_tokens: Override ``LLMChatBlock.max_tokens`` (token limit per
             request).  ``0`` keeps the flow default.
+        timeout: Override ``LLMChatBlock.timeout`` (per-request timeout in
+            seconds passed to litellm).  ``0`` keeps the sdg_hub default
+            (120s).
 
     Returns:
         :class:`SDGResult` with ``raw`` (all columns from SDG including
@@ -452,9 +456,14 @@ def generate_sdg_dataset(
     if max_tokens >= 1:
         _override_flow_block(flow, DEFAULT_SDG_MAX_TOKENS_BLOCK_NAME, {"max_tokens": max_tokens})
 
-    flow.set_model_config(model=model, api_base=api_base, api_key=api_key)
+    model_kwargs: Dict[str, Any] = dict(model=model, api_base=api_base, api_key=api_key)
+    if timeout > 0:
+        model_kwargs["timeout"] = timeout
+    flow.set_model_config(**model_kwargs)
 
-    logger.info("SDG generation: max_concurrency=%d", max_concurrency)
+    logger.info(
+        "SDG generation: max_concurrency=%d, timeout=%ss", max_concurrency, timeout if timeout > 0 else "default (120)"
+    )
     result = flow.generate(df, max_concurrency=max_concurrency)
 
     raw = result.dropna(subset=["prompt"]).copy()
