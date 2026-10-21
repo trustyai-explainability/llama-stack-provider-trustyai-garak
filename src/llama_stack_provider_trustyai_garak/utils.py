@@ -19,6 +19,15 @@ def safe_int(value: Any, fallback: int) -> int:
         return fallback
 
 
+def safe_float(value: Any, fallback: float) -> float:
+    """Try to convert *value* to float; return *fallback* on failure."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        logger.warning("Could not parse %r as float, using default %s", value, fallback)
+        return fallback
+
+
 def as_bool(value: object) -> bool:
     """Coerce a value to bool, treating string ``'false'``/``'0'``/``'no'``/``'off'`` as False."""
     if isinstance(value, str):

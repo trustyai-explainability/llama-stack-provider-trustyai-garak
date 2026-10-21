@@ -61,7 +61,7 @@ from ..result_utils import (
     parse_harness_stub_summaries,
     parse_harness_summary,
 )
-from ..utils import get_scan_base_dir, as_bool, safe_int
+from ..utils import get_scan_base_dir, as_bool, safe_int, safe_float
 from ..constants import (
     DEFAULT_TIMEOUT,
     DEFAULT_MODEL_TYPE,
@@ -72,6 +72,7 @@ from ..constants import (
     DEFAULT_SDG_MAX_CONCURRENCY,
     DEFAULT_SDG_NUM_SAMPLES,
     DEFAULT_SDG_MAX_TOKENS,
+    DEFAULT_SDG_TIMEOUT,
     TARGET_DEFAULT_PARAMETERS,
 )
 
@@ -524,6 +525,7 @@ class GarakAdapter(FrameworkAdapter):
                 sdg_max_concurrency=intents_params.get("sdg_max_concurrency", DEFAULT_SDG_MAX_CONCURRENCY),
                 sdg_num_samples=intents_params.get("sdg_num_samples", DEFAULT_SDG_NUM_SAMPLES),
                 sdg_max_tokens=intents_params.get("sdg_max_tokens", DEFAULT_SDG_MAX_TOKENS),
+                sdg_timeout=intents_params.get("sdg_timeout", DEFAULT_SDG_TIMEOUT),
                 api_key=sdg_secret_key,
             )
             raw_content = raw_df.to_csv(index=False)
@@ -667,6 +669,7 @@ class GarakAdapter(FrameworkAdapter):
             "sdg_max_concurrency": ip.get("sdg_max_concurrency", DEFAULT_SDG_MAX_CONCURRENCY),
             "sdg_num_samples": ip.get("sdg_num_samples", DEFAULT_SDG_NUM_SAMPLES),
             "sdg_max_tokens": ip.get("sdg_max_tokens", DEFAULT_SDG_MAX_TOKENS),
+            "sdg_timeout": ip.get("sdg_timeout", DEFAULT_SDG_TIMEOUT),
             "hf_cache_path": benchmark_config.get("hf_cache_path", ""),
         }
         if model_auth_secret:
@@ -1253,6 +1256,10 @@ class GarakAdapter(FrameworkAdapter):
             "sdg_max_tokens": safe_int(
                 benchmark_config.get("sdg_max_tokens", profile.get("sdg_max_tokens", DEFAULT_SDG_MAX_TOKENS)),
                 DEFAULT_SDG_MAX_TOKENS,
+            ),
+            "sdg_timeout": safe_float(
+                benchmark_config.get("sdg_timeout", profile.get("sdg_timeout", DEFAULT_SDG_TIMEOUT)),
+                DEFAULT_SDG_TIMEOUT,
             ),
             "disable_cache": as_bool(benchmark_config.get("disable_cache", False)),
         }

@@ -20,10 +20,11 @@ XDG_CACHE_HOME = "/tmp/.cache"
 XDG_DATA_HOME = "/tmp/.local/share"
 XDG_CONFIG_HOME = "/tmp/.config"
 
-# SDG variables
+# SDG variables — 0 means "use the sdg_hub flow default" (no override applied)
 DEFAULT_SDG_FLOW_ID = "major-sage-742"
 DEFAULT_SDG_MAX_CONCURRENCY = 10
-DEFAULT_SDG_NUM_SAMPLES = 0
+DEFAULT_SDG_NUM_SAMPLES = 0  # 0 = use sdg_hub flow default (10 per category)
 DEFAULT_SDG_NUM_SAMPLES_BLOCK_NAME = "replicate_rows"
-DEFAULT_SDG_MAX_TOKENS = 0
+DEFAULT_SDG_MAX_TOKENS = 0  # 0 = use sdg_hub flow default (uncapped)
 DEFAULT_SDG_MAX_TOKENS_BLOCK_NAME = "generate_adversarial_prompt"
+DEFAULT_SDG_TIMEOUT = 0  # 0 = use sdg_hub flow default (120s per litellm request)

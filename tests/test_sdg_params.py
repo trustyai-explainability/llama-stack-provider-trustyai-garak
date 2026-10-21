@@ -204,6 +204,37 @@ class TestGenerateSDGDatasetParams:
             api_key="dummy",
         )
 
+    def test_timeout_passed_to_set_model_config(self, monkeypatch):
+        """Custom timeout is forwarded to flow.set_model_config as a kwarg."""
+        monkeypatch.delenv("SDG_MAX_CONCURRENCY", raising=False)
+        mock_flow, mock_override = _setup_sdg_mocks(monkeypatch)
+
+        from llama_stack_provider_trustyai_garak.sdg import generate_sdg_dataset
+
+        generate_sdg_dataset(model="m", api_base="http://x", timeout=300.0)
+
+        mock_flow.set_model_config.assert_called_once_with(
+            model="m",
+            api_base="http://x",
+            api_key="dummy",
+            timeout=300.0,
+        )
+
+    def test_zero_timeout_not_passed(self, monkeypatch):
+        """timeout=0 (default) should not be passed to set_model_config."""
+        monkeypatch.delenv("SDG_MAX_CONCURRENCY", raising=False)
+        mock_flow, mock_override = _setup_sdg_mocks(monkeypatch)
+
+        from llama_stack_provider_trustyai_garak.sdg import generate_sdg_dataset
+
+        generate_sdg_dataset(model="m", api_base="http://x", timeout=0)
+
+        mock_flow.set_model_config.assert_called_once_with(
+            model="m",
+            api_base="http://x",
+            api_key="dummy",
+        )
+
     def test_zero_values_skip_overrides(self, monkeypatch):
         monkeypatch.delenv("SDG_MAX_CONCURRENCY", raising=False)
         mock_flow, mock_override = _setup_sdg_mocks(monkeypatch)
