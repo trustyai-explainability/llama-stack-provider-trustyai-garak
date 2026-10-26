@@ -16,6 +16,7 @@ from .constants import (
     DEFAULT_SDG_NUM_SAMPLES_BLOCK_NAME,
     DEFAULT_SDG_MAX_TOKENS_BLOCK_NAME,
 )
+from .errors import GarakValidationError
 
 import pandas
 
@@ -393,6 +394,7 @@ def generate_sdg_dataset(
     max_concurrency: int = 0,
     num_samples: int = 0,
     max_tokens: int = 0,
+    provider: str = "",
 ) -> SDGResult:
     """Generate a red-team prompt dataset using sdg_hub.
 
@@ -410,6 +412,9 @@ def generate_sdg_dataset(
             input row).  ``0`` keeps the flow default.
         max_tokens: Override ``LLMChatBlock.max_tokens`` (token limit per
             request).  ``0`` keeps the flow default.
+        provider: Explicit LiteLLM provider. When set, the entire model value
+            is a raw model ID, including any namespace matching a provider.
+            When omitted, legacy provider-prefixed model values are accepted.
 
     Returns:
         :class:`SDGResult` with ``raw`` (all columns from SDG including
@@ -458,7 +463,11 @@ def generate_sdg_dataset(
     # OpenAI-compatible API configured by api_base. LiteLLM removes this prefix
     # before sending the model ID to the endpoint.
     model = model.strip()
-    if model.split("/", 1)[0] not in provider_list:
+    if provider:
+        if provider not in provider_list:
+            raise GarakValidationError("sdg_provider must be a recognized LiteLLM provider.")
+        model = f"{provider}/{model}"
+    elif model.split("/", 1)[0] not in provider_list:
         model = f"openai/{model}"
     flow.set_model_config(model=model, api_base=api_base, api_key=api_key)
 

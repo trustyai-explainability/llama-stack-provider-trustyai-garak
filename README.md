@@ -108,6 +108,27 @@ SDG accepts bare model IDs such as `Qwen/Qwen3-VL-30B-A3B-Instruct` and routes
 them through LiteLLM's `openai/` provider at `sdg_api_base`. Explicit LiteLLM
 provider prefixes are preserved.
 
+For a raw model ID whose namespace is also a LiteLLM provider, supply the
+provider separately: `sdg_model: "openai/gpt-oss-120b"` with
+`sdg_provider: "openai"` preserves the complete `openai/gpt-oss-120b` ID in the
+endpoint request. The same setting is available as
+`intents_models.sdg.provider`. When an explicit provider is set, the complete
+model value is treated as a raw ID; otherwise legacy provider-prefixed values
+keep their existing meaning.
+
+SDG destinations must be approved by the worker deployment before credentials
+are resolved. A mounted `sdg_url` or the `SDG_API_BASE` environment variable
+selects the endpoint and takes precedence over job parameters. Without either,
+jobs can use the sidecar at `http://localhost:8080/v1` (also `127.0.0.1` or
+`[::1]`) or an exact base URL from the deployment's comma-separated
+`GARAK_SDG_ALLOWED_API_BASES` environment variable. Other job-supplied URLs are
+rejected. In KFP mode, put `sdg_url` in the mounted model auth secret or configure
+the environment on the SDG component; this policy cannot be set in job parameters.
+
+Progress callbacks run on one daemon worker so a blocked status request cannot
+delay the scan deadline or accumulate callback threads. Completion or timeout
+stops scheduling updates; an in-flight callback may finish independently.
+
 ## Results
 
 The adapter reports `EvaluationResult` per probe with:

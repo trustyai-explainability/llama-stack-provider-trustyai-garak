@@ -172,26 +172,36 @@ class TestGenerateSDGDatasetParams:
     """Verify num_samples / max_tokens are applied to the flow."""
 
     @pytest.mark.parametrize(
-        ("model", "expected"),
+        ("model", "provider", "expected"),
         [
-            ("Qwen/Qwen3-VL-30B-A3B-Instruct", "openai/Qwen/Qwen3-VL-30B-A3B-Instruct"),
-            ("deployment-alias", "openai/deployment-alias"),
-            ("openai/Qwen/Qwen3-VL-30B-A3B-Instruct", "openai/Qwen/Qwen3-VL-30B-A3B-Instruct"),
-            ("hosted_vllm/Qwen/Qwen3-VL-30B-A3B-Instruct", "hosted_vllm/Qwen/Qwen3-VL-30B-A3B-Instruct"),
-            ("anthropic/claude-sonnet-4-5", "anthropic/claude-sonnet-4-5"),
+            ("Qwen/Qwen3-VL-30B-A3B-Instruct", "", "openai/Qwen/Qwen3-VL-30B-A3B-Instruct"),
+            ("deployment-alias", "", "openai/deployment-alias"),
+            ("openai/Qwen/Qwen3-VL-30B-A3B-Instruct", "", "openai/Qwen/Qwen3-VL-30B-A3B-Instruct"),
+            ("hosted_vllm/Qwen/Qwen3-VL-30B-A3B-Instruct", "", "hosted_vllm/Qwen/Qwen3-VL-30B-A3B-Instruct"),
+            ("anthropic/claude-sonnet-4-5", "", "anthropic/claude-sonnet-4-5"),
+            ("openai/gpt-oss-120b", "openai", "openai/openai/gpt-oss-120b"),
+            ("anthropic/custom-model", "openai", "openai/anthropic/custom-model"),
         ],
     )
-    def test_model_routing(self, monkeypatch, model, expected):
+    def test_model_routing(self, monkeypatch, model, provider, expected):
         mock_flow, _ = _setup_sdg_mocks(monkeypatch)
         from llama_stack_provider_trustyai_garak.sdg import generate_sdg_dataset
 
-        generate_sdg_dataset(model=model, api_base="http://model/v1", api_key="test-key")
+        generate_sdg_dataset(model=model, api_base="http://model/v1", api_key="test-key", provider=provider)
 
         mock_flow.set_model_config.assert_called_once_with(
             model=expected, api_base="http://model/v1", api_key="test-key"
         )
 
-    def test_qwen_model_sent_to_endpoint_without_routing_prefix(self, monkeypatch):
+    @pytest.mark.parametrize(
+        ("model", "provider"),
+        [
+            ("Qwen/Qwen3-VL-30B-A3B-Instruct", ""),
+            ("openai/gpt-oss-120b", "openai"),
+            ("anthropic/custom-model", "openai"),
+        ],
+    )
+    def test_model_sent_to_endpoint_without_losing_namespace(self, monkeypatch, model, provider):
         # Optional SDG dependencies are unnecessary for the other unit tests.
         monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "True")
         litellm = pytest.importorskip("litellm")
@@ -203,7 +213,6 @@ class TestGenerateSDGDatasetParams:
         mock_flow, _ = _setup_sdg_mocks(monkeypatch)
         monkeypatch.setitem(sys.modules, "litellm", litellm)
         requests = []
-        model = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 
         def respond(request):
             requests.append((request.url.path, json.loads(request.content)))
@@ -229,7 +238,7 @@ class TestGenerateSDGDatasetParams:
             )
             from llama_stack_provider_trustyai_garak.sdg import generate_sdg_dataset
 
-            generate_sdg_dataset(model=model, api_base="http://model.test/v1", api_key="test-key")
+            generate_sdg_dataset(model=model, api_base="http://model.test/v1", api_key="test-key", provider=provider)
 
         assert len(requests) == 1
         assert requests[0][0] == "/v1/chat/completions"

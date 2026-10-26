@@ -160,6 +160,24 @@ def test_prompt_cap_precedence(parameters, expected):
     assert build_effective_garak_config(parameters, resolve_scan_profile("avid")).run.soft_probe_prompt_cap == expected
 
 
+@pytest.mark.parametrize("run", [None, [], "legacy", 42, False])
+def test_prompt_cap_alias_normalizes_non_mapping_run(run):
+    resolved = build_effective_garak_config(
+        {"num_examples": 1, "garak_config": {"run": run}}, resolve_scan_profile("avid")
+    )
+    assert resolved.run.soft_probe_prompt_cap == 1
+    assert resolved.run.spec.include == [{"tag": "avid-effect"}]
+
+
+@pytest.mark.parametrize(
+    ("sdg", "parameters"),
+    [({"name": "openai/gpt-oss-120b", "provider": "openai"}, {}), ({}, {"sdg_provider": "openai"})],
+)
+def test_extract_sdg_provider(monkeypatch, sdg, parameters):
+    module = _load_evalhub_garak_adapter(monkeypatch)
+    assert module.GarakAdapter._extract_sdg_params(sdg, parameters, {})["sdg_provider"] == "openai"
+
+
 def test_simple_scan_reports_repeated_running_status(monkeypatch, tmp_path):
     module = _load_evalhub_garak_adapter(monkeypatch)
     updates = []
@@ -3934,6 +3952,10 @@ class TestResolveTaxonomyComponent:
 class TestSdgGenerateComponent:
     """Tests for the sdg_generate KFP component."""
 
+    @pytest.fixture(autouse=True)
+    def approved_sdg_endpoint(self, monkeypatch):
+        monkeypatch.setenv("GARAK_SDG_ALLOWED_API_BASES", "http://sdg:8000")
+
     def test_non_intents_writes_empty_marker(self, monkeypatch, tmp_path):
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import sdg_generate
 
@@ -4062,6 +4084,7 @@ class TestSdgGenerateComponent:
             max_concurrency=10,
             num_samples=0,
             max_tokens=0,
+            provider="",
         ):
             return SDGResult(raw=raw_df, normalized=norm_df)
 
@@ -4113,6 +4136,7 @@ class TestSdgGenerateComponent:
             intents_s3_key="",
             sdg_model="test-model",
             sdg_api_base="http://sdg:8000",
+            sdg_provider="openai",
             sdg_flow_id="test-flow",
             sdg_max_concurrency=3,
             sdg_num_samples=25,
@@ -4126,6 +4150,7 @@ class TestSdgGenerateComponent:
         assert kwargs["max_concurrency"] == 3
         assert kwargs["num_samples"] == 25
         assert kwargs["max_tokens"] == 4096
+        assert kwargs["provider"] == "openai"
 
     def test_default_sdg_params_when_zeros(self, monkeypatch, tmp_path):
         """When sdg params are 0 (default), they are passed as 0 and generate_sdg_dataset handles the fallback."""

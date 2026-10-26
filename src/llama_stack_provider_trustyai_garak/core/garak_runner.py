@@ -8,7 +8,6 @@ import os
 import signal
 import subprocess
 import threading
-import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -119,7 +118,8 @@ def run_garak_scan(
         report_prefix: Expected report prefix path (for results)
         env: Environment variables (merged with os.environ)
         log_file: Path to write garak logs
-        on_progress: Periodic liveness callback, including while the child is silent
+        on_progress: Periodic liveness callback on a single daemon worker;
+            it cannot delay the child timeout, and may finish after scan exit
         progress_interval_seconds: Seconds between liveness callbacks
 
     Returns:
@@ -210,30 +210,26 @@ def run_garak_scan(
     stdout_thread.start()
     stderr_thread.start()
 
+    progress_stopped = threading.Event()
+
+    def _report_progress(callback: Callable[[], None]) -> None:
+        # One worker prevents slow callbacks from accumulating, and keeps the
+        # process deadline independent of the callback's network operations.
+        while not progress_stopped.wait(progress_interval_seconds):
+            try:
+                callback()
+            except Exception:
+                logger.warning("Could not report Garak scan progress", exc_info=True)
+
+    if on_progress is not None:
+        threading.Thread(target=_report_progress, args=(on_progress,), name="garak-progress", daemon=True).start()
+
     try:
         if timeout_seconds is None or timeout_seconds <= 0:
             effective_timeout = None
         else:
             effective_timeout = timeout_seconds
-        deadline = time.monotonic() + effective_timeout if effective_timeout is not None else None
-        while True:
-            remaining = max(0, deadline - time.monotonic()) if deadline is not None else None
-            wait_timeout = remaining
-            if on_progress is not None:
-                wait_timeout = (
-                    min(progress_interval_seconds, remaining) if remaining is not None else progress_interval_seconds
-                )
-            try:
-                process.wait(timeout=wait_timeout)
-                break
-            except subprocess.TimeoutExpired:
-                if deadline is not None and time.monotonic() >= deadline:
-                    raise
-                if on_progress is not None:
-                    try:
-                        on_progress()
-                    except Exception:
-                        logger.warning("Could not report Garak scan progress", exc_info=True)
+        process.wait(timeout=effective_timeout)
         returncode = process.returncode
 
         if returncode == 0:
@@ -242,6 +238,7 @@ def run_garak_scan(
             logger.error("Garak scan failed with return code %s", returncode)
 
     except subprocess.TimeoutExpired:
+        progress_stopped.set()
         logger.warning(f"Garak scan timed out after {timeout_seconds} seconds")
         timed_out = True
 
@@ -281,6 +278,9 @@ def run_garak_scan(
 
         returncode = process.returncode if process.returncode is not None else -1
     finally:
+        # Never join a callback that may be blocked indefinitely. An in-flight
+        # callback can finish, but this scan will not schedule another one.
+        progress_stopped.set()
         stdout_thread.join(timeout=5)
         stderr_thread.join(timeout=5)
 

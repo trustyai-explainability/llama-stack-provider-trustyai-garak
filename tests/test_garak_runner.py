@@ -3,6 +3,7 @@
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 import pytest
@@ -77,6 +78,34 @@ def test_status_failure_does_not_interrupt_scan(monkeypatch, tmp_path, caplog):
     )
     assert result.success
     assert "Could not report Garak scan progress" in caplog.text
+
+
+@pytest.mark.parametrize("timeout_seconds", [0, 0.25])
+def test_blocking_callback_cannot_delay_scan_completion_or_timeout(monkeypatch, tmp_path, timeout_seconds):
+    release = threading.Event()
+    finished = threading.Event()
+    calls = []
+
+    def report():
+        calls.append(True)
+        release.wait(5)
+        finished.set()
+
+    started = time.monotonic()
+    try:
+        result = _run_script(
+            monkeypatch,
+            tmp_path,
+            "import time; time.sleep(60)" if timeout_seconds else "import time; time.sleep(0.25)",
+            timeout_seconds=timeout_seconds,
+            on_progress=report,
+        )
+        assert time.monotonic() - started < 3
+        assert result.timed_out == bool(timeout_seconds)
+        assert calls == [True], "Blocked callbacks must not accumulate more workers"
+    finally:
+        release.set()
+        assert finished.wait(1)
 
 
 def test_timeout_kills_worker_after_leader_exits(monkeypatch, tmp_path):

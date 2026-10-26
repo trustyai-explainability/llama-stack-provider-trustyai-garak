@@ -236,7 +236,8 @@ def build_effective_garak_config(
         GarakCommandConfig().to_dict(exclude_none=True),
         _migrate_legacy_garak_config(profile_cfg),
     )
-    merged = deep_merge_dicts(merged, _migrate_legacy_garak_config(explicit_cfg))
+    explicit_cfg = _migrate_legacy_garak_config(explicit_cfg)
+    merged = deep_merge_dicts(merged, explicit_cfg)
     if bc.get("num_examples") is not None:
         logger.warning(
             "num_examples is a soft per-probe prompt cap, not a total scan limit; "
