@@ -178,31 +178,6 @@ def test_extract_sdg_provider(monkeypatch, sdg, parameters):
     assert module.GarakAdapter._extract_sdg_params(sdg, parameters, {})["sdg_provider"] == "openai"
 
 
-def test_simple_scan_reports_repeated_running_status(monkeypatch, tmp_path):
-    module = _load_evalhub_garak_adapter(monkeypatch)
-    updates = []
-
-    def scan(**kwargs):
-        kwargs["on_progress"]()
-        kwargs["on_progress"]()
-        return module.GarakScanResult(returncode=1, stdout="", stderr="failure", report_prefix=tmp_path / "scan")
-
-    monkeypatch.setattr(module, "run_garak_scan", scan)
-    module.GarakAdapter()._run_simple(
-        SimpleNamespace(benchmark_id="avid", parameters={}),
-        SimpleNamespace(report_status=updates.append),
-        {},
-        tmp_path,
-        timeout=60,
-    )
-    assert [update.phase for update in updates] == [
-        module.JobPhase.LOADING_DATA,
-        module.JobPhase.RUNNING_EVALUATION,
-        module.JobPhase.RUNNING_EVALUATION,
-        module.JobPhase.RUNNING_EVALUATION,
-    ]
-
-
 def test_run_benchmark_job_uses_garak_config_file(monkeypatch, tmp_path):
     module = _load_evalhub_garak_adapter(monkeypatch)
     adapter = module.GarakAdapter()
@@ -216,7 +191,6 @@ def test_run_benchmark_job_uses_garak_config_file(monkeypatch, tmp_path):
         report_prefix,
         env=None,
         log_file=None,
-        on_progress=None,
     ):
         _ = env, log_file
         captured["config_file"] = config_file
@@ -272,7 +246,7 @@ def test_simple_mode_passes_hf_cache_env(monkeypatch, tmp_path):
 
     captured: dict[str, object] = {}
 
-    def _fake_run_garak_scan(config_file, timeout_seconds, report_prefix, env=None, log_file=None, on_progress=None):
+    def _fake_run_garak_scan(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
         captured["env"] = env
         report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
         return module.GarakScanResult(returncode=0, stdout="", stderr="", report_prefix=report_prefix)
@@ -313,7 +287,7 @@ def test_simple_mode_no_hf_cache_passes_none_env(monkeypatch, tmp_path):
 
     captured: dict[str, object] = {}
 
-    def _fake_run_garak_scan(config_file, timeout_seconds, report_prefix, env=None, log_file=None, on_progress=None):
+    def _fake_run_garak_scan(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
         captured["env"] = env
         report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
         return module.GarakScanResult(returncode=0, stdout="", stderr="", report_prefix=report_prefix)
@@ -624,9 +598,7 @@ class TestKFPModeExecution:
         report_prefix.parent.mkdir(parents=True)
         report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
 
-        def _fake_run_garak_scan(
-            config_file, timeout_seconds, report_prefix, env=None, log_file=None, on_progress=None
-        ):
+        def _fake_run_garak_scan(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
             report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
             return module.GarakScanResult(
                 returncode=0,
@@ -681,9 +653,7 @@ class TestKFPModeExecution:
         report_prefix.parent.mkdir(parents=True)
         report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
 
-        def _fake_run_garak_scan(
-            config_file, timeout_seconds, report_prefix, env=None, log_file=None, on_progress=None
-        ):
+        def _fake_run_garak_scan(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
             report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
             return module.GarakScanResult(returncode=0, stdout="", stderr="", report_prefix=report_prefix)
 
@@ -1576,7 +1546,7 @@ class TestJobPhaseReporting:
         report_prefix = tmp_path / "scan"
         report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
 
-        def _fake_run(config_file, timeout_seconds, report_prefix, env=None, log_file=None, on_progress=None):
+        def _fake_run(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
             return module.GarakScanResult(
                 returncode=0,
                 stdout="",
@@ -1754,7 +1724,7 @@ class TestJobPhaseReporting:
         report_prefix.parent.mkdir(parents=True, exist_ok=True)
         report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
 
-        def _fake_run(config_file, timeout_seconds, report_prefix, env=None, log_file=None, on_progress=None):
+        def _fake_run(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
             return module.GarakScanResult(
                 returncode=0,
                 stdout="",
@@ -1813,7 +1783,7 @@ class TestJobPhaseReporting:
         report_prefix.parent.mkdir(parents=True, exist_ok=True)
         report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
 
-        def _fake_run(config_file, timeout_seconds, report_prefix, env=None, log_file=None, on_progress=None):
+        def _fake_run(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
             return module.GarakScanResult(
                 returncode=0,
                 stdout="",
@@ -1867,7 +1837,7 @@ class TestJobPhaseReporting:
         report_prefix.parent.mkdir(parents=True, exist_ok=True)
         report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
 
-        def _fake_run(config_file, timeout_seconds, report_prefix, env=None, log_file=None, on_progress=None):
+        def _fake_run(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
             return module.GarakScanResult(
                 returncode=1,
                 stdout="",
@@ -3187,7 +3157,7 @@ class TestSimpleIntentsMode:
             sdg_captured.update(kwargs)
             return fake_raw_df
 
-        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds, on_progress=None):
+        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds):
             sdg_captured["prompts_csv_path"] = str(prompts_csv_path)
             sdg_captured["config_json"] = config_json
             report_prefix = scan_dir / "scan"
@@ -3259,7 +3229,7 @@ class TestSimpleIntentsMode:
                 }
             )
 
-        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds, on_progress=None):
+        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds):
             report_prefix = scan_dir / "scan"
             report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
             return module.GarakScanResult(
@@ -3307,7 +3277,7 @@ class TestSimpleIntentsMode:
 
         setup_captured = {}
 
-        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds, on_progress=None):
+        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds):
             import pandas as pd
 
             setup_captured["prompts"] = pd.read_csv(prompts_csv_path)
@@ -3409,7 +3379,7 @@ class TestSimpleIntentsMode:
         scan_dir = tmp_path / "simple-intents-job"
         scan_dir.mkdir(parents=True, exist_ok=True)
 
-        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds, on_progress=None):
+        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds):
             report_prefix = scan_dir / "scan"
             report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
             return module.GarakScanResult(
@@ -3471,7 +3441,7 @@ class TestSimpleIntentsMode:
             sdg_captured["api_key"] = kwargs.get("api_key")
             return fake_raw_df
 
-        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds, on_progress=None):
+        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds):
             report_prefix = scan_dir / "scan"
             report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
             return module.GarakScanResult(returncode=0, stdout="", stderr="", report_prefix=report_prefix)

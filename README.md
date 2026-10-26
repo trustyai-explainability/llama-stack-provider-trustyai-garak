@@ -98,10 +98,8 @@ Key `parameters` in the job spec:
 | `model_type` | Garak generator type | `openai.OpenAICompatible` |
 | `garak_config` | Full garak config dict (deep-merged onto profile) | — |
 
-Simple scans report `running_evaluation` every 30 seconds while the Garak
-subprocess runs, including when it produces no output. A timeout terminates the
-process group and reports a failed scan. Prompt caps do not limit the number of
-selected probes or guarantee a total request count; use `timeout_seconds` to
+A timeout terminates the process group and reports a failed scan. Prompt caps
+do not limit the number of selected probes or guarantee a total request count; use `timeout_seconds` to
 bound scan execution. The scan timeout excludes SDG preprocessing.
 
 SDG accepts bare model IDs such as `Qwen/Qwen3-VL-30B-A3B-Instruct` and routes
@@ -124,10 +122,6 @@ jobs can use the sidecar at `http://localhost:8080/v1` (also `127.0.0.1` or
 `GARAK_SDG_ALLOWED_API_BASES` environment variable. Other job-supplied URLs are
 rejected. In KFP mode, put `sdg_url` in the mounted model auth secret or configure
 the environment on the SDG component; this policy cannot be set in job parameters.
-
-Progress callbacks run on one daemon worker so a blocked status request cannot
-delay the scan deadline or accumulate callback threads. Completion or timeout
-stops scheduling updates; an in-flight callback may finish independently.
 
 ## Results
 

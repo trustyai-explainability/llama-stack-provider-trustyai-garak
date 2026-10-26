@@ -1,9 +1,8 @@
-"""Run real subprocesses to check liveness, deadlines, and cleanup without Garak."""
+"""Run real subprocesses to check completion, deadlines, and cleanup without Garak."""
 
 import signal
 import subprocess
 import sys
-import threading
 import time
 
 import pytest
@@ -20,27 +19,21 @@ def _run_script(monkeypatch, tmp_path, script, **kwargs):
         "Popen",
         lambda _cmd, **options: real_popen([sys.executable, "-c", script], **options),
     )
-    return garak_runner.run_garak_scan(
-        config, report_prefix=tmp_path / "scan", progress_interval_seconds=0.03, **kwargs
-    )
+    return garak_runner.run_garak_scan(config, report_prefix=tmp_path / "scan", **kwargs)
 
 
 @pytest.mark.parametrize("timeout_seconds", [0, 5])
-def test_silent_scan_reports_liveness_until_completion(monkeypatch, tmp_path, timeout_seconds):
-    updates = []
+def test_silent_scan_completes(monkeypatch, tmp_path, timeout_seconds):
     result = _run_script(
         monkeypatch,
         tmp_path,
         "import time; time.sleep(0.25)",
         timeout_seconds=timeout_seconds,
-        on_progress=lambda: updates.append(time.monotonic()),
     )
     assert result.success
-    assert updates
 
 
-def test_liveness_does_not_extend_deadline_and_timeout_kills_group(monkeypatch, tmp_path):
-    updates = []
+def test_timeout_kills_process_group(monkeypatch, tmp_path):
     signals = []
     real_killpg = garak_runner.os.killpg
 
@@ -55,57 +48,12 @@ def test_liveness_does_not_extend_deadline_and_timeout_kills_group(monkeypatch, 
         tmp_path,
         "import time; time.sleep(60)",
         timeout_seconds=0.25,
-        on_progress=lambda: updates.append(time.monotonic()),
     )
     assert result.timed_out
     assert not result.success
     assert result.returncode < 0
     assert signal.SIGTERM in signals
-    assert updates
     assert time.monotonic() - started < 5
-
-
-def test_status_failure_does_not_interrupt_scan(monkeypatch, tmp_path, caplog):
-    def report():
-        raise RuntimeError("sidecar temporarily unavailable")
-
-    result = _run_script(
-        monkeypatch,
-        tmp_path,
-        "import time; time.sleep(0.15)",
-        timeout_seconds=5,
-        on_progress=report,
-    )
-    assert result.success
-    assert "Could not report Garak scan progress" in caplog.text
-
-
-@pytest.mark.parametrize("timeout_seconds", [0, 0.25])
-def test_blocking_callback_cannot_delay_scan_completion_or_timeout(monkeypatch, tmp_path, timeout_seconds):
-    release = threading.Event()
-    finished = threading.Event()
-    calls = []
-
-    def report():
-        calls.append(True)
-        release.wait(5)
-        finished.set()
-
-    started = time.monotonic()
-    try:
-        result = _run_script(
-            monkeypatch,
-            tmp_path,
-            "import time; time.sleep(60)" if timeout_seconds else "import time; time.sleep(0.25)",
-            timeout_seconds=timeout_seconds,
-            on_progress=report,
-        )
-        assert time.monotonic() - started < 3
-        assert result.timed_out == bool(timeout_seconds)
-        assert calls == [True], "Blocked callbacks must not accumulate more workers"
-    finally:
-        release.set()
-        assert finished.wait(1)
 
 
 def test_timeout_kills_worker_after_leader_exits(monkeypatch, tmp_path):
