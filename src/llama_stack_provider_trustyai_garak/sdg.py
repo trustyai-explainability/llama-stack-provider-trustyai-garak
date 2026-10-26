@@ -419,6 +419,7 @@ def generate_sdg_dataset(
     max_concurrency = _resolve_max_concurrency(max_concurrency)
 
     import nest_asyncio
+    from litellm import provider_list
     from sdg_hub import FlowRegistry, Flow
 
     nest_asyncio.apply()
@@ -452,6 +453,13 @@ def generate_sdg_dataset(
     if max_tokens >= 1:
         _override_flow_block(flow, DEFAULT_SDG_MAX_TOKENS_BLOCK_NAME, {"max_tokens": max_tokens})
 
+    # A model repository namespace (e.g. Qwen/) is not a LiteLLM provider.
+    # Preserve explicit provider routes, and route bare model IDs through the
+    # OpenAI-compatible API configured by api_base. LiteLLM removes this prefix
+    # before sending the model ID to the endpoint.
+    model = model.strip()
+    if model.split("/", 1)[0] not in provider_list:
+        model = f"openai/{model}"
     flow.set_model_config(model=model, api_base=api_base, api_key=api_key)
 
     logger.info("SDG generation: max_concurrency=%d", max_concurrency)

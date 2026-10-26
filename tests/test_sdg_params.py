@@ -158,6 +158,10 @@ def _setup_sdg_mocks(monkeypatch):
     nest_asyncio_module.apply = MagicMock()
     monkeypatch.setitem(__import__("sys").modules, "nest_asyncio", nest_asyncio_module)
 
+    litellm_module = types.ModuleType("litellm")
+    litellm_module.provider_list = ["openai", "hosted_vllm", "anthropic"]
+    monkeypatch.setitem(__import__("sys").modules, "litellm", litellm_module)
+
     mock_override = MagicMock()
     monkeypatch.setattr("llama_stack_provider_trustyai_garak.sdg._override_flow_block", mock_override)
 
@@ -166,6 +170,70 @@ def _setup_sdg_mocks(monkeypatch):
 
 class TestGenerateSDGDatasetParams:
     """Verify num_samples / max_tokens are applied to the flow."""
+
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [
+            ("Qwen/Qwen3-VL-30B-A3B-Instruct", "openai/Qwen/Qwen3-VL-30B-A3B-Instruct"),
+            ("deployment-alias", "openai/deployment-alias"),
+            ("openai/Qwen/Qwen3-VL-30B-A3B-Instruct", "openai/Qwen/Qwen3-VL-30B-A3B-Instruct"),
+            ("hosted_vllm/Qwen/Qwen3-VL-30B-A3B-Instruct", "hosted_vllm/Qwen/Qwen3-VL-30B-A3B-Instruct"),
+            ("anthropic/claude-sonnet-4-5", "anthropic/claude-sonnet-4-5"),
+        ],
+    )
+    def test_model_routing(self, monkeypatch, model, expected):
+        mock_flow, _ = _setup_sdg_mocks(monkeypatch)
+        from llama_stack_provider_trustyai_garak.sdg import generate_sdg_dataset
+
+        generate_sdg_dataset(model=model, api_base="http://model/v1", api_key="test-key")
+
+        mock_flow.set_model_config.assert_called_once_with(
+            model=expected, api_base="http://model/v1", api_key="test-key"
+        )
+
+    def test_qwen_model_sent_to_endpoint_without_routing_prefix(self, monkeypatch):
+        # Optional SDG dependencies are unnecessary for the other unit tests.
+        monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+        litellm = pytest.importorskip("litellm")
+        openai = pytest.importorskip("openai")
+        httpx = pytest.importorskip("httpx")
+        import json
+        import sys
+
+        mock_flow, _ = _setup_sdg_mocks(monkeypatch)
+        monkeypatch.setitem(sys.modules, "litellm", litellm)
+        requests = []
+        model = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+
+        def respond(request):
+            requests.append((request.url.path, json.loads(request.content)))
+            return httpx.Response(
+                200,
+                json={
+                    "id": "test",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": model,
+                    "choices": [
+                        {"index": 0, "message": {"role": "assistant", "content": "test"}, "finish_reason": "stop"}
+                    ],
+                },
+            )
+
+        with httpx.Client(transport=httpx.MockTransport(respond)) as transport:
+            client = openai.OpenAI(api_key="test-key", base_url="http://model.test/v1", http_client=transport)
+            mock_flow.set_model_config.side_effect = lambda **kwargs: litellm.completion(
+                **kwargs,
+                client=client,
+                messages=[{"role": "user", "content": "test"}],
+            )
+            from llama_stack_provider_trustyai_garak.sdg import generate_sdg_dataset
+
+            generate_sdg_dataset(model=model, api_base="http://model.test/v1", api_key="test-key")
+
+        assert len(requests) == 1
+        assert requests[0][0] == "/v1/chat/completions"
+        assert requests[0][1]["model"] == model
 
     def test_num_samples_override_applied(self, monkeypatch):
         monkeypatch.delenv("SDG_MAX_CONCURRENCY", raising=False)
@@ -199,7 +267,7 @@ class TestGenerateSDGDatasetParams:
 
         assert events == ["override", "configure"]
         mock_flow.set_model_config.assert_called_once_with(
-            model="m",
+            model="openai/m",
             api_base="http://x",
             api_key="dummy",
         )

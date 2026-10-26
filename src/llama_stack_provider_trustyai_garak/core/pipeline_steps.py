@@ -11,6 +11,7 @@ and handles its own I/O.
 import json
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -582,6 +583,7 @@ def setup_and_run_garak(
     prompts_csv_path: Path | str | None,
     scan_dir: Path,
     timeout_seconds: int,
+    on_progress: Callable[[], None] | None = None,
 ) -> "GarakScanResult":
     """Configure and run a Garak scan with optional intent-stub generation.
 
@@ -640,6 +642,7 @@ def setup_and_run_garak(
         report_prefix=report_prefix,
         log_file=log_file,
         env=scan_env,
+        on_progress=on_progress,
     )
 
     if result.success:

@@ -8,7 +8,9 @@ import os
 import signal
 import subprocess
 import threading
+import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
@@ -100,6 +102,8 @@ def run_garak_scan(
     report_prefix: Path,
     env: dict[str, str] | None = None,
     log_file: Path | None = None,
+    on_progress: Callable[[], None] | None = None,
+    progress_interval_seconds: float = 30,
 ) -> GarakScanResult:
     """Run a Garak scan with proper process group handling.
 
@@ -115,6 +119,8 @@ def run_garak_scan(
         report_prefix: Expected report prefix path (for results)
         env: Environment variables (merged with os.environ)
         log_file: Path to write garak logs
+        on_progress: Periodic liveness callback, including while the child is silent
+        progress_interval_seconds: Seconds between liveness callbacks
 
     Returns:
         GarakScanResult with execution details
@@ -123,6 +129,9 @@ def run_garak_scan(
         FileNotFoundError: If garak is not installed
         PermissionError: If garak cannot be executed
     """
+    if progress_interval_seconds <= 0:
+        raise ValueError("progress_interval_seconds must be positive")
+
     # Merge environment
     run_env = os.environ.copy()
     if env:
@@ -156,7 +165,7 @@ def run_garak_scan(
         text=True,
         bufsize=1,
         env=run_env,
-        preexec_fn=os.setsid,
+        start_new_session=True,
         shell=False,
     )
 
@@ -206,7 +215,25 @@ def run_garak_scan(
             effective_timeout = None
         else:
             effective_timeout = timeout_seconds
-        process.wait(timeout=effective_timeout)
+        deadline = time.monotonic() + effective_timeout if effective_timeout is not None else None
+        while True:
+            remaining = max(0, deadline - time.monotonic()) if deadline is not None else None
+            wait_timeout = remaining
+            if on_progress is not None:
+                wait_timeout = (
+                    min(progress_interval_seconds, remaining) if remaining is not None else progress_interval_seconds
+                )
+            try:
+                process.wait(timeout=wait_timeout)
+                break
+            except subprocess.TimeoutExpired:
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise
+                if on_progress is not None:
+                    try:
+                        on_progress()
+                    except Exception:
+                        logger.warning("Could not report Garak scan progress", exc_info=True)
         returncode = process.returncode
 
         if returncode == 0:
@@ -220,7 +247,9 @@ def run_garak_scan(
 
         # Kill the entire process group
         try:
-            pgid = os.getpgid(process.pid)
+            # start_new_session makes the child PID the process group ID, even
+            # if the leader exits between the timeout and this cleanup.
+            pgid = process.pid
             logger.info(f"Sending SIGTERM to process group {pgid}")
             os.killpg(pgid, signal.SIGTERM)
 
@@ -231,6 +260,13 @@ def run_garak_scan(
                 logger.warning("Process didn't terminate, sending SIGKILL")
                 os.killpg(pgid, signal.SIGKILL)
                 process.wait()
+
+            # The leader may exit on SIGTERM while a worker ignores it. Ensure
+            # those descendants cannot outlive the timed-out scan.
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
         except ProcessLookupError:
             logger.debug("Process already terminated")

@@ -424,6 +424,9 @@ class GarakAdapter(FrameworkAdapter):
             log_file=log_file,
             report_prefix=report_prefix,
             env=env if env else None,
+            on_progress=lambda: callbacks.report_status(
+                JobStatusUpdate(status=JobStatus.RUNNING, phase=JobPhase.RUNNING_EVALUATION)
+            ),
         )
 
         # AVID conversion
@@ -561,6 +564,9 @@ class GarakAdapter(FrameworkAdapter):
             prompts_csv_path=prompts_csv_path,
             scan_dir=scan_dir,
             timeout_seconds=timeout,
+            on_progress=lambda: callbacks.report_status(
+                JobStatusUpdate(status=JobStatus.RUNNING, phase=JobPhase.RUNNING_EVALUATION)
+            ),
         )
 
         return result
