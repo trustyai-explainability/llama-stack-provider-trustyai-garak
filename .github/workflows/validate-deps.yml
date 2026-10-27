@@ -7,23 +7,26 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   sync-requirements:
     name: Auto-sync requirements.txt
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -33,14 +36,21 @@ jobs:
       - name: Regenerate requirements.txt
         run: make lock
 
+      - name: Validate requirements.txt for fork PRs
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        run: git diff --exit-code -- requirements.txt
+
       - name: Commit if changed
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          PR_HEAD_REF: ${{ github.head_ref }}
         run: |
           git diff --quiet requirements.txt && exit 0
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add requirements.txt
           git commit -m "chore: auto-sync requirements.txt from pyproject.toml"
-          git push
+          git push origin "HEAD:refs/heads/$PR_HEAD_REF"
 
   check-garak-drift:
     name: Check garak midstream version drift

@@ -79,6 +79,10 @@ When you change `pyproject.toml`, the pre-commit hook automatically regenerates
 make lock
 ```
 
+For pull requests from forks, CI regenerates `requirements.txt` and checks that
+the committed file matches. Run `make lock` and commit the result before pushing.
+Pull requests from branches in this repository retain automatic lockfile commits.
+
 ## Project Structure
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed module-by-module breakdown.
