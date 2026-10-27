@@ -114,15 +114,6 @@ endpoint request. The same setting is available as
 model value is treated as a raw ID; otherwise legacy provider-prefixed values
 keep their existing meaning.
 
-SDG destinations must be approved by the worker deployment before credentials
-are resolved. A mounted `sdg_url` or the `SDG_API_BASE` environment variable
-selects the endpoint and takes precedence over job parameters. Without either,
-jobs can use the sidecar at `http://localhost:8080/v1` (also `127.0.0.1` or
-`[::1]`) or an exact base URL from the deployment's comma-separated
-`GARAK_SDG_ALLOWED_API_BASES` environment variable. Other job-supplied URLs are
-rejected. In KFP mode, put `sdg_url` in the mounted model auth secret or configure
-the environment on the SDG component; this policy cannot be set in job parameters.
-
 ## Results
 
 The adapter reports `EvaluationResult` per probe with:

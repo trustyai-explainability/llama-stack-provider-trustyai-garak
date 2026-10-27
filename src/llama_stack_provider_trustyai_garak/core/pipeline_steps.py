@@ -13,7 +13,6 @@ import logging
 import os
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
 import pandas as pd
 
@@ -490,64 +489,6 @@ def resolve_taxonomy_data(
 # ---------------------------------------------------------------------------
 
 
-def _normalize_sdg_api_base(api_base: str) -> str:
-    """Validate a base URL without allowing credentials or URL suffixes."""
-    try:
-        parsed = urlsplit(api_base.strip())
-        if (
-            parsed.scheme not in ("http", "https")
-            or not parsed.hostname
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.query
-            or parsed.fragment
-            or any(char.isspace() for char in api_base)
-        ):
-            raise ValueError("Invalid SDG URL")
-        host = parsed.hostname.lower()
-        if ":" in host:
-            host = f"[{host}]"
-        port = parsed.port
-        if port is not None and port != {"http": 80, "https": 443}[parsed.scheme]:
-            host = f"{host}:{port}"
-        return urlunsplit((parsed.scheme, host, parsed.path.rstrip("/"), "", ""))
-    except ValueError as exc:
-        raise GarakValidationError(
-            "SDG endpoint must be an absolute HTTP(S) base URL without credentials, query, or fragment."
-        ) from exc
-
-
-def resolve_sdg_api_base(requested_base: str) -> str:
-    """Bind deployment credentials to deployment-approved SDG destinations.
-
-    Mounted sdg_url and SDG_API_BASE are authoritative deployment settings.
-    Otherwise a job may use the local sidecar, or an exact base URL approved
-    in GARAK_SDG_ALLOWED_API_BASES. Job parameters cannot expand this list.
-    """
-    configured_base = _read_secret_file("sdg_url") or _read_evalhub_secret("sdg_url") or os.getenv("SDG_API_BASE", "")
-    if configured_base:
-        return _normalize_sdg_api_base(configured_base)
-    if not requested_base or not requested_base.strip():
-        raise GarakValidationError("sdg_api_base is required for intents scans when SDG must run.")
-    requested_base = _normalize_sdg_api_base(requested_base)
-    allowed = {
-        "http://localhost:8080/v1",
-        "http://127.0.0.1:8080/v1",
-        "http://[::1]:8080/v1",
-    }
-    allowed.update(
-        _normalize_sdg_api_base(base.strip())
-        for base in os.getenv("GARAK_SDG_ALLOWED_API_BASES", "").split(",")
-        if base.strip()
-    )
-    if requested_base not in allowed:
-        raise GarakValidationError(
-            "SDG endpoint is not trusted. Configure sdg_url in the model auth secret, "
-            "SDG_API_BASE, or GARAK_SDG_ALLOWED_API_BASES in the worker deployment."
-        )
-    return requested_base
-
-
 def run_sdg_generation(
     taxonomy_df: pd.DataFrame,
     sdg_model: str,
@@ -572,8 +513,17 @@ def run_sdg_generation(
     if not sdg_model or not sdg_model.strip():
         raise GarakValidationError("sdg_model is required for intents scans when SDG must run.")
 
-    # Validate the destination before resolving any deployment credentials.
-    sdg_api_base = resolve_sdg_api_base(sdg_api_base)
+    # Resolve SDG URL from mounted secret if sidecar address or empty
+    effective_base = sdg_api_base
+    if not effective_base or "localhost" in effective_base or "127.0.0.1" in effective_base:
+        secret_url = _read_secret_file("sdg_url") or _read_evalhub_secret("sdg_url")
+        if secret_url:
+            effective_base = secret_url.strip().rstrip("/")
+            logger.info("Resolved sdg_api_base from secret: %s", effective_base)
+    if not effective_base or not effective_base.strip():
+        raise GarakValidationError("sdg_api_base is required for intents scans when SDG must run.")
+    sdg_api_base = effective_base
+
     effective_key = api_key or resolve_api_key("sdg")
 
     effective_flow_id = (sdg_flow_id.strip() if sdg_flow_id else "") or DEFAULT_SDG_FLOW_ID

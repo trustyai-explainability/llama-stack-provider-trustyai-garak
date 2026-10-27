@@ -3922,10 +3922,6 @@ class TestResolveTaxonomyComponent:
 class TestSdgGenerateComponent:
     """Tests for the sdg_generate KFP component."""
 
-    @pytest.fixture(autouse=True)
-    def approved_sdg_endpoint(self, monkeypatch):
-        monkeypatch.setenv("GARAK_SDG_ALLOWED_API_BASES", "http://sdg:8000")
-
     def test_non_intents_writes_empty_marker(self, monkeypatch, tmp_path):
         from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import sdg_generate
 

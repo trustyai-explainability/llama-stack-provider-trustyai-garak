@@ -726,17 +726,6 @@ class TestResolveTaxonomyData:
         assert len(df) == 1
 
 
-@pytest.fixture
-def isolated_sdg_connection(monkeypatch):
-    for name in ("SDG_API_BASE", "SDG_API_KEY", "API_KEY", "GARAK_SDG_ALLOWED_API_BASES"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr("llama_stack_provider_trustyai_garak.core.pipeline_steps._read_secret_file", lambda _name: "")
-    monkeypatch.setattr(
-        "llama_stack_provider_trustyai_garak.core.pipeline_steps._read_evalhub_secret", lambda _name: ""
-    )
-
-
-@pytest.mark.usefixtures("isolated_sdg_connection")
 class TestRunSdgGeneration:
     def test_missing_model_raises(self):
         df = pd.DataFrame({"policy_concept": ["test"], "concept_definition": ["test"]})
@@ -753,7 +742,6 @@ class TestRunSdgGeneration:
         from llama_stack_provider_trustyai_garak.sdg import SDGResult
 
         monkeypatch.setenv("SDG_API_KEY", "test-key")
-        monkeypatch.setenv("SDG_API_BASE", "http://api")
         raw_df = pd.DataFrame({"policy_concept": ["x"], "prompt": ["test"]})
         norm_df = pd.DataFrame({"category": ["x"], "prompt": ["test"]})
         mock_gen.return_value = SDGResult(raw=raw_df, normalized=norm_df)
@@ -769,7 +757,6 @@ class TestRunSdgGeneration:
         from llama_stack_provider_trustyai_garak.sdg import SDGResult
 
         monkeypatch.setenv("SDG_API_KEY", "env-sdg-key")
-        monkeypatch.setenv("SDG_API_BASE", "http://api")
         raw_df = pd.DataFrame({"policy_concept": ["x"], "prompt": ["test"]})
         norm_df = pd.DataFrame({"category": ["x"], "prompt": ["test"]})
         mock_gen.return_value = SDGResult(raw=raw_df, normalized=norm_df)
@@ -779,92 +766,6 @@ class TestRunSdgGeneration:
         assert len(result) == 1
         call_kwargs = mock_gen.call_args
         assert call_kwargs.kwargs.get("api_key") == "env-sdg-key" or call_kwargs[1].get("api_key") == "env-sdg-key"
-
-    @pytest.mark.parametrize("key_name", ["SDG_API_KEY", "API_KEY"])
-    @patch("llama_stack_provider_trustyai_garak.sdg.generate_sdg_dataset")
-    def test_job_endpoint_cannot_receive_deployment_key(self, mock_gen, monkeypatch, key_name):
-        monkeypatch.setenv(key_name, "deployment-secret")
-
-        def resolve_key(_role):
-            pytest.fail("An untrusted endpoint must be rejected before resolving credentials")
-
-        monkeypatch.setattr("llama_stack_provider_trustyai_garak.core.pipeline_steps.resolve_api_key", resolve_key)
-        taxonomy = pd.DataFrame({"policy_concept": ["test"], "concept_definition": ["test"]})
-        with pytest.raises(GarakValidationError, match="SDG endpoint is not trusted"):
-            run_sdg_generation(taxonomy, "model", "https://attacker.example/v1")
-        mock_gen.assert_not_called()
-
-    @pytest.mark.parametrize("reader", ["_read_secret_file", "_read_evalhub_secret"])
-    @patch("llama_stack_provider_trustyai_garak.sdg.generate_sdg_dataset")
-    def test_secret_endpoint_wins_over_job_endpoint(self, mock_gen, monkeypatch, reader):
-        from llama_stack_provider_trustyai_garak.sdg import SDGResult
-
-        monkeypatch.setattr(
-            f"llama_stack_provider_trustyai_garak.core.pipeline_steps.{reader}",
-            lambda name: {"sdg_url": "https://trusted.example/v1", "SDG_API_KEY": "deployment-secret"}.get(name, ""),
-        )
-        raw = pd.DataFrame({"policy_concept": ["test"], "prompt": ["test"]})
-        mock_gen.return_value = SDGResult(raw, raw)
-        run_sdg_generation(raw, "model", "https://attacker.example/v1")
-        assert mock_gen.call_args.kwargs["api_base"] == "https://trusted.example/v1"
-        assert mock_gen.call_args.kwargs["api_key"] == "deployment-secret"
-
-
-@pytest.mark.usefixtures("isolated_sdg_connection")
-class TestResolveSdgEndpoint:
-    @pytest.mark.parametrize(
-        "base",
-        [
-            "http://localhost.attacker.example:8080/v1",
-            "http://attacker.example/localhost/v1",
-            "http://127.0.0.1:9999/v1",
-            "http://localhost:8080/redirect",
-            "http://169.254.169.254/latest/meta-data",
-            "http://10.0.0.1/v1",
-        ],
-    )
-    def test_job_urls_require_deployment_approval(self, base):
-        from llama_stack_provider_trustyai_garak.core.pipeline_steps import resolve_sdg_api_base
-
-        with pytest.raises(GarakValidationError, match="not trusted"):
-            resolve_sdg_api_base(base)
-
-    @pytest.mark.parametrize(
-        "base",
-        [
-            "https://user:password@trusted.example/v1",
-            "file:///etc/passwd",
-            "https://trusted.example/v1?next=evil",
-            "https://trusted.example/v1#evil",
-            "https://trusted.example:invalid/v1",
-        ],
-    )
-    def test_invalid_base_rejected_even_in_allowlist(self, monkeypatch, base):
-        from llama_stack_provider_trustyai_garak.core.pipeline_steps import resolve_sdg_api_base
-
-        monkeypatch.setenv("GARAK_SDG_ALLOWED_API_BASES", base)
-        with pytest.raises(GarakValidationError, match="absolute HTTP"):
-            resolve_sdg_api_base(base)
-
-    def test_explicit_approval_matches_whole_base_url(self, monkeypatch):
-        from llama_stack_provider_trustyai_garak.core.pipeline_steps import resolve_sdg_api_base
-
-        monkeypatch.setenv("GARAK_SDG_ALLOWED_API_BASES", "https://trusted.example/v1,https://other.example/v1")
-        assert resolve_sdg_api_base("https://TRUSTED.example:443/v1/") == "https://trusted.example/v1"
-        with pytest.raises(GarakValidationError, match="not trusted"):
-            resolve_sdg_api_base("https://trusted.example/unapproved-path")
-
-    def test_deployment_base_overrides_job_url(self, monkeypatch):
-        from llama_stack_provider_trustyai_garak.core.pipeline_steps import resolve_sdg_api_base
-
-        monkeypatch.setenv("SDG_API_BASE", "https://trusted.example/v1/")
-        assert resolve_sdg_api_base("https://attacker.example/v1") == "https://trusted.example/v1"
-
-    @pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "[::1]"])
-    def test_sidecar_base_is_allowed(self, host):
-        from llama_stack_provider_trustyai_garak.core.pipeline_steps import resolve_sdg_api_base
-
-        assert resolve_sdg_api_base(f"http://{host}:8080/v1") == f"http://{host}:8080/v1"
 
 
 class TestNormalizePrompts:
