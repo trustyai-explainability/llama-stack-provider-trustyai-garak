@@ -156,7 +156,7 @@ def run_garak_scan(
         text=True,
         bufsize=1,
         env=run_env,
-        preexec_fn=os.setsid,
+        start_new_session=True,
         shell=False,
     )
 
@@ -220,7 +220,9 @@ def run_garak_scan(
 
         # Kill the entire process group
         try:
-            pgid = os.getpgid(process.pid)
+            # start_new_session makes the child PID the process group ID, even
+            # if the leader exits between the timeout and this cleanup.
+            pgid = process.pid
             logger.info(f"Sending SIGTERM to process group {pgid}")
             os.killpg(pgid, signal.SIGTERM)
 
@@ -231,6 +233,13 @@ def run_garak_scan(
                 logger.warning("Process didn't terminate, sending SIGKILL")
                 os.killpg(pgid, signal.SIGKILL)
                 process.wait()
+
+            # The leader may exit on SIGTERM while a worker ignores it. Ensure
+            # those descendants cannot outlive the timed-out scan.
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
         except ProcessLookupError:
             logger.debug("Process already terminated")

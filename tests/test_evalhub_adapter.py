@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from llama_stack_provider_trustyai_garak.constants import DEFAULT_TIMEOUT
 from llama_stack_provider_trustyai_garak.core.config_resolution import (
     build_effective_garak_config,
     resolve_scan_profile,
@@ -131,6 +132,27 @@ def test_resolve_timeout_seconds_precedence():
     # Non-numeric values are ignored and fall through
     assert resolve_timeout_seconds({"timeout_seconds": "abc"}, profile, 600) == 3600
     assert resolve_timeout_seconds({"timeout": None}, profile, 600) == 3600
+
+
+@pytest.mark.parametrize(
+    ("benchmark_id", "expected_timeout"),
+    [
+        ("owasp_llm_top10", 3600),
+        ("avid", 3600),
+        ("avid_security", 3600),
+        ("avid_ethics", 3600),
+        ("avid_performance", 3600),
+        ("quality", 3600),
+        ("cwe", 3600),
+        ("intents", 3600),
+        ("quick", 300),
+    ],
+)
+def test_scan_profile_timeout_defaults_and_overrides(benchmark_id, expected_timeout):
+    profile = resolve_scan_profile(benchmark_id)
+    assert resolve_timeout_seconds({}, profile, DEFAULT_TIMEOUT) == expected_timeout
+    assert resolve_timeout_seconds({"timeout_seconds": 0}, profile, DEFAULT_TIMEOUT) == 0
+    assert resolve_timeout_seconds({"timeout_seconds": 42}, profile, DEFAULT_TIMEOUT) == 42
 
 
 def test_run_benchmark_job_uses_garak_config_file(monkeypatch, tmp_path):
