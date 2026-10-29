@@ -498,6 +498,7 @@ def run_sdg_generation(
     sdg_num_samples: int = 0,
     sdg_max_tokens: int = 0,
     api_key: str | None = None,
+    sdg_provider: str = "",
 ) -> pd.DataFrame:
     """Run Synthetic Data Generation on a taxonomy.  Returns the raw DataFrame.
 
@@ -542,6 +543,7 @@ def run_sdg_generation(
         max_concurrency=sdg_max_concurrency,
         num_samples=sdg_num_samples,
         max_tokens=sdg_max_tokens,
+        provider=sdg_provider,
     )
     logger.info(
         "SDG produced %d raw rows across %d categories",

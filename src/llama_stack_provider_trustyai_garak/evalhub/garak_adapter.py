@@ -520,6 +520,7 @@ class GarakAdapter(FrameworkAdapter):
                 taxonomy_df=taxonomy_df,
                 sdg_model=sdg_model,
                 sdg_api_base=effective_sdg_base,
+                sdg_provider=intents_params.get("sdg_provider", ""),
                 sdg_flow_id=intents_params.get("sdg_flow_id", DEFAULT_SDG_FLOW_ID),
                 sdg_max_concurrency=intents_params.get("sdg_max_concurrency", DEFAULT_SDG_MAX_CONCURRENCY),
                 sdg_num_samples=intents_params.get("sdg_num_samples", DEFAULT_SDG_NUM_SAMPLES),
@@ -663,6 +664,7 @@ class GarakAdapter(FrameworkAdapter):
             "intents_format": ip.get("intents_format", "csv"),
             "sdg_model": ip.get("sdg_model") or "",
             "sdg_api_base": ip.get("sdg_api_base") or "",
+            "sdg_provider": ip.get("sdg_provider") or "",
             "sdg_flow_id": ip.get("sdg_flow_id", DEFAULT_SDG_FLOW_ID),
             "sdg_max_concurrency": ip.get("sdg_max_concurrency", DEFAULT_SDG_MAX_CONCURRENCY),
             "sdg_num_samples": ip.get("sdg_num_samples", DEFAULT_SDG_NUM_SAMPLES),
@@ -1541,6 +1543,7 @@ class GarakAdapter(FrameworkAdapter):
         sdg_params: dict[str, str] = {
             "sdg_model": "",
             "sdg_api_base": "",
+            "sdg_provider": sdg_cfg.get("provider") or benchmark_config.get("sdg_provider") or "",
         }
         if sdg_cfg.get("name"):
             sdg_params["sdg_model"] = sdg_cfg["name"]

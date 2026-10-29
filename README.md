@@ -92,9 +92,25 @@ Key `parameters` in the job spec:
 | `probe_tags` | Tag-based probe filtering | — |
 | `execution_mode` | `simple` or `kfp` | `simple` |
 | `timeout_seconds` | Scan timeout | Profile default |
+| `soft_probe_prompt_cap` | Preferred prompt limit per probe; some probes may exceed it | `256` |
+| `num_examples` | Compatibility alias for the soft per-probe prompt cap; explicit caps take precedence | — |
 | `eval_threshold` | Vulnerability threshold (0.0–1.0) | `0.5` |
 | `model_type` | Garak generator type | `openai.OpenAICompatible` |
 | `garak_config` | Full garak config dict (deep-merged onto profile) | — |
+
+Prompt caps do not limit the number of selected probes or guarantee a total request count.
+
+SDG accepts bare model IDs such as `Qwen/Qwen3-VL-30B-A3B-Instruct` and routes
+them through LiteLLM's `openai/` provider at `sdg_api_base`. Explicit LiteLLM
+provider prefixes are preserved.
+
+For a raw model ID whose namespace is also a LiteLLM provider, supply the
+provider separately: `sdg_model: "openai/gpt-oss-120b"` with
+`sdg_provider: "openai"` preserves the complete `openai/gpt-oss-120b` ID in the
+endpoint request. The same setting is available as
+`intents_models.sdg.provider`. When an explicit provider is set, the complete
+model value is treated as a raw ID; otherwise legacy provider-prefixed values
+keep their existing meaning.
 
 ## Results
 

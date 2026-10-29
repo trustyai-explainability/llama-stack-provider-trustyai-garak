@@ -161,6 +161,7 @@ def legacy_overrides_from_benchmark_config(
         "parallel_attempts": ("system", "parallel_attempts"),
         "parallel_requests": ("system", "parallel_requests"),
         "generations": ("run", "generations"),
+        "soft_probe_prompt_cap": ("run", "soft_probe_prompt_cap"),
         "seed": ("run", "seed"),
         "deprefix": ("run", "deprefix"),
         "eval_threshold": ("run", "eval_threshold"),
@@ -235,7 +236,15 @@ def build_effective_garak_config(
         GarakCommandConfig().to_dict(exclude_none=True),
         _migrate_legacy_garak_config(profile_cfg),
     )
-    merged = deep_merge_dicts(merged, _migrate_legacy_garak_config(explicit_cfg))
+    explicit_cfg = _migrate_legacy_garak_config(explicit_cfg)
+    merged = deep_merge_dicts(merged, explicit_cfg)
+    if bc.get("num_examples") is not None:
+        logger.warning(
+            "num_examples is a soft per-probe prompt cap, not a total scan limit; "
+            "some probes may exceed it. Use timeout_seconds to bound scan duration."
+        )
+        if "soft_probe_prompt_cap" not in explicit_cfg.get("run", {}):
+            merged["run"]["soft_probe_prompt_cap"] = bc["num_examples"]
     merged = deep_merge_dicts(merged, legacy_overrides_from_benchmark_config(bc))
     _normalize_plugin_specs(merged)
 

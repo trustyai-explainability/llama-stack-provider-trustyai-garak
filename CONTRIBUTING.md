@@ -31,7 +31,7 @@ Dependencies are declared in `pyproject.toml` with optional extras:
 | `[server]` | `pip install -e ".[server]"` | Llama Stack server |
 
 **Lockfile**: `requirements.txt` is a pinned lockfile generated from the
-[RH AI PyPI index](https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9/simple/)
+[RH AI PyPI index](https://console.redhat.com/api/pypi/public-rhai/rhoai/3.6/cpu-ubi9/simple/)
 via `uv pip compile`. It's used by downstream production builds for hermetic
 dependency pre-fetching. Regenerate with `make lock`.
 
@@ -78,6 +78,12 @@ When you change `pyproject.toml`, the pre-commit hook automatically regenerates
 ```bash
 make lock
 ```
+
+For pull requests from forks, CI regenerates `requirements.txt` and checks that
+the committed file matches in a separate job with read-only repository permissions.
+Run `make lock` and commit the result before pushing. Pull requests from branches
+in this repository retain automatic lockfile commits in a write-enabled job
+that only runs for same-repository pull requests.
 
 ## Project Structure
 

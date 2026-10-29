@@ -328,6 +328,7 @@ def sdg_generate(
     sdg_max_tokens: int,
     taxonomy_dataset: dsl.Input[dsl.Dataset],
     sdg_dataset: dsl.Output[dsl.Dataset],
+    sdg_provider: str = "",
 ):
     """Run Synthetic Data Generation on a taxonomy to produce raw prompts.
 
@@ -377,6 +378,7 @@ def sdg_generate(
         taxonomy_df=taxonomy,
         sdg_model=sdg_model,
         sdg_api_base=sdg_api_base,
+        sdg_provider=sdg_provider,
         sdg_flow_id=sdg_flow_id,
         sdg_max_concurrency=sdg_max_concurrency,
         sdg_num_samples=sdg_num_samples,
@@ -747,6 +749,7 @@ def evalhub_garak_pipeline(
     intents_format: str = "csv",
     sdg_model: str = "",
     sdg_api_base: str = "",
+    sdg_provider: str = "",
     sdg_flow_id: str = DEFAULT_SDG_FLOW_ID,
     sdg_max_concurrency: int = DEFAULT_SDG_MAX_CONCURRENCY,
     sdg_num_samples: int = DEFAULT_SDG_NUM_SAMPLES,
@@ -808,6 +811,7 @@ def evalhub_garak_pipeline(
         intents_s3_key=intents_s3_key,
         sdg_model=sdg_model,
         sdg_api_base=sdg_api_base,
+        sdg_provider=sdg_provider,
         sdg_flow_id=sdg_flow_id,
         sdg_max_concurrency=sdg_max_concurrency,
         sdg_num_samples=sdg_num_samples,

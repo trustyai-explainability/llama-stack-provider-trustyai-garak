@@ -133,6 +133,48 @@ def test_resolve_timeout_seconds_precedence():
     assert resolve_timeout_seconds({"timeout": None}, profile, 600) == 3600
 
 
+@pytest.mark.parametrize(
+    "benchmark_id",
+    ["owasp_llm_top10", "avid", "avid_security", "avid_ethics", "avid_performance", "quality", "cwe", "intents"],
+)
+def test_broad_scan_prompt_cap_preserves_probe_selection(benchmark_id):
+    profile = resolve_scan_profile(benchmark_id)
+    resolved = build_effective_garak_config({"num_examples": 1}, profile)
+    assert resolved.run.soft_probe_prompt_cap == 1
+    assert resolved.run.spec.model_dump() == profile["garak_config"]["run"]["spec"]
+
+
+@pytest.mark.parametrize(
+    ("parameters", "expected"),
+    [
+        ({"num_examples": 1}, 1),
+        ({"num_examples": 1, "garak_config": {"run": {"soft_probe_prompt_cap": 3}}}, 3),
+        ({"num_examples": 1, "soft_probe_prompt_cap": 2}, 2),
+        ({"num_examples": 1, "soft_probe_prompt_cap": 2, "garak_config": {"run": {"soft_probe_prompt_cap": 3}}}, 2),
+    ],
+)
+def test_prompt_cap_precedence(parameters, expected):
+    assert build_effective_garak_config(parameters, resolve_scan_profile("avid")).run.soft_probe_prompt_cap == expected
+
+
+@pytest.mark.parametrize("run", [None, [], "legacy", 42, False])
+def test_prompt_cap_alias_normalizes_non_mapping_run(run):
+    resolved = build_effective_garak_config(
+        {"num_examples": 1, "garak_config": {"run": run}}, resolve_scan_profile("avid")
+    )
+    assert resolved.run.soft_probe_prompt_cap == 1
+    assert resolved.run.spec.include == [{"tag": "avid-effect"}]
+
+
+@pytest.mark.parametrize(
+    ("sdg", "parameters"),
+    [({"name": "openai/gpt-oss-120b", "provider": "openai"}, {}), ({}, {"sdg_provider": "openai"})],
+)
+def test_extract_sdg_provider(monkeypatch, sdg, parameters):
+    module = _load_evalhub_garak_adapter(monkeypatch)
+    assert module.GarakAdapter._extract_sdg_params(sdg, parameters, {})["sdg_provider"] == "openai"
+
+
 def test_run_benchmark_job_uses_garak_config_file(monkeypatch, tmp_path):
     module = _load_evalhub_garak_adapter(monkeypatch)
     adapter = module.GarakAdapter()
@@ -4005,6 +4047,7 @@ class TestSdgGenerateComponent:
             max_concurrency=10,
             num_samples=0,
             max_tokens=0,
+            provider="",
         ):
             return SDGResult(raw=raw_df, normalized=norm_df)
 
@@ -4056,6 +4099,7 @@ class TestSdgGenerateComponent:
             intents_s3_key="",
             sdg_model="test-model",
             sdg_api_base="http://sdg:8000",
+            sdg_provider="openai",
             sdg_flow_id="test-flow",
             sdg_max_concurrency=3,
             sdg_num_samples=25,
@@ -4069,6 +4113,7 @@ class TestSdgGenerateComponent:
         assert kwargs["max_concurrency"] == 3
         assert kwargs["num_samples"] == 25
         assert kwargs["max_tokens"] == 4096
+        assert kwargs["provider"] == "openai"
 
     def test_default_sdg_params_when_zeros(self, monkeypatch, tmp_path):
         """When sdg params are 0 (default), they are passed as 0 and generate_sdg_dataset handles the fallback."""
