@@ -137,11 +137,8 @@ def test_resolve_timeout_seconds_precedence():
     "benchmark_id",
     ["owasp_llm_top10", "avid", "avid_security", "avid_ethics", "avid_performance", "quality", "cwe", "intents"],
 )
-def test_broad_scan_limits_and_selection(benchmark_id):
+def test_broad_scan_prompt_cap_preserves_probe_selection(benchmark_id):
     profile = resolve_scan_profile(benchmark_id)
-    assert resolve_timeout_seconds({}, profile) == 3600
-    assert resolve_timeout_seconds({"timeout_seconds": 0}, profile) == 0
-
     resolved = build_effective_garak_config({"num_examples": 1}, profile)
     assert resolved.run.soft_probe_prompt_cap == 1
     assert resolved.run.spec.model_dump() == profile["garak_config"]["run"]["spec"]

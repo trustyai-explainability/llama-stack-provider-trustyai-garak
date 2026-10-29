@@ -9,7 +9,7 @@ from .garak_command_config import (
     GarakReportingConfig,
     GarakPluginsConfig,
 )
-from .constants import DEFAULT_SDG_FLOW_ID, DEFAULT_TIMEOUT
+from .constants import DEFAULT_SDG_FLOW_ID
 
 
 class TapIntentConfig(BaseModel):
@@ -75,7 +75,7 @@ class GarakScanConfig(BaseModel):
                 ),
                 reporting=GarakReportingConfig(taxonomy="owasp"),
             ).to_dict(),
-            "timeout": DEFAULT_TIMEOUT,
+            "timeout": 0,
         },
         "trustyai_garak::avid": {
             "name": "AVID Taxonomy",
@@ -88,7 +88,7 @@ class GarakScanConfig(BaseModel):
                 ),
                 reporting=GarakReportingConfig(taxonomy="avid-effect"),
             ).to_dict(),
-            "timeout": DEFAULT_TIMEOUT,
+            "timeout": 0,
         },
         "trustyai_garak::avid_security": {
             "name": "AVID Security Taxonomy",
@@ -101,7 +101,7 @@ class GarakScanConfig(BaseModel):
                 ),
                 reporting=GarakReportingConfig(taxonomy="avid-effect"),
             ).to_dict(),
-            "timeout": DEFAULT_TIMEOUT,
+            "timeout": 0,
         },
         "trustyai_garak::avid_ethics": {
             "name": "AVID Ethics Taxonomy",
@@ -113,7 +113,7 @@ class GarakScanConfig(BaseModel):
                 ),
                 reporting=GarakReportingConfig(taxonomy="avid-effect"),
             ).to_dict(),
-            "timeout": DEFAULT_TIMEOUT,
+            "timeout": 0,
         },
         "trustyai_garak::avid_performance": {
             "name": "AVID Performance Taxonomy",
@@ -125,7 +125,7 @@ class GarakScanConfig(BaseModel):
                 ),
                 reporting=GarakReportingConfig(taxonomy="avid-effect"),
             ).to_dict(),
-            "timeout": DEFAULT_TIMEOUT,
+            "timeout": 0,
         },
         "trustyai_garak::quality": {
             "name": "Quality issues",
@@ -137,7 +137,7 @@ class GarakScanConfig(BaseModel):
                 ),
                 reporting=GarakReportingConfig(taxonomy="quality"),
             ).to_dict(),
-            "timeout": DEFAULT_TIMEOUT,
+            "timeout": 0,
         },
         "trustyai_garak::cwe": {
             "name": "Common Weakness Enumeration",
@@ -150,7 +150,7 @@ class GarakScanConfig(BaseModel):
                 ),
                 reporting=GarakReportingConfig(taxonomy="cwe"),
             ).to_dict(),
-            "timeout": DEFAULT_TIMEOUT,
+            "timeout": 0,
         },
         "trustyai_garak::intents": {
             "name": "Intents-based Risk Assessment",
@@ -213,7 +213,7 @@ class GarakScanConfig(BaseModel):
                     },
                 ),
             ).to_dict(),
-            "timeout": DEFAULT_TIMEOUT,
+            "timeout": 0,
             "art_intents": True,
             "sdg_model": "",
             "sdg_api_base": "",

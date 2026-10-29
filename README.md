@@ -91,16 +91,14 @@ Key `parameters` in the job spec:
 | `probes` | Comma-separated probe names | Profile default |
 | `probe_tags` | Tag-based probe filtering | — |
 | `execution_mode` | `simple` or `kfp` | `simple` |
-| `timeout_seconds` | Scan timeout in seconds; `0` explicitly disables the limit | `3600` (`300` for `quick`) |
+| `timeout_seconds` | Scan timeout | Profile default |
 | `soft_probe_prompt_cap` | Preferred prompt limit per probe; some probes may exceed it | `256` |
 | `num_examples` | Compatibility alias for the soft per-probe prompt cap; explicit caps take precedence | — |
 | `eval_threshold` | Vulnerability threshold (0.0–1.0) | `0.5` |
 | `model_type` | Garak generator type | `openai.OpenAICompatible` |
 | `garak_config` | Full garak config dict (deep-merged onto profile) | — |
 
-A timeout terminates the process group and reports a failed scan. Prompt caps
-do not limit the number of selected probes or guarantee a total request count; use `timeout_seconds` to
-bound scan execution. The scan timeout excludes SDG preprocessing.
+Prompt caps do not limit the number of selected probes or guarantee a total request count.
 
 SDG accepts bare model IDs such as `Qwen/Qwen3-VL-30B-A3B-Instruct` and routes
 them through LiteLLM's `openai/` provider at `sdg_api_base`. Explicit LiteLLM
