@@ -91,10 +91,16 @@ Key `parameters` in the job spec:
 | `probes` | Comma-separated probe names | Profile default |
 | `probe_tags` | Tag-based probe filtering | — |
 | `execution_mode` | `simple` or `kfp` | `simple` |
-| `timeout_seconds` | Scan timeout | Profile default |
+| `timeout_seconds` | Scan timeout in seconds; `0` disables the limit | `3600` (`300` for `quick`) |
 | `eval_threshold` | Vulnerability threshold (0.0–1.0) | `0.5` |
 | `model_type` | Garak generator type | `openai.OpenAICompatible` |
 | `garak_config` | Full garak config dict (deep-merged onto profile) | — |
+
+Comprehensive profiles default to a one-hour Garak scan timeout. Set
+`timeout_seconds: 0` for unlimited scanning, or supply a positive value in
+seconds to override the profile default. The scan timeout excludes SDG
+preprocessing. A timed-out scan is terminated as a process group and reported
+as failed. This bounds scan duration; it does not diagnose or fix stalled requests.
 
 ## Results
 
