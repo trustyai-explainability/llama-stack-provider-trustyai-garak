@@ -90,7 +90,7 @@ Key `parameters` in the job spec:
 |-----------|-------------|---------|
 | `probes` | Comma-separated probe names | Profile default |
 | `probe_tags` | Tag-based probe filtering | — |
-| `save_sample_results` | Persist per-response JSONL for standard scans; unsupported for intents | `false` |
+| `save_sample_results` | Persist per-sample JSONL; set explicitly to `false` to disable | `true` |
 | `execution_mode` | `simple` or `kfp` | `simple` |
 | `timeout_seconds` | Scan timeout | Profile default |
 | `soft_probe_prompt_cap` | Preferred prompt limit per probe; some probes may exceed it | `256` |
@@ -99,14 +99,23 @@ Key `parameters` in the job spec:
 | `model_type` | Garak generator type | `openai.OpenAICompatible` |
 | `garak_config` | Full garak config dict (deep-merged onto profile) | — |
 
-With `save_sample_results: true`, OCI and MLflow artifacts include
-`sample_results.jsonl`. Each record has a stable `sample_id` (`attempt UUID:response
-index`), `probe`, `response`, `detector`, `detector_score`, and numeric
-`attack_success_rate` (0 or 1). For each probe, the export selects the detector
-with the most threshold hits across the completed attempts, matching standard
-AVID's conservative ASR aggregation. Metadata and intermediate attempt snapshots
-are excluded; incomplete or non-finite score arrays fail the export. Intents
-use source-stub observations and do not support this response-level export.
+Unless `save_sample_results: false` is set, the adapter writes
+`sample_results.jsonl` before OCI and MLflow persistence. KFP mode also uploads
+it to S3 and includes its URI in artifact metadata. Each execution uses a
+separate local directory and KFP S3 prefix, so retries cannot reuse stale files.
+
+Standard scans export one record per completed response with a stable
+`sample_id` (`attempt UUID:response index`), `probe`, `response`, `detector`,
+`detector_score`, and numeric `attack_success_rate` (0 or 1). Each probe uses the
+detector with the most response-level threshold hits, matching standard AVID's
+conservative ASR aggregation. Nested score arrays are flattened; incomplete or
+non-finite scores fail the export. Metadata and intermediate snapshots are excluded.
+
+Intents export one observation per `(intent, source_stub)` with a stable hashed
+`sample_id`, `intent`, `source_stub`, `sample_unit: source_stub`, and numeric
+`attack_success_rate`. Final harness summaries are authoritative; older reports
+combine acceptance across attempts for the same stub. Exports stream to a
+temporary file and are published atomically after validation.
 
 Prompt caps do not limit the number of selected probes or guarantee a total request count.
 

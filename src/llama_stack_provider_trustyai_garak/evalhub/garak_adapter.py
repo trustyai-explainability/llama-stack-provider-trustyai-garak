@@ -25,6 +25,7 @@ import os
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import mkdtemp
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -123,8 +124,10 @@ class GarakAdapter(FrameworkAdapter):
             logger.info("Execution mode: %s", execution_mode)
 
             # Build merged garak config (common to both modes)
-            scan_dir = get_scan_base_dir() / config.id
-            scan_dir.mkdir(parents=True, exist_ok=True)
+            # Isolate retries and overlapping deliveries, including disabled exports.
+            scan_base = get_scan_base_dir() / config.id
+            scan_base.mkdir(parents=True, exist_ok=True)
+            scan_dir = Path(mkdtemp(prefix="execution-", dir=scan_base))
             report_prefix = scan_dir / "scan"
 
             garak_config_dict, profile, intents_params = self._build_config_from_spec(config, report_prefix)
@@ -132,10 +135,6 @@ class GarakAdapter(FrameworkAdapter):
                 raise ValueError("Garak command config is empty")
 
             art_intents = intents_params.get("art_intents", False)
-            # Intent ASR is measured per source stub; reject a response-level
-            # export before starting a scan with that different estimand.
-            if benchmark_config.get("save_sample_results", False) and art_intents:
-                raise ValueError("save_sample_results supports standard scans only")
 
             timeout = resolve_timeout_seconds(
                 benchmark_config,
@@ -204,13 +203,13 @@ class GarakAdapter(FrameworkAdapter):
             logger.info(f"Parsed {len(metrics)} probe metrics, overall score: {overall_score}")
 
             sample_file = None
-            if benchmark_config.get("save_sample_results", False):
+            if benchmark_config.get("save_sample_results", True):
                 from .sample_results import save_sample_results
 
                 sample_file, sample_count = save_sample_results(
-                    result.report_jsonl, scan_dir / "sample_results.jsonl", eval_threshold
+                    result.report_jsonl, scan_dir / "sample_results.jsonl", eval_threshold, art_intents=art_intents
                 )
-                logger.info("Saved %d per-response results to %s", sample_count, sample_file)
+                logger.info("Saved %d per-sample results to %s", sample_count, sample_file)
 
             # Phase 4b: Generate ART HTML report for intents scans
             if art_intents and result.report_jsonl.exists():
@@ -268,13 +267,33 @@ class GarakAdapter(FrameworkAdapter):
                 _kfp_ov = _bc.get("kfp_config", {}) if isinstance(_bc.get("kfp_config"), dict) else {}
                 _prefix = _kfp_ov.get("s3_prefix", os.getenv("KFP_S3_PREFIX", DEFAULT_S3_PREFIX))
                 _bucket = _kfp_ov.get("s3_bucket", os.getenv("AWS_S3_BUCKET", ""))
-                s3_prefix = f"{_prefix}/{config.id}"
+                s3_prefix = f"{_prefix}/{config.id}/{scan_dir.name}"
 
                 artifact_keys: dict[str, str] = {
                     "scan_report": f"{s3_prefix}/scan.report.jsonl",
                     "scan_html_report": f"{s3_prefix}/scan.report.html",
                     "scan_hitlog": f"{s3_prefix}/scan.hitlog.jsonl",
                 }
+                if sample_file is not None:
+                    # The export is adapter-produced after pipeline downloads.
+                    # Upload it before publishing an S3 reference to consumers.
+                    from .kfp_pipeline import KFPConfig
+
+                    kfp_config = KFPConfig.from_env_and_config(benchmark_config)
+                    creds = self._read_s3_credentials_from_secret(kfp_config.s3_secret_name, kfp_config.namespace)
+                    resolved = self._resolve_s3_credentials(kfp_config, creds)
+                    if not resolved["bucket"]:
+                        raise ValueError("S3 bucket is required to persist KFP sample results")
+                    s3 = self._create_s3_client(
+                        endpoint_url=resolved["endpoint_url"],
+                        access_key=resolved["access_key"],
+                        secret_key=resolved["secret_key"],
+                        region=resolved["region"],
+                    )
+                    sample_key = f"{s3_prefix}/sample_results.jsonl"
+                    s3.upload_file(str(sample_file), resolved["bucket"], sample_key)
+                    _bucket = resolved["bucket"]
+                    artifact_keys["sample_results"] = sample_key
                 if art_intents:
                     artifact_keys["sdg_raw_output"] = f"{s3_prefix}/sdg_raw_output.csv"
                     artifact_keys["sdg_normalized_output"] = f"{s3_prefix}/sdg_normalized_output.csv"
@@ -601,7 +620,7 @@ class GarakAdapter(FrameworkAdapter):
         """Submit a KFP pipeline, poll until done, download results from S3.
 
         The KFP component uploads scan output to S3 under
-        ``{kfp_config.s3_prefix}/{job_id}/``. After the run completes,
+        ``{kfp_config.s3_prefix}/{job_id}/{execution_id}/``. After the run completes,
         this method downloads those files to a local scan_dir for parsing.
 
         Both sides get S3 credentials from the same Data Connection secret:
@@ -625,9 +644,11 @@ class GarakAdapter(FrameworkAdapter):
                 "kfp_config.s3_secret_name in benchmark_config."
             )
 
-        s3_prefix = f"{kfp_config.s3_prefix}/{config.id}"
-        scan_dir = get_scan_base_dir() / config.id
-        scan_dir.mkdir(parents=True, exist_ok=True)
+        # Keep local and remote artifacts private to this execution of the job.
+        scan_base = get_scan_base_dir() / config.id
+        scan_base.mkdir(parents=True, exist_ok=True)
+        scan_dir = Path(mkdtemp(prefix="execution-", dir=scan_base))
+        s3_prefix = f"{kfp_config.s3_prefix}/{config.id}/{scan_dir.name}"
 
         from ..core.pipeline_steps import redact_api_keys
 
@@ -1170,7 +1191,7 @@ class GarakAdapter(FrameworkAdapter):
 
         profile = self._resolve_profile(config.benchmark_id)
         benchmark_config = config.parameters or {}
-        if not isinstance(benchmark_config.get("save_sample_results", False), bool):
+        if not isinstance(benchmark_config.get("save_sample_results", True), bool):
             raise ValueError("save_sample_results must be a boolean")
         explicit_garak_cfg = benchmark_config.get("garak_config", {})
         if not isinstance(explicit_garak_cfg, dict):

@@ -220,7 +220,7 @@ def test_run_benchmark_job_uses_garak_config_file(monkeypatch, tmp_path):
         benchmark_id="trustyai_garak::quick",
         benchmark_index=0,
         model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
-        parameters={"timeout_seconds": 42, "generations": 2},
+        parameters={"save_sample_results": False, "timeout_seconds": 42, "generations": 2},
         exports=None,
     )
 
@@ -268,7 +268,7 @@ def test_simple_mode_passes_hf_cache_env(monkeypatch, tmp_path):
         benchmark_id="trustyai_garak::quick",
         benchmark_index=0,
         model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
-        parameters={"hf_cache_path": "/test_data/hf-cache"},
+        parameters={"save_sample_results": False, "hf_cache_path": "/test_data/hf-cache"},
         exports=None,
     )
 
@@ -309,7 +309,9 @@ def test_simple_mode_no_hf_cache_passes_none_env(monkeypatch, tmp_path):
         benchmark_id="trustyai_garak::quick",
         benchmark_index=0,
         model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
-        parameters={},
+        parameters={
+            "save_sample_results": False,
+        },
         exports=None,
     )
 
@@ -569,7 +571,7 @@ class TestKFPModeExecution:
             benchmark_id="trustyai_garak::quick",
             benchmark_index=0,
             model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
-            parameters={"execution_mode": "kfp", "timeout_seconds": 99},
+            parameters={"save_sample_results": False, "execution_mode": "kfp", "timeout_seconds": 99},
             exports=None,
         )
 
@@ -624,7 +626,9 @@ class TestKFPModeExecution:
             benchmark_id="trustyai_garak::quick",
             benchmark_index=0,
             model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
-            parameters={},
+            parameters={
+                "save_sample_results": False,
+            },
             exports=None,
         )
 
@@ -679,7 +683,9 @@ class TestKFPModeExecution:
             benchmark_id="trustyai_garak::quick",
             benchmark_index=0,
             model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
-            parameters={},
+            parameters={
+                "save_sample_results": False,
+            },
             exports=None,
         )
         return adapter, job, _Callbacks(), mock_mlflow
@@ -1711,36 +1717,31 @@ class TestJobPhaseReporting:
         phases = [s.phase for s in statuses]
         assert phases == [module.JobPhase.LOADING_DATA, module.JobPhase.RUNNING_EVALUATION]
 
-    @pytest.mark.parametrize("save_samples", [False, True])
+    @pytest.mark.parametrize("save_samples", [None, False, True])
     def test_full_lifecycle_with_oci(self, monkeypatch, tmp_path, save_samples):
         """Full run_benchmark_job with OCI exports emits the complete phase sequence."""
         module = _load_evalhub_garak_adapter(monkeypatch)
         adapter = module.GarakAdapter()
         monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
 
-        report_prefix = tmp_path / "oci-job" / "scan"
-        report_prefix.parent.mkdir(parents=True, exist_ok=True)
-        report_prefix.with_suffix(".report.jsonl").write_text(
-            json.dumps(
-                {
-                    "entry_type": "attempt",
-                    "status": 2,
-                    "uuid": "attempt",
-                    "probe_classname": "dan.Test",
-                    "outputs": ["yes", "no"],
-                    "detector_results": {"dan.DAN": [1, 0]},
-                }
-            ),
-            encoding="utf-8",
-        )
+        scan_directories = []
 
         def _fake_run(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
-            return module.GarakScanResult(
-                returncode=0,
-                stdout="",
-                stderr="",
-                report_prefix=report_prefix,
+            scan_directories.append(report_prefix.parent)
+            report_prefix.with_suffix(".report.jsonl").write_text(
+                json.dumps(
+                    {
+                        "entry_type": "attempt",
+                        "status": 2,
+                        "uuid": "attempt",
+                        "probe_classname": "dan.Test",
+                        "outputs": ["yes", "no"],
+                        "detector_results": {"dan.DAN": [1, 0]},
+                    }
+                ),
+                encoding="utf-8",
             )
+            return module.GarakScanResult(returncode=0, stdout="", stderr="", report_prefix=report_prefix)
 
         monkeypatch.setattr(module, "run_garak_scan", _fake_run)
         monkeypatch.setattr(module, "convert_to_avid_report", lambda _: True)
@@ -1764,7 +1765,9 @@ class TestJobPhaseReporting:
 
             def create_oci_artifact(self, _spec):
                 # The export must exist before OCI snapshots the scan directory.
-                assert (report_prefix.parent / "sample_results.jsonl").exists() == save_samples
+                assert (scan_directories[-1] / "sample_results.jsonl").exists() == (
+                    job.parameters.get("save_sample_results", True)
+                )
                 return SimpleNamespace(reference="oci://ref", digest="sha256:test")
 
             def report_results(self, _results):
@@ -1775,14 +1778,20 @@ class TestJobPhaseReporting:
             benchmark_id="trustyai_garak::quick",
             benchmark_index=0,
             model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
-            parameters={"save_sample_results": save_samples},
+            parameters={} if save_samples is None else {"save_sample_results": save_samples},
             exports=SimpleNamespace(
                 oci=SimpleNamespace(coordinates="quay.io/test/artifact:latest"),
             ),
         )
         adapter.run_benchmark_job(job, _Callbacks())
 
-        assert ("sample_results.jsonl" in [a.name for a in mlflow_files]) == save_samples
+        assert ("sample_results.jsonl" in [a.name for a in mlflow_files]) == (save_samples is not False)
+        first_directory = scan_directories[-1]
+        statuses.clear()
+        job.parameters = {"save_sample_results": False}
+        adapter.run_benchmark_job(job, _Callbacks())
+        assert scan_directories[-1] != first_directory
+        assert not (scan_directories[-1] / "sample_results.jsonl").exists()
         phases = [s.phase for s in statuses if hasattr(s, "phase")]
         assert phases == [
             module.JobPhase.INITIALIZING,
@@ -1832,7 +1841,9 @@ class TestJobPhaseReporting:
             benchmark_id="trustyai_garak::quick",
             benchmark_index=0,
             model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
-            parameters={},
+            parameters={
+                "save_sample_results": False,
+            },
             exports=None,
         )
         adapter.run_benchmark_job(job, _Callbacks())
@@ -3108,6 +3119,7 @@ class TestSimpleIntentsMode:
             benchmark_index=0,
             model=SimpleNamespace(url="http://target:8000", name="target-llm"),
             parameters={
+                "save_sample_results": False,
                 "execution_mode": "simple",
                 **_INTENTS_MODELS_ALL_ROLES,
                 **(parameters or {}),
@@ -3207,6 +3219,7 @@ class TestSimpleIntentsMode:
                 return None
 
         adapter.run_benchmark_job(job, _Callbacks())
+        scan_dir = next(scan_dir.glob("execution-*"))
 
         assert sdg_captured["taxonomy_len"] == 8  # BASE_TAXONOMY has 8 entries
         assert sdg_captured["sdg_model"] == "sdg-model"
@@ -3324,6 +3337,7 @@ class TestSimpleIntentsMode:
                 return None
 
         adapter.run_benchmark_job(job, _Callbacks())
+        scan_dir = next(scan_dir.glob("execution-*"))
 
         assert (scan_dir / "sdg_raw_output.csv").exists()
         assert (scan_dir / "sdg_normalized_output.csv").exists()
@@ -3423,6 +3437,7 @@ class TestSimpleIntentsMode:
                 return None
 
         adapter.run_benchmark_job(job, _Callbacks())
+        scan_dir = next(scan_dir.glob("execution-*"))
 
         raw_csv = scan_dir / "sdg_raw_output.csv"
         norm_csv = scan_dir / "sdg_normalized_output.csv"
@@ -3533,6 +3548,7 @@ class TestKFPIntentsMode:
             benchmark_index=0,
             model=SimpleNamespace(url="http://model:8000", name="my-llm"),
             parameters={
+                "save_sample_results": False,
                 "execution_mode": "kfp",
                 **_INTENTS_MODELS_ALL_ROLES,
             },
@@ -3597,7 +3613,7 @@ class TestKFPIntentsMode:
             benchmark_id="trustyai_garak::intents",
             benchmark_index=0,
             model=SimpleNamespace(url="http://model:8000", name="my-llm"),
-            parameters={**_INTENTS_MODELS_SINGLE, "execution_mode": "kfp"},
+            parameters={"save_sample_results": False, **_INTENTS_MODELS_SINGLE, "execution_mode": "kfp"},
             exports=None,
         )
 
@@ -4933,3 +4949,116 @@ class TestResolveKfpModelUrl:
 
         generator_uri = config_dict["plugins"]["generators"]["openai"]["OpenAICompatible"]["uri"]
         assert generator_uri == "https://explicit-override.example.com/v1"
+
+
+@pytest.mark.parametrize("save_samples", [None, False, True])
+@pytest.mark.parametrize("upload_fails", [False, True])
+def test_kfp_sample_export_uploaded_before_reference(monkeypatch, tmp_path, save_samples, upload_fails):
+    """KFP publishes only uploaded sample files, including with no OCI/MLflow."""
+    from llama_stack_provider_trustyai_garak.evalhub.kfp_pipeline import KFPConfig
+
+    module = _load_evalhub_garak_adapter(monkeypatch)
+    monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+    adapter = module.GarakAdapter()
+    scan_dir = tmp_path / "job" / "execution-test"
+    scan_dir.mkdir(parents=True)
+    report_prefix = scan_dir / "scan"
+    report_prefix.with_suffix(".report.jsonl").write_text(
+        json.dumps(
+            {
+                "entry_type": "attempt",
+                "status": 2,
+                "uuid": "id",
+                "probe_classname": "dan.Test",
+                "outputs": ["yes", "no"],
+                "detector_results": {"dan.DAN": [[1], [0]]},
+            }
+        )
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_run_via_kfp",
+        lambda *a, **kw: (
+            module.GarakScanResult(returncode=0, stdout="", stderr="", report_prefix=report_prefix),
+            scan_dir,
+        ),
+    )
+    monkeypatch.setattr(adapter, "_parse_results", lambda *a, **kw: ([], None, 2, {}))
+    monkeypatch.setattr(
+        KFPConfig, "from_env_and_config", lambda *a: SimpleNamespace(s3_secret_name="test-secret", namespace="test")
+    )
+    monkeypatch.setattr(adapter, "_read_s3_credentials_from_secret", lambda *a: {})
+    monkeypatch.setattr(
+        adapter,
+        "_resolve_s3_credentials",
+        lambda *a: dict(
+            bucket="secret-bucket",
+            endpoint_url="http://s3.example",
+            access_key="fake",
+            secret_key="fake",
+            region="test",
+        ),
+    )
+    uploads = []
+
+    def upload_file(filename, bucket, key):
+        if upload_fails:
+            raise RuntimeError("S3 upload failed")
+        uploads.append((bucket, key, Path(filename).read_bytes()))
+
+    monkeypatch.setattr(adapter, "_create_s3_client", lambda **kw: SimpleNamespace(upload_file=upload_file))
+    parameters = {"execution_mode": "kfp", "kfp_config": {"s3_prefix": "runs"}}
+    if save_samples is not None:
+        parameters["save_sample_results"] = save_samples
+    job = SimpleNamespace(
+        id="job",
+        benchmark_id="trustyai_garak::quick",
+        benchmark_index=0,
+        model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
+        parameters=parameters,
+        exports=None,
+    )
+    callbacks = SimpleNamespace(report_status=lambda update: None)
+    if upload_fails and save_samples is not False:
+        with pytest.raises(RuntimeError, match="S3 upload failed"):
+            adapter.run_benchmark_job(job, callbacks)
+        assert not uploads
+        return
+    results = adapter.run_benchmark_job(job, callbacks)
+    artifacts = results.evaluation_metadata["artifacts"]
+    if save_samples is False:
+        assert not uploads
+        assert "sample_results" not in artifacts
+    else:
+        assert uploads[0][:2] == ("secret-bucket", "runs/job/execution-test/sample_results.jsonl")
+        assert len(uploads[0][2].splitlines()) == 2
+        assert artifacts["sample_results"] == "s3://secret-bucket/runs/job/execution-test/sample_results.jsonl"
+
+
+def test_intents_save_samples_by_default(monkeypatch, tmp_path):
+    """Omitting the flag persists intent stubs rather than rejecting intents jobs."""
+    module, adapter, job = TestSimpleIntentsMode()._make_adapter_and_job(monkeypatch, tmp_path)
+    job.parameters.pop("save_sample_results")
+    directories = []
+
+    def run_intents(config, callbacks, garak_config_dict, scan_dir, timeout, intents_params):
+        directories.append(scan_dir)
+        report_prefix = scan_dir / "scan"
+        report_prefix.with_suffix(".report.jsonl").write_text(
+            json.dumps(
+                {
+                    "entry_type": "harness_stub_summary",
+                    "intent": "fraud",
+                    "source_stub": "stub",
+                    "accepted": True,
+                }
+            )
+        )
+        return module.GarakScanResult(returncode=0, stdout="", stderr="", report_prefix=report_prefix)
+
+    monkeypatch.setattr(adapter, "_run_simple_intents", run_intents)
+    monkeypatch.setattr(adapter, "_parse_results", lambda *a, **kw: ([], 1.0, 1, {}))
+    adapter.run_benchmark_job(job, SimpleNamespace(report_status=lambda update: None))
+    record = json.loads((directories[0] / "sample_results.jsonl").read_text())
+    assert record["sample_unit"] == "source_stub"
+    assert record["attack_success_rate"] == 1.0
