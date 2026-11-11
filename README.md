@@ -90,6 +90,7 @@ Key `parameters` in the job spec:
 |-----------|-------------|---------|
 | `probes` | Comma-separated probe names | Profile default |
 | `probe_tags` | Tag-based probe filtering | — |
+| `save_sample_results` | Persist per-response JSONL for standard scans; unsupported for intents | `false` |
 | `execution_mode` | `simple` or `kfp` | `simple` |
 | `timeout_seconds` | Scan timeout | Profile default |
 | `soft_probe_prompt_cap` | Preferred prompt limit per probe; some probes may exceed it | `256` |
@@ -97,6 +98,15 @@ Key `parameters` in the job spec:
 | `eval_threshold` | Vulnerability threshold (0.0–1.0) | `0.5` |
 | `model_type` | Garak generator type | `openai.OpenAICompatible` |
 | `garak_config` | Full garak config dict (deep-merged onto profile) | — |
+
+With `save_sample_results: true`, OCI and MLflow artifacts include
+`sample_results.jsonl`. Each record has a stable `sample_id` (`attempt UUID:response
+index`), `probe`, `response`, `detector`, `detector_score`, and numeric
+`attack_success_rate` (0 or 1). For each probe, the export selects the detector
+with the most threshold hits across the completed attempts, matching standard
+AVID's conservative ASR aggregation. Metadata and intermediate attempt snapshots
+are excluded; incomplete or non-finite score arrays fail the export. Intents
+use source-stub observations and do not support this response-level export.
 
 Prompt caps do not limit the number of selected probes or guarantee a total request count.
 

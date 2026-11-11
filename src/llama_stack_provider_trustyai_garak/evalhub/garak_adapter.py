@@ -132,6 +132,10 @@ class GarakAdapter(FrameworkAdapter):
                 raise ValueError("Garak command config is empty")
 
             art_intents = intents_params.get("art_intents", False)
+            # Intent ASR is measured per source stub; reject a response-level
+            # export before starting a scan with that different estimand.
+            if benchmark_config.get("save_sample_results", False) and art_intents:
+                raise ValueError("save_sample_results supports standard scans only")
 
             timeout = resolve_timeout_seconds(
                 benchmark_config,
@@ -198,6 +202,15 @@ class GarakAdapter(FrameworkAdapter):
                 art_intents=art_intents,
             )
             logger.info(f"Parsed {len(metrics)} probe metrics, overall score: {overall_score}")
+
+            sample_file = None
+            if benchmark_config.get("save_sample_results", False):
+                from .sample_results import save_sample_results
+
+                sample_file, sample_count = save_sample_results(
+                    result.report_jsonl, scan_dir / "sample_results.jsonl", eval_threshold
+                )
+                logger.info("Saved %d per-response results to %s", sample_count, sample_file)
 
             # Phase 4b: Generate ART HTML report for intents scans
             if art_intents and result.report_jsonl.exists():
@@ -296,6 +309,12 @@ class GarakAdapter(FrameworkAdapter):
                 from evalhub.adapter.mlflow import MlflowArtifact
 
                 mlflow_artifacts: list[MlflowArtifact] = []
+                # OCI includes the complete scan directory; explicitly add the
+                # same sample file to MLflow's individually enumerated artifacts.
+                if sample_file is not None:
+                    mlflow_artifacts.append(
+                        MlflowArtifact("sample_results.jsonl", sample_file.read_bytes(), "application/jsonl")
+                    )
                 if result.report_html.exists():
                     mlflow_artifacts.append(
                         MlflowArtifact(
@@ -1151,6 +1170,8 @@ class GarakAdapter(FrameworkAdapter):
 
         profile = self._resolve_profile(config.benchmark_id)
         benchmark_config = config.parameters or {}
+        if not isinstance(benchmark_config.get("save_sample_results", False), bool):
+            raise ValueError("save_sample_results must be a boolean")
         explicit_garak_cfg = benchmark_config.get("garak_config", {})
         if not isinstance(explicit_garak_cfg, dict):
             explicit_garak_cfg = {}

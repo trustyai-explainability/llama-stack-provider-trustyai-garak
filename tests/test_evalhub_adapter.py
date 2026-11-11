@@ -1711,7 +1711,8 @@ class TestJobPhaseReporting:
         phases = [s.phase for s in statuses]
         assert phases == [module.JobPhase.LOADING_DATA, module.JobPhase.RUNNING_EVALUATION]
 
-    def test_full_lifecycle_with_oci(self, monkeypatch, tmp_path):
+    @pytest.mark.parametrize("save_samples", [False, True])
+    def test_full_lifecycle_with_oci(self, monkeypatch, tmp_path, save_samples):
         """Full run_benchmark_job with OCI exports emits the complete phase sequence."""
         module = _load_evalhub_garak_adapter(monkeypatch)
         adapter = module.GarakAdapter()
@@ -1719,7 +1720,19 @@ class TestJobPhaseReporting:
 
         report_prefix = tmp_path / "oci-job" / "scan"
         report_prefix.parent.mkdir(parents=True, exist_ok=True)
-        report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+        report_prefix.with_suffix(".report.jsonl").write_text(
+            json.dumps(
+                {
+                    "entry_type": "attempt",
+                    "status": 2,
+                    "uuid": "attempt",
+                    "probe_classname": "dan.Test",
+                    "outputs": ["yes", "no"],
+                    "detector_results": {"dan.DAN": [1, 0]},
+                }
+            ),
+            encoding="utf-8",
+        )
 
         def _fake_run(config_file, timeout_seconds, report_prefix, env=None, log_file=None):
             return module.GarakScanResult(
@@ -1738,12 +1751,20 @@ class TestJobPhaseReporting:
         )
 
         statuses = []
+        mlflow_files = []
+        mlflow_module = types.ModuleType("evalhub.adapter.mlflow")
+        mlflow_module.MlflowArtifact = lambda name, data, media: SimpleNamespace(name=name, data=data)
+        monkeypatch.setitem(sys.modules, "evalhub.adapter.mlflow", mlflow_module)
 
         class _Callbacks:
+            mlflow = SimpleNamespace(save=lambda results, config, artifacts: mlflow_files.extend(artifacts))
+
             def report_status(self, update):
                 statuses.append(update)
 
             def create_oci_artifact(self, _spec):
+                # The export must exist before OCI snapshots the scan directory.
+                assert (report_prefix.parent / "sample_results.jsonl").exists() == save_samples
                 return SimpleNamespace(reference="oci://ref", digest="sha256:test")
 
             def report_results(self, _results):
@@ -1754,13 +1775,14 @@ class TestJobPhaseReporting:
             benchmark_id="trustyai_garak::quick",
             benchmark_index=0,
             model=SimpleNamespace(url="http://localhost:8000", name="test-model"),
-            parameters={},
+            parameters={"save_sample_results": save_samples},
             exports=SimpleNamespace(
                 oci=SimpleNamespace(coordinates="quay.io/test/artifact:latest"),
             ),
         )
         adapter.run_benchmark_job(job, _Callbacks())
 
+        assert ("sample_results.jsonl" in [a.name for a in mlflow_files]) == save_samples
         phases = [s.phase for s in statuses if hasattr(s, "phase")]
         assert phases == [
             module.JobPhase.INITIALIZING,
