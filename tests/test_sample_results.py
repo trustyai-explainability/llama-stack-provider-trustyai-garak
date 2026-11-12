@@ -160,3 +160,14 @@ def test_late_export_failure_does_not_publish_partial_results(tmp_path):
         save_sample_results(source, target, 0.5)
     assert target.read_text() == "previous export"
     assert not list(tmp_path.glob(".samples-*"))
+
+
+def test_response_mean_can_differ_from_fallback_attempt_asr(tmp_path):
+    """Disagreeing detectors expose the documented difference in scoring units."""
+    from llama_stack_provider_trustyai_garak.result_utils import calculate_basic_aggregates
+
+    entry = attempt(scores={"a": [1, 0], "b": [0, 1]})
+    records, count = export(tmp_path, [entry])
+    fallback = calculate_basic_aggregates([entry["detector_results"]], 0.5)
+    assert sum(row["attack_success_rate"] for row in records) / count == 0.5
+    assert fallback["attack_success_rate"] == 100.0
