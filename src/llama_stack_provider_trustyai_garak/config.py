@@ -152,6 +152,19 @@ class GarakScanConfig(BaseModel):
             ).to_dict(),
             "timeout": 0,
         },
+        "trustyai_garak::euai": {
+            "name": "EU AI Act",
+            "description": "The EU AI Act is a regulatory framework that establishes risk-based requirements for developing, providing, and deploying AI systems in the European Union.",
+            "documentation": "https://artificialintelligenceact.eu/",
+            "garak_config": GarakCommandConfig(
+                run=GarakRunConfig(
+                    generations=1,
+                    spec=GarakRunSpec(include=[{"tag": "euai"}], exclude=[]),
+                ),
+                reporting=GarakReportingConfig(taxonomy="euai"),
+            ).to_dict(),
+            "timeout": 0,
+        },
         "trustyai_garak::intents": {
             "name": "Intents-based Risk Assessment",
             "description": "Risk assessment with a custom intent typology and probes of increasing complexity",
