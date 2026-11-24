@@ -60,6 +60,7 @@ Predefined scan profiles available via `benchmark_id`:
 |---------|-------------|
 | `quick` | Single DAN probe for fast testing |
 | `owasp_llm_top10` | OWASP Top 10 for LLM Applications |
+| `euai`  | The EU AI Act regulatory framework |
 | `avid` | AVID taxonomy — all vulnerabilities |
 | `avid_security` | AVID — security vulnerabilities |
 | `avid_ethics` | AVID — ethical concerns |
