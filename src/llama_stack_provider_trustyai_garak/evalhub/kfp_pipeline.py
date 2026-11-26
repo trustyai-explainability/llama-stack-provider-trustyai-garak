@@ -32,6 +32,7 @@ from typing import NamedTuple
 from kfp import dsl, kubernetes
 
 from ..constants import (
+    DEFAULT_MAX_RETRY_SECONDS,
     DEFAULT_SDG_FLOW_ID,
     DEFAULT_SDG_MAX_CONCURRENCY,
     DEFAULT_SDG_NUM_SAMPLES,
@@ -507,6 +508,7 @@ def garak_scan(
     config_json: str,
     s3_prefix: str,
     timeout_seconds: int,
+    max_retry_seconds: int,
     hf_cache_path: str,
     prompts_dataset: dsl.Input[dsl.Dataset],
 ) -> NamedTuple("Outputs", [("success", bool), ("return_code", int)]):
@@ -589,11 +591,23 @@ def garak_scan(
     prompts_path = Path(prompts_dataset.path)
     has_prompts = prompts_path.exists() and prompts_path.stat().st_size > 0
 
+    # This body is compiled from the adapter's package but runs against the package installed in
+    # the base image, which can be older (e.g. a pinned or operator-configured image). Only pass
+    # arguments the installed setup_and_run_garak accepts, so version skew can't fail every scan.
+    import inspect
+
+    scan_kwargs = {}
+    if "max_retry_seconds" in inspect.signature(setup_and_run_garak).parameters:
+        scan_kwargs["max_retry_seconds"] = max_retry_seconds
+    else:
+        log.warning("The base image's adapter predates max_retry_seconds; scanning without a retry budget")
+
     result = setup_and_run_garak(
         config_json=config_json,
         prompts_csv_path=prompts_path if has_prompts else None,
         scan_dir=scan_dir,
         timeout_seconds=timeout_seconds,
+        **scan_kwargs,
     )
 
     # Redact api_key values from config.json before uploading to S3
@@ -755,6 +769,7 @@ def evalhub_garak_pipeline(
     sdg_num_samples: int = DEFAULT_SDG_NUM_SAMPLES,
     sdg_max_tokens: int = DEFAULT_SDG_MAX_TOKENS,
     hf_cache_path: str = "",
+    max_retry_seconds: int = DEFAULT_MAX_RETRY_SECONDS,
 ):
     """Six-step pipeline: validate, resolve taxonomy, SDG, prepare prompts, scan, write outputs.
 
@@ -853,6 +868,7 @@ def evalhub_garak_pipeline(
         config_json=config_json,
         s3_prefix=s3_prefix,
         timeout_seconds=timeout_seconds,
+        max_retry_seconds=max_retry_seconds,
         hf_cache_path=hf_cache_path,
         prompts_dataset=prep_task.outputs["prompts_dataset"],
     )
