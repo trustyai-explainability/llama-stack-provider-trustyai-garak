@@ -1,0 +1,97 @@
+name: Wheels per architecture
+
+# Downstream release builds cover x86_64, aarch64, ppc64le and s390x from the AIPCC index
+# that requirements.txt names, but pull-request builds on main cover x86_64 and aarch64
+# only. This checks that the index has a wheel of every locked version each architecture
+# installs, so a missing ppc64le or s390x wheel shows up on the PR that changes the lock
+# instead of in the release build. It also runs weekly, since the index's content can change under an unchanged lock.
+# See scripts/check_arch_wheels.py.
+
+on:
+  pull_request:
+    paths:
+      - requirements.txt
+      - constraints.txt
+      - pyproject.toml
+      - scripts/check_arch_wheels.py
+      - .github/workflows/arch-wheels.yml
+  push:
+    branches: [main, 'rhoai-*']
+    paths:
+      - requirements.txt
+      - constraints.txt
+      - pyproject.toml
+      - scripts/check_arch_wheels.py
+      - .github/workflows/arch-wheels.yml
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wheels:
+    name: AIPCC wheels for x86_64, aarch64, ppc64le, s390x
+    # The weekly run is upstream only; midstream and downstream get this file by sync and check
+    # their pull requests and pushes.
+    if: github.event_name != 'schedule' || github.repository_owner == 'trustyai-explainability'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install uv and packaging (packaging at the locked version)
+        run: python -m pip install --upgrade pip uv "$(grep -E '^packaging==' requirements.txt)"
+
+      - name: Check the index for every architecture
+        run: python scripts/check_arch_wheels.py requirements.txt
+
+  report-weekly:
+    name: Report weekly failure
+    # Scheduled runs only: opens (or comments on) the "aipcc-wheels" issue when a wheel goes
+    # missing, and closes it after the next weekly run that passes.
+    needs: [wheels]
+    if: >-
+      always() && github.event_name == 'schedule' &&
+      contains(fromJSON('["success", "failure"]'), needs.wheels.result)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: report-aipcc-wheels
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/actions
+          persist-credentials: false
+
+      - name: Open, update or close the aipcc-wheels issue
+        uses: ./.github/actions/report-scheduled-run
+        with:
+          outcome: ${{ needs.wheels.result }}
+          label: aipcc-wheels
+          label-description: The AIPCC index lacks a wheel the lock needs for a release architecture
+          title: AIPCC index is missing wheels for the lock
+          key: run-${{ github.run_id }}
+          body: |
+            The weekly check found a locked version that the AIPCC index has no installable wheel for,
+            on an architecture the downstream release builds (x86_64, aarch64, ppc64le, s390x). The run's
+            log and annotations name the package, version and architectures.
+
+            Pick a version the index has for every architecture (`make lock` after adjusting
+            `constraints.txt` or `pyproject.toml`), or ask the AIPCC team to build the missing wheel.
+            Run `make check-arch-wheels` to check locally.
