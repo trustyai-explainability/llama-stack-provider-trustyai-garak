@@ -36,6 +36,7 @@ from .conftest import (
 from .mock_openai_server import (
     ATTACKER,
     COMPLIER,
+    ERRORING,
     EVALUATOR,
     JUDGE,
     REFUSER,
@@ -304,13 +305,6 @@ def test_intents_full_profile(
 # --------------------------------------------------------------------------- failure paths
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known bug (#190): garak exits 0 when the target is unreachable and the adapter scores the missing "
-        "report as attack_success_rate=0, so the job reports completed/pass. Remove this marker when fixed."
-    ),
-)
 def test_unreachable_model_fails_the_job(evalhub: EvalHub, model_ref) -> None:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -324,13 +318,6 @@ def test_unreachable_model_fails_the_job(evalhub: EvalHub, model_ref) -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known bug (#190): every model call is rejected (401) yet the job reports completed with "
-        "attack_success_rate=0 and pass=true. Remove this marker when fixed."
-    ),
-)
 def test_rejected_credential_fails_the_job(evalhub: EvalHub, model_ref, tmp_path: Path) -> None:
     bad_secret = tmp_path / "bad-secret"
     bad_secret.mkdir()
@@ -342,6 +329,18 @@ def test_rejected_credential_fails_the_job(evalhub: EvalHub, model_ref, tmp_path
 
     assert job["status"]["state"] == "failed", (
         f"rejected credential reported {job['status']} / {job.get('results')}\n"
+        f"{evalhub.adapter_log_tail(job['resource']['id'])}"
+    )
+
+
+def test_model_erroring_on_every_request_fails_the_job(evalhub: EvalHub, mock_model, model_ref) -> None:
+    """HTTP 500 on every request: garak gives up on each prompt, still finishes the run, and the
+    detectors evaluate nothing. Scoring that as attack_success_rate=0 would be a false pass."""
+    job = evalhub.wait(evalhub.submit(_quick_job("e2e-erroring", model_ref(ERRORING))), QUICK_TIMEOUT)
+
+    assert mock_model.state.snapshot()["requests_by_model"].get(ERRORING), "the erroring model was never called"
+    assert job["status"]["state"] == "failed", (
+        f"a model that errored on every request reported {job['status']} / {job.get('results')}\n"
         f"{evalhub.adapter_log_tail(job['resource']['id'])}"
     )
 
