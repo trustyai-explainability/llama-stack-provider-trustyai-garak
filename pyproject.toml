@@ -17,7 +17,7 @@ dependencies = [
     "kfp-server-api>=2.14.6",
     "boto3>=1.35.88",
     # eval-hub integration
-    "eval-hub-sdk[adapter]~=1.0.4",
+    "eval-hub-sdk[adapter]>=1.0.4,<1.2.0",
     "pandas>=2.3.3",
     "Jinja2>=3.1.6",
 ]
